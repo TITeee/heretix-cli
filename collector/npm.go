@@ -56,6 +56,17 @@ func (c *NPMCollector) Collect(scanPath string, verbose bool) ([]inventory.Packa
 			}
 			pkgs = append(pkgs, p...)
 			found = true
+
+		case "pnpm-lock.yaml":
+			p, err := parsePnpmLock(path, verbose)
+			if err != nil {
+				if verbose {
+					log.Printf("[npm] error parsing %s: %v", path, err)
+				}
+				return nil
+			}
+			pkgs = append(pkgs, p...)
+			found = true
 		}
 		return nil
 	})
@@ -63,12 +74,21 @@ func (c *NPMCollector) Collect(scanPath string, verbose bool) ([]inventory.Packa
 		return nil, fmt.Errorf("walk %s: %w", scanPath, err)
 	}
 
-	// Fallback to npm list -g
+	// Fallback to global package managers
 	if !found {
 		p, err := npmGlobalFallback(verbose)
 		if err != nil {
 			if verbose {
 				log.Printf("[npm] global fallback failed: %v", err)
+			}
+		} else {
+			pkgs = append(pkgs, p...)
+		}
+
+		p, err = pnpmGlobalFallback(verbose)
+		if err != nil {
+			if verbose {
+				log.Printf("[npm] pnpm global fallback failed: %v", err)
 			}
 		} else {
 			pkgs = append(pkgs, p...)
@@ -215,6 +235,69 @@ func parseYarnLock(path string, verbose bool) ([]inventory.Package, error) {
 	return pkgs, scanner.Err()
 }
 
+// parsePnpmLock parses a pnpm-lock.yaml file (v5/v6/v9 formats).
+// It extracts packages from the "packages:" section only, skipping "snapshots:"
+// and "importers:" to avoid duplicates and unresolved specifiers.
+func parsePnpmLock(path string, verbose bool) ([]inventory.Package, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var pkgs []inventory.Package
+	inPackages := false
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Top-level section header (no leading whitespace)
+		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+			inPackages = strings.TrimSpace(line) == "packages:"
+			continue
+		}
+
+		if !inPackages {
+			continue
+		}
+
+		// Package key lines are indented with exactly 2 spaces and end with ":"
+		// e.g. "  /express@4.18.2:" (v5/v6) or "  express@4.18.2:" (v9)
+		if !strings.HasPrefix(line, "  ") || strings.HasPrefix(line, "   ") {
+			continue
+		}
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasSuffix(trimmed, ":") || !strings.Contains(trimmed, "@") {
+			continue
+		}
+
+		key := strings.TrimSuffix(trimmed, ":")
+		// Remove leading slash used in v5/v6 format
+		key = strings.TrimPrefix(key, "/")
+
+		// Split name and version at the last "@"
+		if idx := strings.LastIndex(key, "@"); idx > 0 {
+			name := key[:idx]
+			version := key[idx+1:]
+			if name != "" && version != "" {
+				pkgs = append(pkgs, inventory.Package{
+					Name:       name,
+					Version:    version,
+					RawVersion: version,
+					Ecosystem:  "npm",
+					Source:     "pnpm-lock.yaml",
+					Location:   path,
+				})
+			}
+		}
+	}
+
+	if verbose {
+		log.Printf("[npm] parsed %d packages from %s", len(pkgs), path)
+	}
+	return pkgs, scanner.Err()
+}
+
 // npmGlobalFallback uses npm list -g --json to collect global packages.
 func npmGlobalFallback(verbose bool) ([]inventory.Package, error) {
 	if _, err := exec.LookPath("npm"); err != nil {
@@ -252,6 +335,49 @@ func npmGlobalFallback(verbose bool) ([]inventory.Package, error) {
 
 	if verbose {
 		log.Printf("[npm] global fallback collected %d packages", len(pkgs))
+	}
+	return pkgs, nil
+}
+
+// pnpmGlobalFallback uses pnpm list -g --json to collect global packages.
+func pnpmGlobalFallback(verbose bool) ([]inventory.Package, error) {
+	if _, err := exec.LookPath("pnpm"); err != nil {
+		return nil, fmt.Errorf("pnpm not found")
+	}
+
+	cmd := exec.Command("pnpm", "list", "-g", "--json")
+	out, err := cmd.Output()
+	if err != nil {
+		if out == nil {
+			return nil, fmt.Errorf("pnpm list failed: %w", err)
+		}
+	}
+
+	// pnpm list -g --json returns an array of objects
+	var results []struct {
+		Dependencies map[string]struct {
+			Version string `json:"version"`
+		} `json:"dependencies"`
+	}
+	if err := json.Unmarshal(out, &results); err != nil {
+		return nil, fmt.Errorf("parse pnpm output: %w", err)
+	}
+
+	var pkgs []inventory.Package
+	for _, result := range results {
+		for name, info := range result.Dependencies {
+			pkgs = append(pkgs, inventory.Package{
+				Name:       name,
+				Version:    info.Version,
+				RawVersion: info.Version,
+				Ecosystem:  "npm",
+				Source:     "pnpm-global",
+			})
+		}
+	}
+
+	if verbose {
+		log.Printf("[npm] pnpm global fallback collected %d packages", len(pkgs))
 	}
 	return pkgs, nil
 }
