@@ -2,7 +2,7 @@
 
 [English README](README.md)
 
-Linux サーバや Docker コンテナイメージの OS パッケージ（RPM, DPKG）および OSS エコシステム（PyPI, npm）をスキャンし、脆弱性 API に問い合わせて既知の脆弱性を検出する Go 製 CLI ツール。
+Linux サーバや Docker コンテナイメージの OS パッケージ（RPM, DPKG）および OSS エコシステム（PyPI, npm/yarn/pnpm）をスキャンし、脆弱性 API に問い合わせて既知の脆弱性を検出する Go 製 CLI ツール。
 
 ## 対応エコシステム
 
@@ -11,7 +11,7 @@ Linux サーバや Docker コンテナイメージの OS パッケージ（RPM, 
 | AlmaLinux / RHEL 系 (RPM) | `rpm -qa` / コンテナは `rpm --root <rootfs>` |
 | Debian / Ubuntu 系 (DPKG) | `var/lib/dpkg/status` を直接解析 |
 | PyPI | `requirements.txt`, `Pipfile.lock`, `poetry.lock` / フォールバック: `pip list` |
-| npm | `package-lock.json`, `yarn.lock` / フォールバック: `npm list -g` |
+| npm / yarn / pnpm | `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` / フォールバック: `npm list -g`, `pnpm list -g` |
 
 ## インストール
 
