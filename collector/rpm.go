@@ -101,11 +101,22 @@ func detectRPMEcosystem(scanPath string) string {
 	}
 }
 
-// parseOSRelease reads /etc/os-release from the given root and returns (ID, VERSION_ID).
+// parseOSRelease reads /etc/os-release (or /usr/lib/os-release as fallback) from the
+// given root and returns (ID, VERSION_ID). The fallback handles cases where
+// /etc/os-release is a symlink that cannot be resolved after tar extraction.
 func parseOSRelease(scanPath string) (id, versionID string) {
-	osReleasePath := filepath.Join(scanPath, "etc", "os-release")
-	data, err := os.ReadFile(osReleasePath)
-	if err != nil {
+	candidates := []string{
+		filepath.Join(scanPath, "etc", "os-release"),
+		filepath.Join(scanPath, "usr", "lib", "os-release"),
+	}
+	var data []byte
+	for _, p := range candidates {
+		if d, err := os.ReadFile(p); err == nil {
+			data = d
+			break
+		}
+	}
+	if data == nil {
 		return "", ""
 	}
 	for _, line := range strings.Split(string(data), "\n") {
