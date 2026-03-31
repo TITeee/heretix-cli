@@ -40,34 +40,48 @@ func (c *APKCollector) Collect(scanPath string, verbose bool) ([]inventory.Packa
 	return pkgs, nil
 }
 
-// detectAlpineEcosystem reads /etc/os-release and returns "Alpine:{VERSION_ID}" if the OS is Alpine.
-// Returns "" if the OS cannot be determined or is not Alpine.
+// detectAlpineEcosystem returns "Alpine:{VERSION_ID}" if the OS is Alpine.
+// Tries /etc/os-release first, then /usr/lib/os-release as fallback
+// (Alpine uses a symlink for /etc/os-release which may not resolve after tar extraction).
+// Returns "" if the Alpine version cannot be determined.
 func detectAlpineEcosystem(scanPath string) string {
-	osReleasePath := filepath.Join(scanPath, "etc", "os-release")
-	data, err := os.ReadFile(osReleasePath)
-	if err != nil {
-		return ""
+	candidates := []string{
+		filepath.Join(scanPath, "etc", "os-release"),
+		filepath.Join(scanPath, "usr", "lib", "os-release"),
 	}
 
-	var id, versionID string
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		k, v, ok := strings.Cut(line, "=")
-		if !ok {
+	for _, p := range candidates {
+		data, err := os.ReadFile(p)
+		if err != nil {
 			continue
 		}
-		v = strings.Trim(v, `"`)
-		switch k {
-		case "ID":
-			id = strings.ToLower(v)
-		case "VERSION_ID":
-			versionID = v
+
+		var id, versionID string
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			k, v, ok := strings.Cut(line, "=")
+			if !ok {
+				continue
+			}
+			v = strings.Trim(v, `"`)
+			switch k {
+			case "ID":
+				id = strings.ToLower(v)
+			case "VERSION_ID":
+				versionID = v
+			}
+		}
+
+		if id == "alpine" && versionID != "" {
+			// Normalize to "Alpine:vMAJOR.MINOR" (e.g. "3.21.3" → "v3.21")
+			parts := strings.SplitN(versionID, ".", 3)
+			if len(parts) >= 2 {
+				return "Alpine:v" + parts[0] + "." + parts[1]
+			}
+			return "Alpine:v" + versionID
 		}
 	}
 
-	if id == "alpine" && versionID != "" {
-		return "Alpine:" + versionID
-	}
 	return ""
 }
 
