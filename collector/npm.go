@@ -74,6 +74,14 @@ func (c *NPMCollector) Collect(scanPath string, verbose bool) ([]inventory.Packa
 		return nil, fmt.Errorf("walk %s: %w", scanPath, err)
 	}
 
+	// Also scan pnpm virtual stores (node_modules/.pnpm/) which exist even when
+	// pnpm-lock.yaml is absent from the image (e.g. multi-stage Docker builds).
+	pnpmPkgs, err := findPnpmVirtualStorePackages(scanPath, verbose)
+	if err == nil && len(pnpmPkgs) > 0 {
+		pkgs = append(pkgs, pnpmPkgs...)
+		found = true
+	}
+
 	// Fallback to global package managers
 	if !found {
 		p, err := npmGlobalFallback(verbose)
@@ -253,7 +261,10 @@ func parsePnpmLock(path string, verbose bool) ([]inventory.Package, error) {
 
 		// Top-level section header (no leading whitespace)
 		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
-			inPackages = strings.TrimSpace(line) == "packages:"
+			// Blank lines between sections must not reset the current section
+			if trimmedLine := strings.TrimSpace(line); trimmedLine != "" {
+				inPackages = trimmedLine == "packages:"
+			}
 			continue
 		}
 
@@ -272,6 +283,8 @@ func parsePnpmLock(path string, verbose bool) ([]inventory.Package, error) {
 		}
 
 		key := strings.TrimSuffix(trimmed, ":")
+		// Remove YAML single quotes wrapping scoped packages (e.g. '@scope/pkg@1.0.0')
+		key = strings.Trim(key, "'")
 		// Remove leading slash used in v5/v6 format
 		key = strings.TrimPrefix(key, "/")
 
@@ -378,6 +391,85 @@ func pnpmGlobalFallback(verbose bool) ([]inventory.Package, error) {
 
 	if verbose {
 		log.Printf("[npm] pnpm global fallback collected %d packages", len(pkgs))
+	}
+	return pkgs, nil
+}
+
+// findPnpmVirtualStorePackages walks scanPath looking for node_modules/.pnpm directories
+// and extracts installed packages from the pnpm virtual store layout.
+// This handles Docker images where pnpm-lock.yaml was not copied into the final image.
+func findPnpmVirtualStorePackages(scanPath string, verbose bool) ([]inventory.Package, error) {
+	var pkgs []inventory.Package
+
+	err := filepath.WalkDir(scanPath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || !d.IsDir() {
+			return nil
+		}
+		if d.Name() == ".git" {
+			return fs.SkipDir
+		}
+		if d.Name() == "node_modules" {
+			pnpmStorePath := filepath.Join(path, ".pnpm")
+			if _, statErr := os.Stat(pnpmStorePath); statErr == nil {
+				p, scanErr := parsePnpmVirtualStore(pnpmStorePath, verbose)
+				if scanErr == nil {
+					pkgs = append(pkgs, p...)
+				} else if verbose {
+					log.Printf("[npm] error scanning pnpm virtual store at %s: %v", pnpmStorePath, scanErr)
+				}
+			}
+			return fs.SkipDir
+		}
+		return nil
+	})
+	return pkgs, err
+}
+
+// parsePnpmVirtualStore reads package entries from a pnpm virtual store directory (.pnpm/).
+// Each subdirectory is named "{pkg}@{version}" or "@scope/{pkg}@{version}", optionally
+// followed by a peer-dep suffix separated by "_" or "(".
+func parsePnpmVirtualStore(pnpmPath string, verbose bool) ([]inventory.Package, error) {
+	entries, err := os.ReadDir(pnpmPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var pkgs []inventory.Package
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		entryName := entry.Name()
+
+		// Find last "@" to split name and version (handles scoped packages like @scope/pkg@1.0.0)
+		atIdx := strings.LastIndex(entryName, "@")
+		if atIdx <= 0 {
+			continue
+		}
+		pkgName := entryName[:atIdx]
+		rawVersion := entryName[atIdx+1:]
+
+		// Strip peer-dep / patch suffixes: "4.18.2_peer@1.0.0" → "4.18.2"
+		version := rawVersion
+		if idx := strings.IndexAny(rawVersion, "_(+"); idx > 0 {
+			version = rawVersion[:idx]
+		}
+
+		if pkgName == "" || version == "" {
+			continue
+		}
+		pkgs = append(pkgs, inventory.Package{
+			Name:       pkgName,
+			Version:    version,
+			RawVersion: rawVersion,
+			Ecosystem:  "npm",
+			Source:     "pnpm-virtual-store",
+			Location:   pnpmPath,
+		})
+	}
+
+	if verbose {
+		log.Printf("[npm] scanned %d packages from pnpm virtual store at %s", len(pkgs), pnpmPath)
 	}
 	return pkgs, nil
 }

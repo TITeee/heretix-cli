@@ -63,7 +63,7 @@ func runCollect(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("write output: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "Collected %d packages → %s\n", len(inv.Packages), collectOutput)
+	fmt.Fprintf(os.Stderr, "Collected %d packages -> %s\n", len(inv.Packages), collectOutput)
 	return nil
 }
 
@@ -115,6 +115,6 @@ func runCollectWithImage() error {
 		return fmt.Errorf("write output: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "Collected %d packages → %s\n", len(combinedInv.Packages), collectOutput)
+	fmt.Fprintf(os.Stderr, "Collected %d packages -> %s\n", len(combinedInv.Packages), collectOutput)
 	return nil
 }

@@ -20,6 +20,7 @@ func CollectAll(scanPath string, skip []string, verbose bool) (*inventory.Invent
 	collectors := []Collector{
 		&RPMCollector{},
 		&DPKGCollector{},
+		&APKCollector{},
 		&PyPICollector{},
 		&NPMCollector{},
 	}
