@@ -58,7 +58,9 @@ func CollectAll(scanPath string, skip []string, verbose bool) (*inventory.Invent
 	return inv, nil
 }
 
-// detectOSInfo reads <scanPath>/etc/os-release to populate OS metadata.
+// detectOSInfo reads <scanPath>/etc/os-release (or /usr/lib/os-release as fallback)
+// to populate OS metadata. Alpine Linux uses a symlink for /etc/os-release which
+// may not be resolved correctly after tar extraction, so both paths are tried.
 func detectOSInfo(scanPath string) inventory.OSInfo {
 	info := inventory.OSInfo{
 		ID:        "unknown",
@@ -66,9 +68,19 @@ func detectOSInfo(scanPath string) inventory.OSInfo {
 		Name:      "Unknown",
 	}
 
-	osReleasePath := filepath.Join(scanPath, "etc", "os-release")
-	data, err := os.ReadFile(osReleasePath)
-	if err != nil {
+	candidates := []string{
+		filepath.Join(scanPath, "etc", "os-release"),
+		filepath.Join(scanPath, "usr", "lib", "os-release"),
+	}
+
+	var data []byte
+	for _, p := range candidates {
+		if d, err := os.ReadFile(p); err == nil {
+			data = d
+			break
+		}
+	}
+	if data == nil {
 		return info
 	}
 
