@@ -96,6 +96,8 @@ func detectRPMEcosystem(scanPath string) string {
 		return "Red Hat:" + major
 	case "centos":
 		return "CentOS:" + major
+	case "ol":
+		return "oracle-linux"
 	default:
 		return "AlmaLinux:" + major
 	}

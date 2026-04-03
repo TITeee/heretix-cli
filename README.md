@@ -8,7 +8,7 @@ A Go CLI tool that scans OS packages (RPM, DPKG) and OSS ecosystems (PyPI, npm/y
 
 | Ecosystem | Scan Target |
 |---|---|
-| AlmaLinux / RHEL-based (RPM) | `rpm -qa` / containers use `rpm --root <rootfs>` |
+| AlmaLinux / Oracle Linux / RHEL-based (RPM) | `rpm -qa` / containers use `rpm --root <rootfs>` |
 | Debian / Ubuntu-based (DPKG) | Parses `var/lib/dpkg/status` directly |
 | PyPI | `requirements.txt`, `Pipfile.lock`, `poetry.lock` / fallback: `pip list` |
 | npm / yarn / pnpm | `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` / fallback: `npm list -g`, `pnpm list -g` |

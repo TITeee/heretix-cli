@@ -8,7 +8,7 @@ Linux サーバや Docker コンテナイメージの OS パッケージ（RPM, 
 
 | エコシステム | スキャン対象 |
 |---|---|
-| AlmaLinux / RHEL 系 (RPM) | `rpm -qa` / コンテナは `rpm --root <rootfs>` |
+| AlmaLinux / Oracle Linux / RHEL 系 (RPM) | `rpm -qa` / コンテナは `rpm --root <rootfs>` |
 | Debian / Ubuntu 系 (DPKG) | `var/lib/dpkg/status` を直接解析 |
 | PyPI | `requirements.txt`, `Pipfile.lock`, `poetry.lock` / フォールバック: `pip list` |
 | npm / yarn / pnpm | `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` / フォールバック: `npm list -g`, `pnpm list -g` |
