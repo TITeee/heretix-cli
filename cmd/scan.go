@@ -139,7 +139,7 @@ func collectFromFilesystem() (*inventory.Inventory, error) {
 	if len(scanSkip) > 0 {
 		fmt.Fprintf(os.Stderr, "Skipping: %s\n", strings.Join(scanSkip, ", "))
 	}
-	return collector.CollectAll(scanScanPath, scanSkip, scanVerbose)
+	return collector.CollectAll(scanScanPath, scanSkip, scanVerbose, false)
 }
 
 func collectFromImages(ctx context.Context) (*inventory.Inventory, error) {
@@ -167,7 +167,7 @@ func collectFromImages(ctx context.Context) (*inventory.Inventory, error) {
 		}
 
 		fmt.Fprintf(os.Stderr, "Scanning image %s...\n", imageRef)
-		inv, err := collector.CollectAll(rootfs, scanSkip, scanVerbose)
+		inv, err := collector.CollectAll(rootfs, scanSkip, scanVerbose, true)
 		cleanup()
 		if err != nil {
 			return nil, fmt.Errorf("collection failed for %s: %w", imageRef, err)

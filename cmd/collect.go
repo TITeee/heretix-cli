@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -13,6 +14,16 @@ import (
 	"github.com/TITeee/heretix-cli/container"
 	"github.com/TITeee/heretix-cli/inventory"
 )
+
+func defaultScanPath() string {
+	if runtime.GOOS == "windows" {
+		if drive := os.Getenv("SystemDrive"); drive != "" {
+			return drive + "\\"
+		}
+		return `C:\`
+	}
+	return "/"
+}
 
 var collectCmd = &cobra.Command{
 	Use:   "collect",
@@ -32,7 +43,7 @@ var (
 
 func init() {
 	collectCmd.Flags().StringVar(&collectOutput, "output", "inventory.json", "Output file path")
-	collectCmd.Flags().StringVar(&collectScanPath, "scan-path", "/", "Filesystem root path to scan")
+	collectCmd.Flags().StringVar(&collectScanPath, "scan-path", defaultScanPath(), "Filesystem root path to scan")
 	collectCmd.Flags().StringSliceVar(&collectSkip, "skip", nil, "Sources to skip (e.g. --skip npm,pypi)")
 	collectCmd.Flags().BoolVar(&collectVerbose, "verbose", false, "Enable verbose logging")
 	collectCmd.Flags().StringVar(&collectImage, "image", "", "Docker image to scan (e.g. nginx:latest, registry.example.com/app:v1)")
@@ -54,7 +65,7 @@ func runCollect(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "Skipping: %s\n", strings.Join(collectSkip, ", "))
 	}
 
-	inv, err := collector.CollectAll(collectScanPath, collectSkip, collectVerbose)
+	inv, err := collector.CollectAll(collectScanPath, collectSkip, collectVerbose, false)
 	if err != nil {
 		return fmt.Errorf("collection failed: %w", err)
 	}
@@ -95,7 +106,7 @@ func runCollectWithImage() error {
 		}
 
 		fmt.Fprintf(os.Stderr, "Scanning image %s...\n", imageRef)
-		inv, err := collector.CollectAll(rootfs, collectSkip, collectVerbose)
+		inv, err := collector.CollectAll(rootfs, collectSkip, collectVerbose, true)
 		cleanup()
 		if err != nil {
 			return fmt.Errorf("collection failed for %s: %w", imageRef, err)

@@ -2,16 +2,17 @@
 
 [日本語版 README](README.ja.md)
 
-A Go CLI tool that scans OS packages (RPM, DPKG) and OSS ecosystems (PyPI, npm/yarn/pnpm) on Linux servers or Docker container images, then queries a vulnerability API to detect known vulnerabilities.
+A Go CLI tool that scans OS packages (RPM, DPKG) and OSS ecosystems (PyPI, npm/yarn/pnpm) on Linux/Windows servers or Docker container images, then queries a vulnerability API to detect known vulnerabilities.
 
 ## Supported Ecosystems
 
-| Ecosystem | Scan Target |
-|---|---|
-| AlmaLinux / Oracle Linux / RHEL-based (RPM) | `rpm -qa` / containers use `rpm --root <rootfs>` |
-| Debian / Ubuntu-based (DPKG) | Parses `var/lib/dpkg/status` directly |
-| PyPI | `requirements.txt`, `Pipfile.lock`, `poetry.lock` / fallback: `pip list` |
-| npm / yarn / pnpm | `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` / fallback: `npm list -g`, `pnpm list -g` |
+| Ecosystem | Scan Target | Platform |
+|---|---|---|
+| AlmaLinux / Oracle Linux / RHEL-based (RPM) | `rpm -qa` / containers use `rpm --root <rootfs>` | Linux only |
+| Debian / Ubuntu-based (DPKG) | Parses `var/lib/dpkg/status` directly | Linux only |
+| Alpine (APK) | Parses `/lib/apk/db/installed` directly | Linux only |
+| PyPI | `requirements.txt`, `Pipfile.lock`, `poetry.lock` / fallback: `pip list` | Linux / Windows |
+| npm / yarn / pnpm | `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` / fallback: `npm list -g`, `pnpm list -g` | Linux / Windows |
 
 ## Installation
 
@@ -20,6 +21,9 @@ A Go CLI tool that scans OS packages (RPM, DPKG) and OSS ecosystems (PyPI, npm/y
 ```bash
 # Static binary for Linux
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o heretix-cli .
+
+# Binary for Windows
+GOOS=windows GOARCH=amd64 go build -o heretix-cli.exe .
 ```
 
 Copy the resulting binary to the target server — no other steps needed.

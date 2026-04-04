@@ -2,16 +2,17 @@
 
 [English README](README.md)
 
-Linux サーバや Docker コンテナイメージの OS パッケージ（RPM, DPKG）および OSS エコシステム（PyPI, npm/yarn/pnpm）をスキャンし、脆弱性 API に問い合わせて既知の脆弱性を検出する Go 製 CLI ツール。
+Linux/Windows サーバや Docker コンテナイメージの OS パッケージ（RPM, DPKG）および OSS エコシステム（PyPI, npm/yarn/pnpm）をスキャンし、脆弱性 API に問い合わせて既知の脆弱性を検出する Go 製 CLI ツール。
 
 ## 対応エコシステム
 
-| エコシステム | スキャン対象 |
-|---|---|
-| AlmaLinux / Oracle Linux / RHEL 系 (RPM) | `rpm -qa` / コンテナは `rpm --root <rootfs>` |
-| Debian / Ubuntu 系 (DPKG) | `var/lib/dpkg/status` を直接解析 |
-| PyPI | `requirements.txt`, `Pipfile.lock`, `poetry.lock` / フォールバック: `pip list` |
-| npm / yarn / pnpm | `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` / フォールバック: `npm list -g`, `pnpm list -g` |
+| エコシステム | スキャン対象 | 対応プラットフォーム |
+|---|---|---|
+| AlmaLinux / Oracle Linux / RHEL 系 (RPM) | `rpm -qa` / コンテナは `rpm --root <rootfs>` | Linux のみ |
+| Debian / Ubuntu 系 (DPKG) | `var/lib/dpkg/status` を直接解析 | Linux のみ |
+| Alpine (APK) | `/lib/apk/db/installed` を直接解析 | Linux のみ |
+| PyPI | `requirements.txt`, `Pipfile.lock`, `poetry.lock` / フォールバック: `pip list` | Linux / Windows |
+| npm / yarn / pnpm | `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` / フォールバック: `npm list -g`, `pnpm list -g` | Linux / Windows |
 
 ## インストール
 
@@ -20,6 +21,9 @@ Linux サーバや Docker コンテナイメージの OS パッケージ（RPM, 
 ```bash
 # Linux 向け静的バイナリ
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o heretix-cli .
+
+# Windows 向けバイナリ
+GOOS=windows GOARCH=amd64 go build -o heretix-cli.exe .
 ```
 
 生成されたバイナリを対象サーバにコピーするだけでデプロイ完了。
