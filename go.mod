@@ -5,6 +5,7 @@ go 1.25.7
 require github.com/spf13/cobra v1.10.2
 
 require (
+	github.com/CycloneDX/cyclonedx-go v0.10.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/containerd/errdefs v1.0.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect

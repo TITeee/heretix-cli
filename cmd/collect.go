@@ -13,6 +13,7 @@ import (
 	"github.com/TITeee/heretix-cli/collector"
 	"github.com/TITeee/heretix-cli/container"
 	"github.com/TITeee/heretix-cli/inventory"
+	"github.com/TITeee/heretix-cli/sbom"
 )
 
 func defaultScanPath() string {
@@ -39,6 +40,7 @@ var (
 	collectVerbose    bool
 	collectImage      string
 	collectDockerfile string
+	collectFormat     string
 )
 
 func init() {
@@ -48,6 +50,7 @@ func init() {
 	collectCmd.Flags().BoolVar(&collectVerbose, "verbose", false, "Enable verbose logging")
 	collectCmd.Flags().StringVar(&collectImage, "image", "", "Docker image to scan (e.g. nginx:latest, registry.example.com/app:v1)")
 	collectCmd.Flags().StringVar(&collectDockerfile, "dockerfile", "", "Dockerfile path: also scan the base image from its FROM instruction")
+	collectCmd.Flags().StringVar(&collectFormat, "format", "json", "Output format: json or cyclonedx")
 	rootCmd.AddCommand(collectCmd)
 }
 
@@ -70,8 +73,8 @@ func runCollect(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("collection failed: %w", err)
 	}
 
-	if err := inv.WriteToFile(collectOutput); err != nil {
-		return fmt.Errorf("write output: %w", err)
+	if err := writeCollectOutput(inv, collectOutput, collectFormat); err != nil {
+		return err
 	}
 
 	fmt.Fprintf(os.Stderr, "Collected %d packages -> %s\n", len(inv.Packages), collectOutput)
@@ -122,10 +125,24 @@ func runCollectWithImage() error {
 	combinedInv.Type = "docker_image"
 	combinedInv.Hostname = collectImage
 
-	if err := combinedInv.WriteToFile(collectOutput); err != nil {
-		return fmt.Errorf("write output: %w", err)
+	if err := writeCollectOutput(combinedInv, collectOutput, collectFormat); err != nil {
+		return err
 	}
 
 	fmt.Fprintf(os.Stderr, "Collected %d packages -> %s\n", len(combinedInv.Packages), collectOutput)
+	return nil
+}
+
+func writeCollectOutput(inv *inventory.Inventory, path string, format string) error {
+	if format == "cyclonedx" {
+		bom := sbom.GenerateCycloneDX(inv)
+		if err := sbom.WriteToFile(bom, path); err != nil {
+			return fmt.Errorf("write cyclonedx output: %w", err)
+		}
+		return nil
+	}
+	if err := inv.WriteToFile(path); err != nil {
+		return fmt.Errorf("write output: %w", err)
+	}
 	return nil
 }
