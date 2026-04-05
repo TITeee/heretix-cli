@@ -28,7 +28,7 @@ func GenerateCycloneDX(inv *inventory.Inventory) *cdx.BOM {
 		var purl string
 		switch p.Source {
 		case "rpm", "dpkg", "apk":
-			purl = fmt.Sprintf("pkg:%s/%s/%s@%s", purlType, inv.OS.ID, p.Name, p.Version)
+			purl = fmt.Sprintf("pkg:%s/%s/%s@%s", purlType, osIDToPURLNamespace(inv.OS.ID), p.Name, p.Version)
 		default:
 			purl = fmt.Sprintf("pkg:%s/%s@%s", purlType, p.Name, p.Version)
 		}
@@ -51,6 +51,17 @@ func GenerateCycloneDX(inv *inventory.Inventory) *cdx.BOM {
 	}
 	bom.Components = &components
 	return bom
+}
+
+// osIDToPURLNamespace maps os-release ID values to PURL-compliant namespace strings.
+// Most distros match directly; Oracle Linux is the exception ("ol" → "oraclelinux").
+func osIDToPURLNamespace(osID string) string {
+	switch osID {
+	case "ol":
+		return "oraclelinux"
+	default:
+		return osID
+	}
 }
 
 // WriteToFile writes a CycloneDX BOM as JSON to the specified path.
