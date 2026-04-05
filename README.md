@@ -38,7 +38,7 @@ go mod tidy
 
 ### Package Collection (`collect`)
 
-Scans the system and outputs installed packages to JSON. Can run offline.
+Scans the system and outputs installed packages to JSON or CycloneDX SBOM. Can run offline.
 
 ```bash
 heretix-cli collect
@@ -51,12 +51,17 @@ heretix-cli collect --image registry.example.com/myapp:v1.2 --output myapp-inven
 
 # Include the FROM base image from a Dockerfile
 heretix-cli collect --image myapp:latest --dockerfile ./Dockerfile --output full-inventory.json
+
+# Output as CycloneDX SBOM (JSON)
+heretix-cli collect --format cyclonedx --output sbom.json
+heretix-cli collect --image nginx:latest --format cyclonedx --output nginx-sbom.json
 ```
 
 | Flag | Default | Description |
 |---|---|---|
 | `--output` | `inventory.json` | Output file path |
-| `--scan-path` | `/` | Root path for filesystem traversal |
+| `--format` | `json` | Output format: `json` (heretix inventory) / `cyclonedx` (CycloneDX BOM) |
+| `--scan-path` | `/` (Linux) / `%SystemDrive%\` (Windows) | Root path for filesystem traversal |
 | `--skip` | (none) | Sources to skip (e.g. `--skip npm`) |
 | `--verbose` | `false` | Enable verbose logging |
 | `--image` | (none) | Docker image reference to scan (e.g. `nginx:latest`) |
@@ -193,7 +198,8 @@ heretix-cli/
 ├── container/              # Docker image fetch & extraction
 ├── inventory/              # Package list JSON schema & I/O
 ├── checker/                # Vulnerability API client
-└── report/                 # Table & JSON output
+├── report/                 # Table & JSON output
+└── sbom/                   # CycloneDX SBOM generation
 ```
 
 ## Extending

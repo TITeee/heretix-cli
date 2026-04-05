@@ -38,7 +38,7 @@ go mod tidy
 
 ### パッケージ収集 (`collect`)
 
-システムをスキャンし、インストール済みパッケージを JSON に出力する。オフラインで実行可能。
+システムをスキャンし、インストール済みパッケージを JSON または CycloneDX SBOM に出力する。オフラインで実行可能。
 
 ```bash
 heretix-cli collect
@@ -51,12 +51,17 @@ heretix-cli collect --image registry.example.com/myapp:v1.2 --output myapp-inven
 
 # Dockerfile の FROM ベースイメージも含めてスキャン
 heretix-cli collect --image myapp:latest --dockerfile ./Dockerfile --output full-inventory.json
+
+# CycloneDX SBOM (JSON) として出力
+heretix-cli collect --format cyclonedx --output sbom.json
+heretix-cli collect --image nginx:latest --format cyclonedx --output nginx-sbom.json
 ```
 
 | フラグ | デフォルト | 説明 |
 |---|---|---|
 | `--output` | `inventory.json` | 出力ファイルパス |
-| `--scan-path` | `/` | ファイルシステムの探索ルートパス |
+| `--format` | `json` | 出力形式: `json`（heretix インベントリ）/ `cyclonedx`（CycloneDX BOM） |
+| `--scan-path` | `/`（Linux）/ `%SystemDrive%\`（Windows） | ファイルシステムの探索ルートパス |
 | `--skip` | (なし) | スキップするソース (例: `--skip npm`) |
 | `--verbose` | `false` | 詳細ログ出力 |
 | `--image` | (なし) | スキャンする Docker イメージ参照 (例: `nginx:latest`) |
@@ -193,7 +198,8 @@ heretix-cli/
 ├── container/              # Docker イメージ取得・展開
 ├── inventory/              # 検出リスト JSON スキーマ・I/O
 ├── checker/                # 脆弱性 API クライアント
-└── report/                 # テーブル・JSON 出力
+├── report/                 # テーブル・JSON 出力
+└── sbom/                   # CycloneDX SBOM 生成
 ```
 
 ## 拡張
