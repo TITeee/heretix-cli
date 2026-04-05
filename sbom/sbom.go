@@ -20,13 +20,13 @@ var ecosystemToPURLType = map[string]string{
 func GenerateCycloneDX(inv *inventory.Inventory) *cdx.BOM {
 	components := make([]cdx.Component, 0, len(inv.Packages))
 	for _, p := range inv.Packages {
-		purlType, ok := ecosystemToPURLType[p.Ecosystem]
+		purlType, ok := ecosystemToPURLType[p.Source]
 		if !ok {
-			purlType = p.Ecosystem
+			purlType = p.Source
 		}
 
 		var purl string
-		switch p.Ecosystem {
+		switch p.Source {
 		case "rpm", "dpkg", "apk":
 			purl = fmt.Sprintf("pkg:%s/%s/%s@%s", purlType, inv.OS.ID, p.Name, p.Version)
 		default:
