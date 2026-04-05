@@ -44,13 +44,22 @@ func GenerateCycloneDX(inv *inventory.Inventory) *cdx.BOM {
 	bom := cdx.NewBOM()
 	bom.Metadata = &cdx.Metadata{
 		Component: &cdx.Component{
-			Type:    cdx.ComponentTypeContainer,
+			Type:    metadataComponentType(inv),
 			Name:    inv.Hostname,
 			Version: inv.OS.Name,
 		},
 	}
 	bom.Components = &components
 	return bom
+}
+
+// metadataComponentType returns the CycloneDX component type for the BOM metadata
+// based on the inventory scan type.
+func metadataComponentType(inv *inventory.Inventory) cdx.ComponentType {
+	if inv.Type == "docker_image" {
+		return cdx.ComponentTypeContainer
+	}
+	return cdx.ComponentTypeOS
 }
 
 // osIDToPURLNamespace maps os-release ID values to PURL-compliant namespace strings.
