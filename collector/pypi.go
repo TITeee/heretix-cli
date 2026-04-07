@@ -79,6 +79,17 @@ func (c *PyPICollector) Collect(scanPath string, verbose bool) ([]inventory.Pack
 			}
 			pkgs = append(pkgs, p...)
 			found = true
+
+		case "uv.lock":
+			p, err := parseUVLock(path, verbose)
+			if err != nil {
+				if verbose {
+					log.Printf("[pypi] error parsing %s: %v", path, err)
+				}
+				return nil
+			}
+			pkgs = append(pkgs, p...)
+			found = true
 		}
 		return nil
 	})
@@ -252,6 +263,63 @@ func parsePoetryLock(path string, verbose bool) ([]inventory.Package, error) {
 		log.Printf("[pypi] parsed %d packages from %s", len(pkgs), path)
 	}
 	return pkgs, nil
+}
+
+// parseUVLock parses a uv.lock (TOML) file for package versions.
+// The format uses [[package]] blocks with name and version fields, similar to
+// poetry.lock. Entries with a virtual source (the project root itself) are skipped.
+func parseUVLock(path string, verbose bool) ([]inventory.Package, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var pkgs []inventory.Package
+	var currentName, currentVersion string
+	var isVirtual bool
+
+	flush := func() {
+		if currentName != "" && currentVersion != "" && !isVirtual {
+			pkgs = append(pkgs, inventory.Package{
+				Name:       currentName,
+				Version:    currentVersion,
+				RawVersion: currentVersion,
+				Ecosystem:  "PyPI",
+				Source:     "uv.lock",
+				Location:   path,
+			})
+		}
+		currentName = ""
+		currentVersion = ""
+		isVirtual = false
+	}
+
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+
+		if line == "[[package]]" {
+			flush()
+			continue
+		}
+
+		if strings.HasPrefix(line, "name = ") {
+			currentName = unquoteTOML(strings.TrimPrefix(line, "name = "))
+		} else if strings.HasPrefix(line, "version = ") {
+			currentVersion = unquoteTOML(strings.TrimPrefix(line, "version = "))
+		} else if strings.HasPrefix(line, "source = ") {
+			// Virtual source means this is the project root itself — skip it
+			if strings.Contains(line, "virtual") {
+				isVirtual = true
+			}
+		}
+	}
+	flush() // handle last package
+
+	if verbose {
+		log.Printf("[pypi] parsed %d packages from %s", len(pkgs), path)
+	}
+	return pkgs, scanner.Err()
 }
 
 // unquoteTOML removes surrounding quotes from a TOML string value.

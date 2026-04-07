@@ -11,7 +11,7 @@ A Go CLI tool that scans OS packages (RPM, DPKG) and OSS ecosystems (PyPI, npm/y
 | AlmaLinux / Oracle Linux / RHEL-based (RPM) | `rpm -qa` / containers use `rpm --root <rootfs>` | Linux only |
 | Debian / Ubuntu-based (DPKG) | Parses `var/lib/dpkg/status` directly | Linux only |
 | Alpine (APK) | Parses `/lib/apk/db/installed` directly | Linux only |
-| PyPI | `requirements.txt`, `Pipfile.lock`, `poetry.lock` / fallback: `pip list` | Linux / Windows |
+| PyPI | `requirements.txt`, `Pipfile.lock`, `poetry.lock`, `uv.lock` / fallback: `pip list` | Linux / Windows |
 | npm / yarn / pnpm | `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` / fallback: `npm list -g`, `pnpm list -g` | Linux / Windows |
 | Go (go modules) | `go.mod` / fallback: `go list -m -json all` | Linux / Windows |
 
