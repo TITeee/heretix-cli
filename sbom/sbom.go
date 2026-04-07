@@ -9,11 +9,13 @@ import (
 )
 
 var ecosystemToPURLType = map[string]string{
-	"rpm":  "rpm",
-	"dpkg": "deb",
-	"apk":  "apk",
-	"pypi": "pypi",
-	"npm":  "npm",
+	"rpm":     "rpm",
+	"dpkg":    "deb",
+	"apk":     "apk",
+	"pypi":    "pypi",
+	"npm":     "npm",
+	"go.mod":  "golang",
+	"go-list": "golang",
 }
 
 // GenerateCycloneDX converts an Inventory to a CycloneDX BOM.

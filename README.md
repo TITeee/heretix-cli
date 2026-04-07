@@ -13,6 +13,7 @@ A Go CLI tool that scans OS packages (RPM, DPKG) and OSS ecosystems (PyPI, npm/y
 | Alpine (APK) | Parses `/lib/apk/db/installed` directly | Linux only |
 | PyPI | `requirements.txt`, `Pipfile.lock`, `poetry.lock` / fallback: `pip list` | Linux / Windows |
 | npm / yarn / pnpm | `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` / fallback: `npm list -g`, `pnpm list -g` | Linux / Windows |
+| Go (go modules) | `go.mod` / fallback: `go list -m -json all` | Linux / Windows |
 
 ## Installation
 
