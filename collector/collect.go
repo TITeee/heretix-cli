@@ -26,7 +26,7 @@ func CollectAll(scanPath string, skip []string, verbose bool, isContainer bool) 
 	if runtime.GOOS != "windows" || isContainer {
 		collectors = append(collectors, &RPMCollector{}, &DPKGCollector{}, &APKCollector{})
 	}
-	collectors = append(collectors, &PyPICollector{}, &NPMCollector{}, &GoCollector{})
+	collectors = append(collectors, &PyPICollector{}, &NPMCollector{}, &GoCollector{}, &ComposerCollector{})
 
 	hostname, _ := os.Hostname()
 	osInfo := detectOSInfo(scanPath)

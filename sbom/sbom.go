@@ -14,8 +14,9 @@ var ecosystemToPURLType = map[string]string{
 	"apk":     "apk",
 	"pypi":    "pypi",
 	"npm":     "npm",
-	"go.mod":  "golang",
-	"go-list": "golang",
+	"go.mod":        "golang",
+	"go-list":       "golang",
+	"composer.lock": "composer",
 }
 
 // GenerateCycloneDX converts an Inventory to a CycloneDX BOM.
