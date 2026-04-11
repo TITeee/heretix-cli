@@ -57,8 +57,29 @@ func CollectAll(scanPath string, skip []string, verbose bool, isContainer bool) 
 		return nil, fmt.Errorf("all collectors failed")
 	}
 
+	if isContainer {
+		allPkgs = stripScanPathPrefix(allPkgs, scanPath)
+	}
+
 	inv.Packages = inventory.Deduplicate(allPkgs)
 	return inv, nil
+}
+
+// stripScanPathPrefix removes the temporary rootfs prefix from each package's
+// Location so that container scan results show paths as they appear inside the
+// image (e.g. "/var/www/html/composer.lock") rather than the host temp dir.
+func stripScanPathPrefix(pkgs []inventory.Package, scanPath string) []inventory.Package {
+	prefix := filepath.ToSlash(scanPath)
+	for i, p := range pkgs {
+		loc := filepath.ToSlash(p.Location)
+		if strings.HasPrefix(loc, prefix) {
+			pkgs[i].Location = strings.TrimPrefix(loc, prefix)
+			if pkgs[i].Location == "" {
+				pkgs[i].Location = "/"
+			}
+		}
+	}
+	return pkgs
 }
 
 // detectOSInfo reads <scanPath>/etc/os-release (or /usr/lib/os-release as fallback)
