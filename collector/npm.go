@@ -287,6 +287,11 @@ func parsePnpmLock(path string, verbose bool) ([]inventory.Package, error) {
 		key = strings.Trim(key, "'")
 		// Remove leading slash used in v5/v6 format
 		key = strings.TrimPrefix(key, "/")
+		// Strip parenthetical peer-dep suffixes present in pnpm v9 lockfiles:
+		// "hono@4.11.4(@prisma/client@5.0.0)" → "hono@4.11.4"
+		if idx := strings.Index(key, "("); idx > 0 {
+			key = key[:idx]
+		}
 
 		// Split name and version at the last "@"
 		if idx := strings.LastIndex(key, "@"); idx > 0 {
