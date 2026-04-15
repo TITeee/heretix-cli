@@ -10,6 +10,10 @@ import (
 	"github.com/TITeee/heretix-cli/inventory"
 )
 
+func isMalwareID(externalID string) bool {
+	return strings.HasPrefix(externalID, "MAL-")
+}
+
 // PrintTable writes a human-readable vulnerability report to w.
 func PrintTable(w io.Writer, inv *inventory.Inventory, result *checker.CheckResult, source string) {
 	fmt.Fprintln(w, "Vulnerability Check Report")
@@ -32,6 +36,7 @@ func PrintTable(w io.Writer, inv *inventory.Inventory, result *checker.CheckResu
 	// Count vulnerabilities
 	totalVulnPkgs := 0
 	totalVulns := 0
+	malwareCount := 0
 	kevCount := 0
 	critical, high, medium, low := 0, 0, 0, 0
 
@@ -40,6 +45,10 @@ func PrintTable(w io.Writer, inv *inventory.Inventory, result *checker.CheckResu
 			totalVulnPkgs++
 		}
 		for _, v := range r.Vulnerabilities {
+			if isMalwareID(v.ExternalID) {
+				malwareCount++
+				continue
+			}
 			totalVulns++
 			if v.IsKev {
 				kevCount++
@@ -57,7 +66,7 @@ func PrintTable(w io.Writer, inv *inventory.Inventory, result *checker.CheckResu
 		}
 	}
 
-	if totalVulns == 0 {
+	if totalVulns == 0 && malwareCount == 0 {
 		if len(result.Errors) > 0 {
 			fmt.Fprintln(w, "Errors:")
 			for _, e := range result.Errors {
@@ -65,7 +74,7 @@ func PrintTable(w io.Writer, inv *inventory.Inventory, result *checker.CheckResu
 			}
 			fmt.Fprintln(w)
 		}
-		fmt.Fprintln(w, "No vulnerabilities found.")
+		fmt.Fprintln(w, "No vulnerabilities or malware found.")
 		return
 	}
 
@@ -85,6 +94,7 @@ func PrintTable(w io.Writer, inv *inventory.Inventory, result *checker.CheckResu
 
 	hasApproximate := false
 	hasKev := false
+	hasMalware := false
 	for _, r := range result.Results {
 		sourceDisplay := r.Source
 		if r.Location != "" {
@@ -102,7 +112,10 @@ func PrintTable(w io.Writer, inv *inventory.Inventory, result *checker.CheckResu
 
 		for _, v := range r.Vulnerabilities {
 			rowPrefix := prefix
-			if v.IsKev {
+			if isMalwareID(v.ExternalID) {
+				rowPrefix = "# "
+				hasMalware = true
+			} else if v.IsKev {
 				rowPrefix = "! "
 				hasKev = true
 			}
@@ -132,8 +145,11 @@ func PrintTable(w io.Writer, inv *inventory.Inventory, result *checker.CheckResu
 		}
 	}
 
-	if hasApproximate || hasKev {
+	if hasApproximate || hasKev || hasMalware {
 		fmt.Fprintln(w)
+		if hasMalware {
+			fmt.Fprintln(w, "# = malicious package (OSSF Malicious Packages)")
+		}
 		if hasKev {
 			fmt.Fprintln(w, "! = in CISA Known Exploited Vulnerabilities (KEV) catalog")
 		}
@@ -145,11 +161,22 @@ func PrintTable(w io.Writer, inv *inventory.Inventory, result *checker.CheckResu
 	}
 
 	fmt.Fprintln(w)
-	fmt.Fprintf(w, "Summary: %d packages with %d vulnerabilities", totalVulnPkgs, totalVulns)
+	totalFindings := totalVulns + malwareCount
+	fmt.Fprintf(w, "Summary: %d packages with %d findings", totalVulnPkgs, totalFindings)
+	extras := []string{}
+	if malwareCount > 0 {
+		extras = append(extras, fmt.Sprintf("%d malware", malwareCount))
+	}
 	if kevCount > 0 {
-		fmt.Fprintf(w, " (%d KEV)", kevCount)
+		extras = append(extras, fmt.Sprintf("%d KEV", kevCount))
+	}
+	if len(extras) > 0 {
+		fmt.Fprintf(w, " (%s)", strings.Join(extras, ", "))
 	}
 	fmt.Fprintln(w)
+	if malwareCount > 0 {
+		fmt.Fprintf(w, "  Malware:          %d\n", malwareCount)
+	}
 	fmt.Fprintf(w, "  Critical (>=9.0): %d\n", critical)
 	fmt.Fprintf(w, "  High (>=7.0):     %d\n", high)
 	fmt.Fprintf(w, "  Medium (>=4.0):   %d\n", medium)

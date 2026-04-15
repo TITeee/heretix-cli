@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -226,13 +227,14 @@ func chunkPackages(pkgs []inventory.Package, size int) [][]inventory.Package {
 }
 
 // filterAndSort keeps only packages with vulns above the severity threshold
-// and sorts results: KEV-containing packages first, then by max CVSS score descending.
+// and sorts results: KEV-containing packages first, then malware, then by max CVSS score descending.
 func filterAndSort(results []PackageResult, minSeverity float64) []PackageResult {
 	var filtered []PackageResult
 	for _, r := range results {
 		var vulns []Vulnerability
 		for _, v := range r.Vulnerabilities {
-			if v.CvssScore >= minSeverity {
+			// Malware entries bypass the severity threshold since they typically lack CVSS scores.
+			if v.CvssScore >= minSeverity || isMalware(v) {
 				vulns = append(vulns, v)
 			}
 		}
@@ -248,6 +250,11 @@ func filterAndSort(results []PackageResult, minSeverity float64) []PackageResult
 		if iKev != jKev {
 			return iKev
 		}
+		iMal := hasMalware(filtered[i].Vulnerabilities)
+		jMal := hasMalware(filtered[j].Vulnerabilities)
+		if iMal != jMal {
+			return iMal
+		}
 		return maxCVSS(filtered[i].Vulnerabilities) > maxCVSS(filtered[j].Vulnerabilities)
 	})
 
@@ -257,6 +264,21 @@ func filterAndSort(results []PackageResult, minSeverity float64) []PackageResult
 func hasKev(vulns []Vulnerability) bool {
 	for _, v := range vulns {
 		if v.IsKev {
+			return true
+		}
+	}
+	return false
+}
+
+// isMalware reports whether v is a malicious-package entry (OSSF MAL-* ID).
+func isMalware(v Vulnerability) bool {
+	return strings.HasPrefix(v.ExternalID, "MAL-")
+}
+
+// hasMalware reports whether any vulnerability in the slice is a malware entry.
+func hasMalware(vulns []Vulnerability) bool {
+	for _, v := range vulns {
+		if isMalware(v) {
 			return true
 		}
 	}
