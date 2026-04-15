@@ -43,7 +43,8 @@ func (c *APKCollector) Collect(scanPath string, verbose bool) ([]inventory.Packa
 // detectAlpineEcosystem returns "Alpine:{VERSION_ID}" if the OS is Alpine.
 // Tries /etc/os-release first, then /usr/lib/os-release as fallback
 // (Alpine uses a symlink for /etc/os-release which may not resolve after tar extraction).
-// Returns "" if the Alpine version cannot be determined.
+// Returns "Alpine:" (without version) if the version cannot be determined so that
+// packages are still sent to the API rather than silently dropped.
 func detectAlpineEcosystem(scanPath string) string {
 	candidates := []string{
 		filepath.Join(scanPath, "etc", "os-release"),
@@ -82,7 +83,7 @@ func detectAlpineEcosystem(scanPath string) string {
 		}
 	}
 
-	return ""
+	return "Alpine:"
 }
 
 // parseAPKDatabase parses /lib/apk/db/installed.
