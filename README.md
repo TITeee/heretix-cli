@@ -138,13 +138,16 @@ Packages:   1523 checked (rpm: 1200, dpkg: 320, pip: 280, npm: 43)
   Debian      libssl3          3.0.11     dpkg                  nvd   CVE-2024-5678          7.5   0.098  Buffer overflow
   PyPI        requests         2.31.0     /srv/myapp/req...     osv   GHSA-xxxx-yyyy         6.1   0.045  SSRF via proxy
 ~ PyPI        somepkg          v2024.1    pip                   osv   GHSA-zzzz-zzzz         6.0       -  Some vulnerability
+# npm         malicious-pkg    1.0.0      pnpm-lock.yaml        osv   MAL-2024-1234            -       -  Malicious package
 
+# = malicious package (OSSF Malicious Packages)
 ! = in CISA Known Exploited Vulnerabilities (KEV) catalog
 ~ = approximate match (version could not be normalized, showing all vulnerabilities for this package)
 DB = data source (osv = Open Source Vulnerabilities, nvd = NIST NVD, advisory = Vendor Advisory)
 EPSS = Exploit Prediction Scoring System probability (0.000–1.000)
 
-Summary: 13 packages with 19 vulnerabilities (1 KEV)
+Summary: 14 packages with 21 findings (1 malware, 1 KEV)
+  Malware:          1
   Critical (>=9.0): 1
   High (>=7.0):     4
   Medium (>=4.0):   8
@@ -159,8 +162,8 @@ Only JSON is written to stdout. Progress logs go to stderr, so pipe processing w
 
 | Code | Meaning |
 |---|---|
-| `0` | No vulnerabilities found (or successful `collect`) |
-| `1` | Vulnerabilities found (for CI/CD integration) |
+| `0` | No vulnerabilities or malware found (or successful `collect`) |
+| `1` | Vulnerabilities or malware found (for CI/CD integration) |
 | `2` | Execution failure |
 
 ## CI/CD Examples
