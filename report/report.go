@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/TITeee/heretix-cli/checker"
+	"github.com/TITeee/heretix-cli/detector"
 	"github.com/TITeee/heretix-cli/inventory"
 )
 
@@ -191,11 +192,90 @@ func PrintTable(w io.Writer, inv *inventory.Inventory, result *checker.CheckResu
 	}
 }
 
-// PrintJSON writes the check result as JSON to w.
-func PrintJSON(w io.Writer, result *checker.CheckResult) error {
+// PrintJSON writes the check result and local findings as JSON to w.
+func PrintJSON(w io.Writer, result *checker.CheckResult, findings []detector.Finding) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	return enc.Encode(result)
+	out := struct {
+		*checker.CheckResult
+		LocalFindings []detector.Finding `json:"localFindings,omitempty"`
+	}{
+		CheckResult:   result,
+		LocalFindings: findings,
+	}
+	return enc.Encode(out)
+}
+
+// PrintFindings writes local security findings (GlassWorm, Dependency Confusion)
+// to w in a human-readable table format.
+func PrintFindings(w io.Writer, findings []detector.Finding) {
+	if len(findings) == 0 {
+		return
+	}
+
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Local Security Findings")
+	fmt.Fprintln(w, "=======================")
+	fmt.Fprintf(w, "  %-14s %-35s %4s  %-8s  %s\n", "TYPE", "FILE", "LINE", "SEVERITY", "DETAIL")
+	fmt.Fprintf(w, "  %-14s %-35s %4s  %-8s  %s\n",
+		strings.Repeat("─", 13),
+		strings.Repeat("─", 34),
+		strings.Repeat("─", 4),
+		strings.Repeat("─", 8),
+		strings.Repeat("─", 20))
+
+	glasswormCount := 0
+	depConfusionCount := 0
+
+	for _, f := range findings {
+		prefix := "G "
+		switch f.Type {
+		case "glassworm":
+			prefix = "G "
+			glasswormCount++
+		case "dep-confusion":
+			prefix = "D "
+			depConfusionCount++
+		}
+
+		lineStr := "-"
+		if f.Line > 0 {
+			lineStr = fmt.Sprintf("%d", f.Line)
+		}
+
+		fileDisplay := f.File
+		if len(fileDisplay) > 34 {
+			fileDisplay = "..." + fileDisplay[len(fileDisplay)-31:]
+		}
+
+		detail := f.Detail
+		if len(detail) > 60 {
+			detail = detail[:57] + "..."
+		}
+
+		fmt.Fprintf(w, "%s%-14s %-35s %4s  %-8s  %s\n",
+			prefix, f.Type, fileDisplay, lineStr, f.Severity, detail)
+	}
+
+	fmt.Fprintln(w)
+	if glasswormCount > 0 {
+		fmt.Fprintln(w, "G = GlassWorm (invisible/zero-width character injection)")
+	}
+	if depConfusionCount > 0 {
+		fmt.Fprintln(w, "D = Dependency Confusion (private package resolvable from public registry)")
+	}
+	fmt.Fprintf(w, "\nLocal findings: %d", len(findings))
+	extras := []string{}
+	if glasswormCount > 0 {
+		extras = append(extras, fmt.Sprintf("%d glassworm", glasswormCount))
+	}
+	if depConfusionCount > 0 {
+		extras = append(extras, fmt.Sprintf("%d dep-confusion", depConfusionCount))
+	}
+	if len(extras) > 0 {
+		fmt.Fprintf(w, " (%s)", strings.Join(extras, ", "))
+	}
+	fmt.Fprintln(w)
 }
 
 func truncate(s string, max int) string {

@@ -13,6 +13,7 @@ import (
 	"github.com/TITeee/heretix-cli/checker"
 	"github.com/TITeee/heretix-cli/collector"
 	"github.com/TITeee/heretix-cli/container"
+	"github.com/TITeee/heretix-cli/detector"
 	"github.com/TITeee/heretix-cli/inventory"
 	"github.com/TITeee/heretix-cli/report"
 )
@@ -27,6 +28,7 @@ var scanCmd = &cobra.Command{
 var (
 	scanScanPath    string
 	scanSkip        []string
+	scanSkipLocal   bool
 	scanAPIURL      string
 	scanAPIKey      string
 	scanFormat      string
@@ -42,6 +44,7 @@ func init() {
 	// collect flags
 	scanCmd.Flags().StringVar(&scanScanPath, "scan-path", "/", "Filesystem root path to scan")
 	scanCmd.Flags().StringSliceVar(&scanSkip, "skip", nil, "Sources to skip (e.g. --skip npm,pypi)")
+	scanCmd.Flags().BoolVar(&scanSkipLocal, "skip-local", false, "Skip local security checks (GlassWorm, Dependency Confusion)")
 	// check flags
 	scanCmd.Flags().StringVar(&scanAPIURL, "api-url", "http://localhost:3001", "Vulnerability API URL")
 	scanCmd.Flags().StringVar(&scanAPIKey, "api-key", "", "API key for authentication (or set HERETIX_API_KEY)")
@@ -69,11 +72,15 @@ func runScan(cmd *cobra.Command, args []string) error {
 	defer cancel()
 
 	var inv *inventory.Inventory
+	var localFindings []detector.Finding
 
 	if scanImage != "" {
-		inv, err = collectFromImages(ctx)
+		inv, localFindings, err = collectFromImages(ctx)
 	} else {
 		inv, err = collectFromFilesystem()
+		if err == nil && !scanSkipLocal {
+			localFindings, _ = detector.RunAll(scanScanPath, scanVerbose)
+		}
 	}
 	if err != nil {
 		return err
@@ -121,14 +128,17 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 	switch scanFormat {
 	case "json":
-		if err := report.PrintJSON(os.Stdout, result); err != nil {
+		if err := report.PrintJSON(os.Stdout, result, localFindings); err != nil {
 			return fmt.Errorf("write JSON output: %w", err)
 		}
 	default:
 		report.PrintTable(os.Stdout, inv, result, scanLabel)
+		if len(localFindings) > 0 {
+			report.PrintFindings(os.Stdout, localFindings)
+		}
 	}
 
-	if len(result.Results) > 0 {
+	if len(result.Results) > 0 || len(localFindings) > 0 {
 		os.Exit(1)
 	}
 	return nil
@@ -142,7 +152,7 @@ func collectFromFilesystem() (*inventory.Inventory, error) {
 	return collector.CollectAll(scanScanPath, scanSkip, scanVerbose, false)
 }
 
-func collectFromImages(ctx context.Context) (*inventory.Inventory, error) {
+func collectFromImages(ctx context.Context) (*inventory.Inventory, []detector.Finding, error) {
 	images := []string{scanImage}
 
 	// Phase 3: also scan base image from Dockerfile
@@ -157,20 +167,26 @@ func collectFromImages(ctx context.Context) (*inventory.Inventory, error) {
 	}
 
 	var allPkgs []inventory.Package
+	var allFindings []detector.Finding
 	var combinedInv *inventory.Inventory
 
 	for _, imageRef := range images {
 		fmt.Fprintf(os.Stderr, "Loading image %s...\n", imageRef)
 		rootfs, cleanup, err := container.ExtractImage(ctx, imageRef, scanVerbose)
 		if err != nil {
-			return nil, fmt.Errorf("extract image %s: %w", imageRef, err)
+			return nil, nil, fmt.Errorf("extract image %s: %w", imageRef, err)
 		}
 
 		fmt.Fprintf(os.Stderr, "Scanning image %s...\n", imageRef)
 		inv, err := collector.CollectAll(rootfs, scanSkip, scanVerbose, true)
+		if err == nil && !scanSkipLocal {
+			if findings, detErr := detector.RunAll(rootfs, scanVerbose); detErr == nil {
+				allFindings = append(allFindings, findings...)
+			}
+		}
 		cleanup()
 		if err != nil {
-			return nil, fmt.Errorf("collection failed for %s: %w", imageRef, err)
+			return nil, nil, fmt.Errorf("collection failed for %s: %w", imageRef, err)
 		}
 
 		if combinedInv == nil {
@@ -182,5 +198,5 @@ func collectFromImages(ctx context.Context) (*inventory.Inventory, error) {
 	combinedInv.Packages = inventory.Deduplicate(allPkgs)
 	combinedInv.Type = "docker_image"
 	combinedInv.Hostname = scanImage
-	return combinedInv, nil
+	return combinedInv, allFindings, nil
 }

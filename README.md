@@ -2,7 +2,7 @@
 
 [日本語版 README](README.ja.md)
 
-A Go CLI tool that scans OS packages (RPM, DPKG) and OSS ecosystems (PyPI, npm/yarn/pnpm) on Linux/Windows servers or Docker container images, then queries a vulnerability API to detect known vulnerabilities.
+A Go CLI tool that scans OS packages (RPM, DPKG) and OSS ecosystems (PyPI, npm/yarn/pnpm) on Linux/Windows servers or Docker container images, then queries a vulnerability API to detect known vulnerabilities. Also performs local supply-chain security checks without any API access: **GlassWorm** (invisible character injection) and **Dependency Confusion** (Shai-hulud) detection.
 
 ## Supported Ecosystems
 
@@ -119,6 +119,40 @@ This command inherits all flags from both `collect` and `check`.
 |---|---|---|
 | `--image` | (none) | Docker image reference to scan |
 | `--dockerfile` | (none) | Dockerfile path: also chain-scans the FROM base image |
+| `--skip-local` | `false` | Skip local security checks (GlassWorm, Dependency Confusion) |
+
+## Local Security Checks
+
+In addition to API-based vulnerability detection, `scan` automatically runs two local checks that require no network access:
+
+### GlassWorm Detection
+
+Scans source files for invisible and zero-width Unicode characters that can be used to hide malicious code from human reviewers while still being executed by interpreters.
+
+| Characters | Severity |
+|---|---|
+| U+202A–U+202E BiDi control (RLO, LRO, etc.) | CRITICAL |
+| U+2028, U+2029 Line/Paragraph Separator | HIGH |
+| U+FEFF BOM (mid-file) | HIGH |
+| U+200B/C/D Zero Width Space/Joiner | MEDIUM |
+| U+2060, U+034F Word Joiner, etc. | MEDIUM |
+
+Scans `*.py`, `*.js`, `*.ts`, `*.go`, `*.php`, `*.rb`, `*.json`, `*.lock`, `*.toml`, `*.cfg`.
+
+### Dependency Confusion Detection (Shai-hulud)
+
+Detects configuration patterns that leave projects vulnerable to substitution attacks, where a privately-named package is overridden by a malicious public registry version.
+
+| Check | Ecosystem | Severity |
+|---|---|---|
+| Scoped package (`@scope/pkg`) with no registry mapping in `.npmrc` | npm | HIGH |
+| `package-lock.json` / `yarn.lock` / `pnpm-lock.yaml`: scoped package resolved from public registry | npm | HIGH |
+| Unpinned version specifiers (`^`, `~`, `*`) | npm | MEDIUM |
+| `--extra-index-url` in `requirements.txt` or `pip.conf` (pip picks highest version across all indexes) | PyPI | HIGH |
+| Non-exact version specifiers (`>=`, `~=`) | PyPI | MEDIUM |
+| Missing `--hash=sha256:` integrity check | PyPI | LOW |
+| Public `GOPROXY` without `GOPRIVATE` covering internal module paths | Go | HIGH |
+| Module present in `go.mod` but missing from `go.sum` | Go | MEDIUM |
 
 ## Example Output
 
@@ -152,18 +186,31 @@ Summary: 14 packages with 21 findings (1 malware, 1 KEV)
   High (>=7.0):     4
   Medium (>=4.0):   8
   Low (<4.0):       5
+
+Local Security Findings
+=======================
+  TYPE            FILE                                LINE  SEVERITY  DETAIL
+  ─────────────── ─────────────────────────────────── ────  ────────  ────────────────────────────────────
+G glassworm       /app/utils.py                         42  CRITICAL  invisible char U+202E (RIGHT-TO-LEFT OVERRIDE) detected
+D dep-confusion   /app/.npmrc                            -  HIGH      scoped package @myco has no registry mapping in .npmrc
+D dep-confusion   /app/requirements.txt                 15  HIGH      --extra-index-url found: pip selects highest version across all indexes
+
+G = GlassWorm (invisible/zero-width character injection)
+D = Dependency Confusion (private package resolvable from public registry)
+
+Local findings: 3 (1 glassworm, 2 dep-confusion)
 ```
 
 ### JSON Output (`--format json`)
 
-Only JSON is written to stdout. Progress logs go to stderr, so pipe processing works cleanly.
+Only JSON is written to stdout (includes both vulnerability results and local findings under `localFindings`). Progress logs go to stderr, so pipe processing works cleanly.
 
 ## Exit Codes
 
 | Code | Meaning |
 |---|---|
-| `0` | No vulnerabilities or malware found (or successful `collect`) |
-| `1` | Vulnerabilities or malware found (for CI/CD integration) |
+| `0` | No vulnerabilities, malware, or local findings (or successful `collect`) |
+| `1` | Vulnerabilities, malware, or local security findings found (for CI/CD integration) |
 | `2` | Execution failure |
 
 ## CI/CD Examples
@@ -203,13 +250,19 @@ heretix-cli/
 ├── container/              # Docker image fetch & extraction
 ├── inventory/              # Package list JSON schema & I/O
 ├── checker/                # Vulnerability API client
+├── detector/               # Local security checks (Detector interface)
 ├── report/                 # Table & JSON output
 └── sbom/                   # CycloneDX SBOM generation
 ```
 
 ## Extending
 
-To add a new ecosystem:
+### New ecosystem collector
 
 1. Add a `Collector` interface implementation under `collector/`
 2. Register it in the list inside `CollectAll` in `collector/collect.go`
+
+### New local security check
+
+1. Add a `Detector` interface implementation under `detector/`
+2. Register it in the list inside `RunAll` in `detector/detector.go`

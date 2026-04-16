@@ -2,7 +2,7 @@
 
 [English README](README.md)
 
-Linux/Windows サーバや Docker コンテナイメージの OS パッケージ（RPM, DPKG）および OSS エコシステム（PyPI, npm/yarn/pnpm）をスキャンし、脆弱性 API に問い合わせて既知の脆弱性を検出する Go 製 CLI ツール。
+Linux/Windows サーバや Docker コンテナイメージの OS パッケージ（RPM, DPKG）および OSS エコシステム（PyPI, npm/yarn/pnpm）をスキャンし、脆弱性 API に問い合わせて既知の脆弱性を検出する Go 製 CLI ツール。API なしで動作するローカルセキュリティ検知として、**GlassWorm**（不可視文字によるマルウェア混入）と **Dependency Confusion（Shai-hulud）** の検出にも対応。
 
 ## 対応エコシステム
 
@@ -119,6 +119,40 @@ HERETIX_API_KEY=your-secret-key heretix-cli scan --api-url http://heretix-api:50
 |---|---|---|
 | `--image` | (なし) | スキャンする Docker イメージ参照 |
 | `--dockerfile` | (なし) | Dockerfile パス: FROM のベースイメージも連鎖スキャン |
+| `--skip-local` | `false` | ローカルセキュリティ検知をスキップ（GlassWorm・Dependency Confusion） |
+
+## ローカルセキュリティ検知
+
+`scan` コマンドは API ベースの脆弱性検知に加え、ネットワークアクセスを必要としない 2 種類のローカル検知を自動実行します。
+
+### GlassWorm 検知
+
+ソースファイル内の不可視・ゼロ幅 Unicode 文字を検出します。レビュアーには見えないが、インタープリタに実行される形でマルウェアを埋め込む攻撃に対応します。
+
+| 文字 | Severity |
+|---|---|
+| U+202A–U+202E BiDi 制御文字（RLO, LRO 等） | CRITICAL |
+| U+2028, U+2029 行区切り・段落区切り | HIGH |
+| U+FEFF BOM（ファイル先頭以外） | HIGH |
+| U+200B/C/D ゼロ幅スペース・結合子 | MEDIUM |
+| U+2060, U+034F ワードジョイナー等 | MEDIUM |
+
+対象ファイル: `*.py`, `*.js`, `*.ts`, `*.go`, `*.php`, `*.rb`, `*.json`, `*.lock`, `*.toml`, `*.cfg`
+
+### Dependency Confusion 検知（Shai-hulud）
+
+内部パッケージ名を公開レジストリに登録し、意図しない公開版がインストールされる攻撃（依存関係混乱攻撃）への脆弱な設定を検出します。
+
+| チェック内容 | エコシステム | Severity |
+|---|---|---|
+| スコープパッケージ（`@scope/pkg`）に対応する `.npmrc` レジストリマッピングがない | npm | HIGH |
+| `package-lock.json` / `yarn.lock` / `pnpm-lock.yaml` でスコープパッケージが公開レジストリから解決されている | npm | HIGH |
+| バージョン未固定（`^`, `~`, `*`） | npm | MEDIUM |
+| `requirements.txt` / `pip.conf` に `--extra-index-url`（pip は全インデックスで最高バージョンを選択） | PyPI | HIGH |
+| 範囲指定バージョン（`>=`, `~=`） | PyPI | MEDIUM |
+| `--hash=sha256:` インテグリティチェックなし | PyPI | LOW |
+| 公開 `GOPROXY` かつ内部モジュールパスを `GOPRIVATE` がカバーしていない | Go | HIGH |
+| `go.mod` にあるモジュールが `go.sum` に存在しない | Go | MEDIUM |
 
 ## 出力例
 
@@ -152,18 +186,31 @@ Summary: 14 packages with 21 findings (1 malware, 1 KEV)
   High (>=7.0):     4
   Medium (>=4.0):   8
   Low (<4.0):       5
+
+Local Security Findings
+=======================
+  TYPE            FILE                                LINE  SEVERITY  DETAIL
+  ─────────────── ─────────────────────────────────── ────  ────────  ────────────────────────────────────
+G glassworm       /app/utils.py                         42  CRITICAL  invisible char U+202E (RIGHT-TO-LEFT OVERRIDE) detected
+D dep-confusion   /app/.npmrc                            -  HIGH      scoped package @myco has no registry mapping in .npmrc
+D dep-confusion   /app/requirements.txt                 15  HIGH      --extra-index-url found: pip selects highest version across all indexes
+
+G = GlassWorm (invisible/zero-width character injection)
+D = Dependency Confusion (private package resolvable from public registry)
+
+Local findings: 3 (1 glassworm, 2 dep-confusion)
 ```
 
 ### JSON 出力 (`--format json`)
 
-stdout に JSON のみ出力。進捗ログは stderr に出力されるため、パイプ処理が可能。
+stdout に JSON のみ出力（脆弱性結果と `localFindings` フィールドのローカル検知結果を含む）。進捗ログは stderr に出力されるため、パイプ処理が可能。
 
 ## 終了コード
 
 | コード | 意味 |
 |---|---|
-| `0` | 脆弱性・マルウェアなし（collect の場合は成功） |
-| `1` | 脆弱性またはマルウェアあり（CI/CD 連携用） |
+| `0` | 脆弱性・マルウェア・ローカル検知結果なし（collect の場合は成功） |
+| `1` | 脆弱性、マルウェア、またはローカルセキュリティ検知結果あり（CI/CD 連携用） |
 | `2` | 実行失敗 |
 
 ## CI/CD での利用例
@@ -203,13 +250,19 @@ heretix-cli/
 ├── container/              # Docker イメージ取得・展開
 ├── inventory/              # 検出リスト JSON スキーマ・I/O
 ├── checker/                # 脆弱性 API クライアント
+├── detector/               # ローカルセキュリティ検知 (Detector インターフェース)
 ├── report/                 # テーブル・JSON 出力
 └── sbom/                   # CycloneDX SBOM 生成
 ```
 
 ## 拡張
 
-新しいエコシステムを追加するには:
+### 新しいエコシステムコレクターを追加するには
 
 1. `collector/` に `Collector` インターフェースの実装を追加
 2. `collector/collect.go` の `CollectAll` 内のリストに登録
+
+### 新しいローカルセキュリティ検知を追加するには
+
+1. `detector/` に `Detector` インターフェースの実装を追加
+2. `detector/detector.go` の `RunAll` 内のリストに登録

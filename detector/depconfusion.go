@@ -1,0 +1,672 @@
+package detector
+
+import (
+	"bufio"
+	"encoding/json"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// DepConfusionDetector scans project configuration and lockfiles for indicators
+// of Dependency Confusion attack vectors.
+type DepConfusionDetector struct{}
+
+func (d *DepConfusionDetector) Name() string { return "dep-confusion" }
+
+// Detect walks scanPath looking for dependency confusion indicators across
+// npm, Python, and Go ecosystems.
+func (d *DepConfusionDetector) Detect(scanPath string, verbose bool) ([]Finding, error) {
+	var findings []Finding
+
+	err := filepath.WalkDir(scanPath, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if entry.IsDir() {
+			if skipDirs[entry.Name()] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		name := entry.Name()
+		switch name {
+		case "package.json":
+			findings = append(findings, checkPackageJSON(path)...)
+		case ".npmrc":
+			// .npmrc is read together with package.json; handled there
+		case "package-lock.json":
+			findings = append(findings, checkPackageLock(path)...)
+		case "yarn.lock":
+			findings = append(findings, checkYarnLock(path)...)
+		case "pnpm-lock.yaml":
+			findings = append(findings, checkPnpmLock(path)...)
+		case "requirements.txt":
+			findings = append(findings, checkRequirementsTxt(path)...)
+		case "pip.conf", "pip.ini":
+			findings = append(findings, checkPipConf(path)...)
+		case "Pipfile":
+			findings = append(findings, checkPipfile(path)...)
+		case "pyproject.toml":
+			findings = append(findings, checkPyprojectToml(path)...)
+		case "go.env":
+			findings = append(findings, checkGoEnv(path, scanPath)...)
+		}
+		return nil
+	})
+
+	return findings, err
+}
+
+// ── npm ──────────────────────────────────────────────────────────────────────
+
+// checkPackageJSON checks for scoped packages without a corresponding .npmrc
+// registry mapping, and for unpinned version specifiers.
+func checkPackageJSON(path string) []Finding {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+
+	var pkg struct {
+		Dependencies    map[string]string `json:"dependencies"`
+		DevDependencies map[string]string `json:"devDependencies"`
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return nil
+	}
+
+	// Collect all scopes used
+	scopes := map[string]bool{}
+	allDeps := map[string]string{}
+	for k, v := range pkg.Dependencies {
+		allDeps[k] = v
+	}
+	for k, v := range pkg.DevDependencies {
+		allDeps[k] = v
+	}
+
+	for name := range allDeps {
+		if strings.HasPrefix(name, "@") {
+			parts := strings.SplitN(name, "/", 2)
+			if len(parts) == 2 {
+				scopes[parts[0]] = true
+			}
+		}
+	}
+
+	var findings []Finding
+
+	// (1) Check .npmrc in the same directory for scope→registry mappings
+	if len(scopes) > 0 {
+		npmrcPath := filepath.Join(filepath.Dir(path), ".npmrc")
+		mappedScopes := readNpmrcScopeMappings(npmrcPath)
+		for scope := range scopes {
+			if !mappedScopes[scope] {
+				findings = append(findings, Finding{
+					Type:      "dep-confusion",
+					Severity:  "HIGH",
+					File:      path,
+					Package:   scope,
+					Ecosystem: "npm",
+					Detail:    "scoped package " + scope + " has no registry mapping in .npmrc — npm will resolve from public registry",
+				})
+			}
+		}
+	}
+
+	// (2) Unpinned version specifiers
+	unpinnedPrefixes := []string{"^", "~", "*", "x", "latest", "next", ""}
+	for name, ver := range allDeps {
+		for _, pfx := range unpinnedPrefixes {
+			if pfx == "" {
+				if ver == "" {
+					findings = append(findings, Finding{
+						Type:      "dep-confusion",
+						Severity:  "MEDIUM",
+						File:      path,
+						Package:   name,
+						Ecosystem: "npm",
+						Detail:    "package " + name + " has no version pinned — attacker can publish higher version to public registry",
+					})
+				}
+			} else if strings.HasPrefix(ver, pfx) {
+				findings = append(findings, Finding{
+					Type:      "dep-confusion",
+					Severity:  "MEDIUM",
+					File:      path,
+					Package:   name,
+					Ecosystem: "npm",
+					Detail:    "package " + name + " uses unpinned version \"" + ver + "\" — attacker can publish higher version to public registry",
+				})
+				break
+			}
+		}
+	}
+
+	return findings
+}
+
+// readNpmrcScopeMappings parses an .npmrc file and returns the set of scopes
+// that have an explicit registry mapping (e.g. @myco:registry=https://...).
+func readNpmrcScopeMappings(path string) map[string]bool {
+	mapped := map[string]bool{}
+	f, err := os.Open(path)
+	if err != nil {
+		return mapped
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "@") && strings.Contains(line, ":registry=") {
+			scope := strings.SplitN(line, ":", 2)[0]
+			mapped[scope] = true
+		}
+	}
+	return mapped
+}
+
+// checkPackageLock checks package-lock.json for scoped packages resolved from
+// the public npm registry.
+func checkPackageLock(path string) []Finding {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+
+	// Support both lockfileVersion 1 (packages at top level) and v2/v3
+	var lock struct {
+		Packages map[string]struct {
+			Resolved string `json:"resolved"`
+		} `json:"packages"`
+		Dependencies map[string]struct {
+			Resolved string `json:"resolved"`
+		} `json:"dependencies"`
+	}
+	if err := json.Unmarshal(data, &lock); err != nil {
+		return nil
+	}
+
+	var findings []Finding
+	check := func(name, resolved string) {
+		if !strings.HasPrefix(name, "@") {
+			return
+		}
+		if strings.Contains(resolved, "registry.npmjs.org") {
+			findings = append(findings, Finding{
+				Type:      "dep-confusion",
+				Severity:  "HIGH",
+				File:      path,
+				Package:   name,
+				Ecosystem: "npm",
+				Detail:    "scoped package " + name + " resolved from public registry.npmjs.org — verify this is intentional",
+			})
+		}
+	}
+
+	for name, pkg := range lock.Packages {
+		// v2/v3: keys like "node_modules/@scope/pkg"
+		pkgName := strings.TrimPrefix(name, "node_modules/")
+		check(pkgName, pkg.Resolved)
+	}
+	for name, dep := range lock.Dependencies {
+		check(name, dep.Resolved)
+	}
+
+	return findings
+}
+
+// checkYarnLock checks yarn.lock for scoped packages resolved from the public registry.
+func checkYarnLock(path string) []Finding {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	var findings []Finding
+	var currentPkg string
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Package header: `"@scope/name@version":`  or  `@scope/name@version:`
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") && strings.HasSuffix(trimmed, ":") {
+			currentPkg = trimmed
+		}
+
+		if strings.HasPrefix(trimmed, "resolved ") && strings.HasPrefix(currentPkg, "@") {
+			// Extract quoted URL
+			parts := strings.Fields(trimmed)
+			if len(parts) >= 2 {
+				url := strings.Trim(parts[1], `"`)
+				if strings.Contains(url, "registry.npmjs.org") {
+					pkgName := strings.Split(strings.Trim(currentPkg, `":`), "@")[0]
+					if pkgName == "" && len(strings.SplitN(currentPkg, "@", 3)) >= 2 {
+						pkgName = "@" + strings.SplitN(strings.Trim(currentPkg, `":`), "@", 3)[1]
+					}
+					findings = append(findings, Finding{
+						Type:      "dep-confusion",
+						Severity:  "HIGH",
+						File:      path,
+						Package:   pkgName,
+						Ecosystem: "npm",
+						Detail:    "scoped package resolved from public registry.npmjs.org in yarn.lock — verify this is intentional",
+					})
+				}
+			}
+		}
+	}
+	return findings
+}
+
+// checkPnpmLock checks pnpm-lock.yaml for scoped packages with tarball URLs
+// pointing to the public npm registry. Uses line-by-line parsing to avoid
+// an external YAML dependency.
+func checkPnpmLock(path string) []Finding {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	var findings []Finding
+	var currentPkg string
+	reported := map[string]bool{}
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		trimmed := strings.TrimSpace(line)
+
+		// Package key lines look like:
+		//   /@scope/name@1.0.0:   (v5/v6)
+		//   @scope/name@1.0.0:    (v9)
+		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") && strings.HasSuffix(trimmed, ":") {
+			key := strings.TrimSuffix(trimmed, ":")
+			key = strings.TrimPrefix(key, "/") // v5/v6 prefix
+			if strings.HasPrefix(key, "@") {
+				currentPkg = key
+			} else {
+				currentPkg = ""
+			}
+		}
+
+		// tarball: https://registry.npmjs.org/...
+		if currentPkg != "" && strings.HasPrefix(trimmed, "tarball:") {
+			url := strings.TrimSpace(strings.TrimPrefix(trimmed, "tarball:"))
+			if strings.Contains(url, "registry.npmjs.org") && !reported[currentPkg] {
+				reported[currentPkg] = true
+				findings = append(findings, Finding{
+					Type:      "dep-confusion",
+					Severity:  "HIGH",
+					File:      path,
+					Package:   currentPkg,
+					Ecosystem: "npm",
+					Detail:    "scoped package " + currentPkg + " tarball resolved from public registry.npmjs.org in pnpm-lock.yaml",
+				})
+			}
+		}
+	}
+	return findings
+}
+
+// ── Python ───────────────────────────────────────────────────────────────────
+
+// checkRequirementsTxt checks for --extra-index-url usage and unpinned versions.
+func checkRequirementsTxt(path string) []Finding {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	var findings []Finding
+	lineNum := 0
+	hasExtraIndex := false
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		lineNum++
+		line := strings.TrimSpace(scanner.Text())
+
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		// (4) --extra-index-url — HIGH risk
+		if strings.HasPrefix(line, "--extra-index-url") || strings.HasPrefix(line, "-e ") {
+			if !hasExtraIndex {
+				findings = append(findings, Finding{
+					Type:      "dep-confusion",
+					Severity:  "HIGH",
+					File:      path,
+					Line:      lineNum,
+					Ecosystem: "PyPI",
+					Detail:    "--extra-index-url found: pip selects highest version across all indexes — attacker can publish higher version to public PyPI",
+				})
+				hasExtraIndex = true
+			}
+			continue
+		}
+
+		// Skip other options
+		if strings.HasPrefix(line, "-") {
+			continue
+		}
+
+		// (5) Unpinned version specifiers
+		if !strings.Contains(line, "==") {
+			pkgName := line
+			if idx := strings.IndexAny(line, "><!~@["); idx > 0 {
+				pkgName = line[:idx]
+			}
+			pkgName = strings.TrimSpace(pkgName)
+			severity := "MEDIUM"
+			detail := "package " + pkgName + " is not pinned with == — use exact version to prevent substitution"
+			if strings.Contains(line, ">=") || strings.Contains(line, "~=") {
+				detail = "package " + pkgName + " uses range specifier — attacker can publish higher version to public PyPI"
+			}
+			findings = append(findings, Finding{
+				Type:      "dep-confusion",
+				Severity:  severity,
+				File:      path,
+				Line:      lineNum,
+				Package:   pkgName,
+				Ecosystem: "PyPI",
+				Detail:    detail,
+			})
+			continue
+		}
+
+		// (6) Missing integrity hash
+		if !strings.Contains(line, "--hash=") {
+			pkgName := strings.SplitN(line, "==", 2)[0]
+			findings = append(findings, Finding{
+				Type:      "dep-confusion",
+				Severity:  "LOW",
+				File:      path,
+				Line:      lineNum,
+				Package:   strings.TrimSpace(pkgName),
+				Ecosystem: "PyPI",
+				Detail:    "package " + strings.TrimSpace(pkgName) + " has no --hash= integrity check",
+			})
+		}
+	}
+
+	return findings
+}
+
+// checkPipConf checks pip.conf / pip.ini for extra-index-url configuration.
+func checkPipConf(path string) []Finding {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	var findings []Finding
+	lineNum := 0
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		lineNum++
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "extra-index-url") || strings.HasPrefix(line, "extra_index_url") {
+			findings = append(findings, Finding{
+				Type:      "dep-confusion",
+				Severity:  "HIGH",
+				File:      path,
+				Line:      lineNum,
+				Ecosystem: "PyPI",
+				Detail:    "extra-index-url in pip config: pip selects highest version across all indexes — attacker can publish higher version to public PyPI",
+			})
+		}
+	}
+	return findings
+}
+
+// checkPipfile checks Pipfile [[source]] entries for non-PyPI sources.
+func checkPipfile(path string) []Finding {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+
+	var findings []Finding
+	inSource := false
+	hasNonPyPI := false
+
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "[[source]]" {
+			inSource = true
+			hasNonPyPI = false
+			continue
+		}
+		if inSource && strings.HasPrefix(trimmed, "url") {
+			url := strings.Trim(strings.SplitN(trimmed, "=", 2)[len(strings.SplitN(trimmed, "=", 2))-1], ` "`)
+			if !strings.Contains(url, "pypi.org") {
+				hasNonPyPI = true
+			}
+		}
+		if inSource && (trimmed == "" || strings.HasPrefix(trimmed, "[")) {
+			if hasNonPyPI {
+				findings = append(findings, Finding{
+					Type:      "dep-confusion",
+					Severity:  "HIGH",
+					File:      path,
+					Ecosystem: "PyPI",
+					Detail:    "Pipfile [[source]] with non-PyPI URL: if same package exists on PyPI with higher version, pip may prefer it",
+				})
+			}
+			inSource = false
+		}
+	}
+	return findings
+}
+
+// checkPyprojectToml checks pyproject.toml for non-standard Poetry/uv sources.
+func checkPyprojectToml(path string) []Finding {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+
+	var findings []Finding
+	lines := strings.Split(string(data), "\n")
+	inPoetrySource := false
+	inUvIndex := false
+	sourceURL := ""
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Poetry: [[tool.poetry.source]]
+		if trimmed == "[[tool.poetry.source]]" {
+			inPoetrySource = true
+			inUvIndex = false
+			sourceURL = ""
+			continue
+		}
+		// uv: [[tool.uv.index]]
+		if trimmed == "[[tool.uv.index]]" {
+			inUvIndex = true
+			inPoetrySource = false
+			sourceURL = ""
+			continue
+		}
+
+		if (inPoetrySource || inUvIndex) && strings.HasPrefix(trimmed, "url") {
+			parts := strings.SplitN(trimmed, "=", 2)
+			if len(parts) == 2 {
+				sourceURL = strings.Trim(strings.TrimSpace(parts[1]), `"'`)
+			}
+		}
+
+		// End of block
+		isLastLine := i == len(lines)-1
+		nextIsBlock := isLastLine || strings.HasPrefix(strings.TrimSpace(lines[i+1]), "[")
+		if (inPoetrySource || inUvIndex) && (trimmed == "" && nextIsBlock || isLastLine) {
+			if sourceURL != "" && !strings.Contains(sourceURL, "pypi.org") {
+				ecosystem := "PyPI"
+				tool := "Poetry"
+				if inUvIndex {
+					tool = "uv"
+				}
+				findings = append(findings, Finding{
+					Type:      "dep-confusion",
+					Severity:  "HIGH",
+					File:      path,
+					Ecosystem: ecosystem,
+					Detail:    tool + " non-PyPI source configured (" + sourceURL + "): if same package exists on PyPI with higher version, it may be preferred",
+				})
+			}
+			inPoetrySource = false
+			inUvIndex = false
+		}
+	}
+	return findings
+}
+
+// ── Go ───────────────────────────────────────────────────────────────────────
+
+// checkGoEnv checks go.env for GOPROXY/GOPRIVATE misconfigurations.
+func checkGoEnv(path, scanPath string) []Finding {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	env := map[string]string{}
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if k, v, ok := strings.Cut(line, "="); ok {
+			env[k] = strings.Trim(v, `"`)
+		}
+	}
+
+	var findings []Finding
+
+	goproxy := env["GOPROXY"]
+	goprivate := env["GOPRIVATE"]
+
+	// (7) Public proxy present without GOPRIVATE coverage
+	usesPublicProxy := strings.Contains(goproxy, "proxy.golang.org") || strings.Contains(goproxy, "direct")
+	if usesPublicProxy || goproxy == "" {
+		// Check go.mod for module paths that look internal
+		internalPaths := findInternalGoModPaths(scanPath)
+		for _, modPath := range internalPaths {
+			if !isCoveredByGOPRIVATE(modPath, goprivate) {
+				findings = append(findings, Finding{
+					Type:      "dep-confusion",
+					Severity:  "HIGH",
+					File:      path,
+					Package:   modPath,
+					Ecosystem: "go",
+					Detail:    "module " + modPath + " may be resolved via public GOPROXY — set GOPRIVATE to exclude internal modules",
+				})
+			}
+		}
+	}
+
+	return findings
+}
+
+// findInternalGoModPaths walks scanPath for go.mod files and returns module paths
+// that look like internal/private paths (non-standard domains or known internal patterns).
+func findInternalGoModPaths(scanPath string) []string {
+	var paths []string
+	seen := map[string]bool{}
+
+	_ = filepath.WalkDir(scanPath, func(p string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			if entry != nil && entry.IsDir() && skipDirs[entry.Name()] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.Name() != "go.mod" {
+			return nil
+		}
+		f, err := os.Open(p)
+		if err != nil {
+			return nil
+		}
+		defer f.Close()
+
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if strings.HasPrefix(line, "module ") {
+				modPath := strings.TrimPrefix(line, "module ")
+				modPath = strings.TrimSpace(modPath)
+				if looksInternal(modPath) && !seen[modPath] {
+					seen[modPath] = true
+					paths = append(paths, modPath)
+				}
+			}
+		}
+		return nil
+	})
+	return paths
+}
+
+// looksInternal returns true if a Go module path looks like a private/internal module.
+// Heuristics: non-dotted hostname, internal. prefix, or private TLDs.
+func looksInternal(modPath string) bool {
+	if modPath == "" {
+		return false
+	}
+	host := strings.SplitN(modPath, "/", 2)[0]
+	// Standard public hosts
+	publicHosts := []string{"github.com", "golang.org", "google.golang.org", "gopkg.in", "k8s.io", "sigs.k8s.io"}
+	for _, h := range publicHosts {
+		if host == h || strings.HasSuffix(host, "."+h) {
+			return false
+		}
+	}
+	// No dot in host → local/internal (e.g. "mycompany")
+	if !strings.Contains(host, ".") {
+		return true
+	}
+	// internal. subdomain
+	if strings.HasPrefix(host, "internal.") || strings.Contains(host, ".internal") {
+		return true
+	}
+	return false
+}
+
+// isCoveredByGOPRIVATE reports whether modPath matches any comma-separated
+// glob pattern in goprivate (same semantics as Go's GOPRIVATE env var).
+func isCoveredByGOPRIVATE(modPath, goprivate string) bool {
+	if goprivate == "" {
+		return false
+	}
+	for _, pattern := range strings.Split(goprivate, ",") {
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" {
+			continue
+		}
+		// Simple prefix match (Go's GOPRIVATE uses path prefix, not full glob)
+		if strings.HasPrefix(modPath, pattern) {
+			return true
+		}
+		// Wildcard: *.example.com matches foo.example.com
+		if strings.HasPrefix(pattern, "*.") {
+			suffix := pattern[1:] // ".example.com"
+			host := strings.SplitN(modPath, "/", 2)[0]
+			if strings.HasSuffix(host, suffix) {
+				return true
+			}
+		}
+	}
+	return false
+}
