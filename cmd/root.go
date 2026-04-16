@@ -10,7 +10,7 @@ import (
 
 var rootCmd = &cobra.Command{
 	Use:     "heretix-cli",
-	Version: "0.1.2",
+	Version: "0.1.4",
 	Short:   "CLI vulnerability scanner for OS and OSS packages",
 	Long: `heretix-cli scans installed software (RPM, PyPI, npm) on Linux servers,
 exports a detection list as JSON, and queries a vulnerability API
