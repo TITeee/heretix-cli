@@ -27,6 +27,10 @@ func RunAll(scanPath string, verbose bool) ([]Finding, error) {
 	detectors := []Detector{
 		&GlassWormDetector{},
 		&DepConfusionDetector{},
+		&MaliciousInstallDetector{},
+		&CICDPoisoningDetector{},
+		&HardcodedSecretsDetector{},
+		&LockFileIntegrityDetector{},
 	}
 
 	var all []Finding

