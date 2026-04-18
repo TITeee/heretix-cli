@@ -8,11 +8,14 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 )
 
 // HardcodedSecretsDetector scans source and config files for hardcoded secrets
 // using both known-format patterns and Shannon entropy analysis.
-type HardcodedSecretsDetector struct{}
+type HardcodedSecretsDetector struct {
+	baseDetector
+}
 
 func (d *HardcodedSecretsDetector) Name() string { return "hardcoded-secrets" }
 
@@ -67,6 +70,9 @@ var secretSkipDirs = map[string]bool{
 	"__pycache__":  true,
 	"vendor":       true,
 	".tox":         true,
+	"target":       true,
+	".next":        true,
+	".nuxt":        true,
 }
 
 // secretTargetExtensions are the file types scanned for secrets.
@@ -89,7 +95,7 @@ var placeholderREs = []*regexp.Regexp{
 
 var hexOnlyRE = regexp.MustCompile(`^[0-9a-fA-F]+$`)
 
-func (d *HardcodedSecretsDetector) Detect(scanPath string, verbose bool) ([]Finding, error) {
+func (d *HardcodedSecretsDetector) Detect(scanPath string, verbose bool, progress *atomic.Int64) ([]Finding, error) {
 	var findings []Finding
 
 	err := filepath.WalkDir(scanPath, func(path string, entry fs.DirEntry, err error) error {
@@ -97,11 +103,12 @@ func (d *HardcodedSecretsDetector) Detect(scanPath string, verbose bool) ([]Find
 			return nil
 		}
 		if entry.IsDir() {
-			if secretSkipDirs[entry.Name()] {
+			if secretSkipDirs[entry.Name()] || d.shouldSkipDir(path) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
+		progress.Add(1)
 
 		name := entry.Name()
 		if isExampleOrTestFile(name) {

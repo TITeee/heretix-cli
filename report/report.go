@@ -224,18 +224,21 @@ func PrintFindings(w io.Writer, findings []detector.Finding) {
 		strings.Repeat("─", 8),
 		strings.Repeat("─", 20))
 
-	glasswormCount := 0
-	depConfusionCount := 0
+	typePrefixes := map[string]string{
+		"glassworm":        "G",
+		"dep-confusion":    "D",
+		"malicious-install": "M",
+		"cicd-poisoning":   "C",
+		"hardcoded-secrets": "S",
+		"lockfile-integrity": "L",
+	}
+	typeCounts := make(map[string]int)
 
 	for _, f := range findings {
-		prefix := "G "
-		switch f.Type {
-		case "glassworm":
-			prefix = "G "
-			glasswormCount++
-		case "dep-confusion":
-			prefix = "D "
-			depConfusionCount++
+		typeCounts[f.Type]++
+		prefix := typePrefixes[f.Type]
+		if prefix == "" {
+			prefix = "?"
 		}
 
 		lineStr := "-"
@@ -253,29 +256,48 @@ func PrintFindings(w io.Writer, findings []detector.Finding) {
 			detail = detail[:57] + "..."
 		}
 
-		fmt.Fprintf(w, "%s%-14s %-35s %4s  %-8s  %s\n",
+		fmt.Fprintf(w, "%s %-14s %-35s %4s  %-8s  %s\n",
 			prefix, f.Type, fileDisplay, lineStr, f.Severity, detail)
 	}
 
 	fmt.Fprintln(w)
-	if glasswormCount > 0 {
-		fmt.Fprintln(w, "G = GlassWorm (invisible/zero-width character injection)")
+	legends := []struct{ typ, label string }{
+		{"glassworm", "G = GlassWorm (invisible/zero-width character injection)"},
+		{"dep-confusion", "D = Dependency Confusion (private package resolvable from public registry)"},
+		{"malicious-install", "M = Malicious Install (malicious lifecycle script or setup.py)"},
+		{"cicd-poisoning", "C = CI/CD Poisoning (pipeline script injection or tampering)"},
+		{"hardcoded-secrets", "S = Hardcoded Secrets (credentials or tokens in source code)"},
+		{"lockfile-integrity", "L = Lock File Integrity (tampered or inconsistent lock file)"},
 	}
-	if depConfusionCount > 0 {
-		fmt.Fprintln(w, "D = Dependency Confusion (private package resolvable from public registry)")
+	for _, l := range legends {
+		if typeCounts[l.typ] > 0 {
+			fmt.Fprintln(w, l.label)
+		}
 	}
+
 	fmt.Fprintf(w, "\nLocal findings: %d", len(findings))
 	extras := []string{}
-	if glasswormCount > 0 {
-		extras = append(extras, fmt.Sprintf("%d glassworm", glasswormCount))
-	}
-	if depConfusionCount > 0 {
-		extras = append(extras, fmt.Sprintf("%d dep-confusion", depConfusionCount))
+	for _, l := range legends {
+		if typeCounts[l.typ] > 0 {
+			extras = append(extras, fmt.Sprintf("%d %s", typeCounts[l.typ], l.typ))
+		}
 	}
 	if len(extras) > 0 {
 		fmt.Fprintf(w, " (%s)", strings.Join(extras, ", "))
 	}
 	fmt.Fprintln(w)
+}
+
+// PrintFindingsJSON writes only local findings as JSON to w.
+func PrintFindingsJSON(w io.Writer, findings []detector.Finding) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	out := struct {
+		LocalFindings []detector.Finding `json:"localFindings"`
+	}{
+		LocalFindings: findings,
+	}
+	return enc.Encode(out)
 }
 
 func truncate(s string, max int) string {

@@ -7,11 +7,14 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 )
 
 // CICDPoisoningDetector scans CI/CD configuration files for patterns commonly
 // used in pipeline poisoning and supply chain attacks.
-type CICDPoisoningDetector struct{}
+type CICDPoisoningDetector struct {
+	baseDetector
+}
 
 func (d *CICDPoisoningDetector) Name() string { return "cicd-poisoning" }
 
@@ -71,7 +74,7 @@ var cicdSkipDirs = map[string]bool{
 	"vendor":       true,
 }
 
-func (d *CICDPoisoningDetector) Detect(scanPath string, verbose bool) ([]Finding, error) {
+func (d *CICDPoisoningDetector) Detect(scanPath string, verbose bool, progress *atomic.Int64) ([]Finding, error) {
 	var findings []Finding
 
 	err := filepath.WalkDir(scanPath, func(path string, entry fs.DirEntry, err error) error {
@@ -79,11 +82,12 @@ func (d *CICDPoisoningDetector) Detect(scanPath string, verbose bool) ([]Finding
 			return nil
 		}
 		if entry.IsDir() {
-			if cicdSkipDirs[entry.Name()] {
+			if cicdSkipDirs[entry.Name()] || d.shouldSkipDir(path) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
+		progress.Add(1)
 
 		system := classifyCIFile(path)
 		if system == "" {

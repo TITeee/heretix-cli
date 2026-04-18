@@ -8,11 +8,14 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 )
 
 // MaliciousInstallDetector scans npm lifecycle scripts and Python setup.py
 // for patterns commonly used in supply chain / install-time attacks.
-type MaliciousInstallDetector struct{}
+type MaliciousInstallDetector struct {
+	baseDetector
+}
 
 func (d *MaliciousInstallDetector) Name() string { return "malicious-install" }
 
@@ -69,7 +72,7 @@ var skipMaliciousInstallDirs = map[string]bool{
 	"vendor":      true,
 }
 
-func (d *MaliciousInstallDetector) Detect(scanPath string, verbose bool) ([]Finding, error) {
+func (d *MaliciousInstallDetector) Detect(scanPath string, verbose bool, progress *atomic.Int64) ([]Finding, error) {
 	var findings []Finding
 
 	err := filepath.WalkDir(scanPath, func(path string, entry fs.DirEntry, err error) error {
@@ -77,11 +80,12 @@ func (d *MaliciousInstallDetector) Detect(scanPath string, verbose bool) ([]Find
 			return nil
 		}
 		if entry.IsDir() {
-			if skipMaliciousInstallDirs[entry.Name()] {
+			if skipMaliciousInstallDirs[entry.Name()] || d.shouldSkipDir(path) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
+		progress.Add(1)
 		switch entry.Name() {
 		case "package.json":
 			found, _ := checkInstallScripts(path)

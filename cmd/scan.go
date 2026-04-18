@@ -79,7 +79,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 	} else {
 		inv, err = collectFromFilesystem()
 		if err == nil && !scanSkipLocal {
-			localFindings, _ = detector.RunAll(scanScanPath, scanVerbose)
+			localFindings, _ = detector.RunAll(scanScanPath, scanVerbose, false)
 		}
 	}
 	if err != nil {
@@ -180,7 +180,7 @@ func collectFromImages(ctx context.Context) (*inventory.Inventory, []detector.Fi
 		fmt.Fprintf(os.Stderr, "Scanning image %s...\n", imageRef)
 		inv, err := collector.CollectAll(rootfs, scanSkip, scanVerbose, true)
 		if err == nil && !scanSkipLocal {
-			if findings, detErr := detector.RunAll(rootfs, scanVerbose); detErr == nil {
+			if findings, detErr := detector.RunAll(rootfs, scanVerbose, true); detErr == nil {
 				allFindings = append(allFindings, findings...)
 			}
 		}

@@ -6,11 +6,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 )
 
 // LockFileIntegrityDetector checks lockfiles for weak/missing integrity hashes,
 // and drift between manifests and their corresponding lockfiles.
-type LockFileIntegrityDetector struct{}
+type LockFileIntegrityDetector struct {
+	baseDetector
+}
 
 func (d *LockFileIntegrityDetector) Name() string { return "lockfile-integrity" }
 
@@ -23,7 +26,7 @@ var lockfileSkipDirs = map[string]bool{
 	"vendor":       true,
 }
 
-func (d *LockFileIntegrityDetector) Detect(scanPath string, verbose bool) ([]Finding, error) {
+func (d *LockFileIntegrityDetector) Detect(scanPath string, verbose bool, progress *atomic.Int64) ([]Finding, error) {
 	var findings []Finding
 
 	err := filepath.WalkDir(scanPath, func(path string, entry fs.DirEntry, err error) error {
@@ -31,11 +34,12 @@ func (d *LockFileIntegrityDetector) Detect(scanPath string, verbose bool) ([]Fin
 			return nil
 		}
 		if entry.IsDir() {
-			if lockfileSkipDirs[entry.Name()] {
+			if lockfileSkipDirs[entry.Name()] || d.shouldSkipDir(path) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
+		progress.Add(1)
 		switch entry.Name() {
 		case "package-lock.json":
 			found, _ := checkNpmLockIntegrity(path)

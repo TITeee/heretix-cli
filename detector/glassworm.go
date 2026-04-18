@@ -6,11 +6,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 )
 
 // GlassWormDetector scans source files for invisible/zero-width Unicode characters
 // that can be used to inject hidden malicious code (GlassWorm attack).
-type GlassWormDetector struct{}
+type GlassWormDetector struct {
+	baseDetector
+}
 
 func (d *GlassWormDetector) Name() string { return "glassworm" }
 
@@ -65,7 +68,7 @@ var skipDirs = map[string]bool{
 }
 
 // Detect walks scanPath and reports files containing invisible/zero-width characters.
-func (d *GlassWormDetector) Detect(scanPath string, verbose bool) ([]Finding, error) {
+func (d *GlassWormDetector) Detect(scanPath string, verbose bool, progress *atomic.Int64) ([]Finding, error) {
 	var findings []Finding
 
 	err := filepath.WalkDir(scanPath, func(path string, entry fs.DirEntry, err error) error {
@@ -73,11 +76,12 @@ func (d *GlassWormDetector) Detect(scanPath string, verbose bool) ([]Finding, er
 			return nil // skip unreadable paths
 		}
 		if entry.IsDir() {
-			if skipDirs[entry.Name()] {
+			if skipDirs[entry.Name()] || d.shouldSkipDir(path) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
+		progress.Add(1)
 
 		ext := strings.ToLower(filepath.Ext(entry.Name()))
 		if !targetExtensions[ext] {

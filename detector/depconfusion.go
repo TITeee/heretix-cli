@@ -7,17 +7,20 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 )
 
 // DepConfusionDetector scans project configuration and lockfiles for indicators
 // of Dependency Confusion attack vectors.
-type DepConfusionDetector struct{}
+type DepConfusionDetector struct {
+	baseDetector
+}
 
 func (d *DepConfusionDetector) Name() string { return "dep-confusion" }
 
 // Detect walks scanPath looking for dependency confusion indicators across
 // npm, Python, and Go ecosystems.
-func (d *DepConfusionDetector) Detect(scanPath string, verbose bool) ([]Finding, error) {
+func (d *DepConfusionDetector) Detect(scanPath string, verbose bool, progress *atomic.Int64) ([]Finding, error) {
 	var findings []Finding
 
 	err := filepath.WalkDir(scanPath, func(path string, entry fs.DirEntry, err error) error {
@@ -25,11 +28,12 @@ func (d *DepConfusionDetector) Detect(scanPath string, verbose bool) ([]Finding,
 			return nil
 		}
 		if entry.IsDir() {
-			if skipDirs[entry.Name()] {
+			if skipDirs[entry.Name()] || d.shouldSkipDir(path) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
+		progress.Add(1)
 
 		name := entry.Name()
 		switch name {
@@ -52,7 +56,7 @@ func (d *DepConfusionDetector) Detect(scanPath string, verbose bool) ([]Finding,
 		case "pyproject.toml":
 			findings = append(findings, checkPyprojectToml(path)...)
 		case "go.env":
-			findings = append(findings, checkGoEnv(path, scanPath)...)
+			findings = append(findings, checkGoEnv(path)...)
 		}
 		return nil
 	})
@@ -537,7 +541,9 @@ func checkPyprojectToml(path string) []Finding {
 // ── Go ───────────────────────────────────────────────────────────────────────
 
 // checkGoEnv checks go.env for GOPROXY/GOPRIVATE misconfigurations.
-func checkGoEnv(path, scanPath string) []Finding {
+// Instead of walking the entire tree for go.mod files, it reads only the sibling
+// go.mod in the same directory as the go.env (the module that owns this config).
+func checkGoEnv(path string) []Finding {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil
@@ -553,18 +559,27 @@ func checkGoEnv(path, scanPath string) []Finding {
 		}
 	}
 
-	var findings []Finding
-
 	goproxy := env["GOPROXY"]
 	goprivate := env["GOPRIVATE"]
 
-	// (7) Public proxy present without GOPRIVATE coverage
 	usesPublicProxy := strings.Contains(goproxy, "proxy.golang.org") || strings.Contains(goproxy, "direct")
-	if usesPublicProxy || goproxy == "" {
-		// Check go.mod for module paths that look internal
-		internalPaths := findInternalGoModPaths(scanPath)
-		for _, modPath := range internalPaths {
-			if !isCoveredByGOPRIVATE(modPath, goprivate) {
+	if !usesPublicProxy && goproxy != "" {
+		return nil
+	}
+
+	// Read only the sibling go.mod — the module that owns this go.env.
+	siblingMod := filepath.Join(filepath.Dir(path), "go.mod")
+	data, err := os.ReadFile(siblingMod)
+	if err != nil {
+		return nil
+	}
+
+	var findings []Finding
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "module ") {
+			modPath := strings.TrimSpace(strings.TrimPrefix(line, "module "))
+			if looksInternal(modPath) && !isCoveredByGOPRIVATE(modPath, goprivate) {
 				findings = append(findings, Finding{
 					Type:      "dep-confusion",
 					Severity:  "HIGH",
@@ -574,49 +589,10 @@ func checkGoEnv(path, scanPath string) []Finding {
 					Detail:    "module " + modPath + " may be resolved via public GOPROXY — set GOPRIVATE to exclude internal modules",
 				})
 			}
+			break
 		}
 	}
-
 	return findings
-}
-
-// findInternalGoModPaths walks scanPath for go.mod files and returns module paths
-// that look like internal/private paths (non-standard domains or known internal patterns).
-func findInternalGoModPaths(scanPath string) []string {
-	var paths []string
-	seen := map[string]bool{}
-
-	_ = filepath.WalkDir(scanPath, func(p string, entry fs.DirEntry, err error) error {
-		if err != nil || entry.IsDir() {
-			if entry != nil && entry.IsDir() && skipDirs[entry.Name()] {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if entry.Name() != "go.mod" {
-			return nil
-		}
-		f, err := os.Open(p)
-		if err != nil {
-			return nil
-		}
-		defer f.Close()
-
-		scanner := bufio.NewScanner(f)
-		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			if strings.HasPrefix(line, "module ") {
-				modPath := strings.TrimPrefix(line, "module ")
-				modPath = strings.TrimSpace(modPath)
-				if looksInternal(modPath) && !seen[modPath] {
-					seen[modPath] = true
-					paths = append(paths, modPath)
-				}
-			}
-		}
-		return nil
-	})
-	return paths
 }
 
 // looksInternal returns true if a Go module path looks like a private/internal module.
