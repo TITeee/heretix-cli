@@ -145,6 +145,8 @@ heretix-cli detect --image myapp:latest --dockerfile ./Dockerfile
 
 ## ローカルセキュリティ検知
 
+> **ベータ版**: ローカルセキュリティ検知は現在ベータ版です。検知ルールは誤検知を含む場合があり、今後のリリースでカバレッジが拡充される予定です。
+
 `scan` および `detect` コマンドは、ネットワークアクセスを必要としない 5 種類のローカル検知を実行します。
 
 Docker イメージスキャン（`--image`）時は、全検知器が OS のシステムディレクトリを自動スキップします（`/usr/share`、`/usr/lib/python*`、`/var/cache`、`/proc`、`/sys`、`/dev`、`/boot` 等）。これにより数百万件の無関係なファイルのスキャンを回避します。

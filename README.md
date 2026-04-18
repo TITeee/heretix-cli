@@ -145,6 +145,8 @@ heretix-cli detect --image myapp:latest --dockerfile ./Dockerfile
 
 ## Local Security Checks
 
+> **Beta**: Local security checks are currently in beta. Detection rules may produce false positives, and coverage will expand in future releases.
+
 The `scan` and `detect` commands run five local checks that require no network access.
 
 When scanning a Docker image (`--image`), OS system directories are automatically skipped across all detectors (`/usr/share`, `/usr/lib/python*`, `/var/cache`, `/proc`, `/sys`, `/dev`, `/boot`, etc.) to avoid scanning millions of irrelevant OS files.
