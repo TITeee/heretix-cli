@@ -120,6 +120,7 @@ HERETIX_API_KEY=your-secret-key heretix-cli scan --api-url http://heretix-api:50
 | `--image` | (なし) | スキャンする Docker イメージ参照 |
 | `--dockerfile` | (なし) | Dockerfile パス: FROM のベースイメージも連鎖スキャン |
 | `--skip-local` | `false` | ローカルセキュリティ検知をスキップ（GlassWorm・Dependency Confusion・Malicious Install・CI/CD Poisoning・Lock File Integrity） |
+| `--check-registry` | `false` | 未知の npm スコープを npmjs.org に問い合わせて判定（ネットワーク必須） |
 
 ### ローカル検知のみ実行 (`detect`)
 
@@ -142,6 +143,7 @@ heretix-cli detect --image myapp:latest --dockerfile ./Dockerfile
 | `--dockerfile` | (なし) | Dockerfile パス: FROM のベースイメージも連鎖スキャン |
 | `--format` | `table` | 出力形式: `table` / `json` |
 | `--verbose` | `false` | 詳細ログ出力 |
+| `--check-registry` | `false` | 未知の npm スコープを npmjs.org に問い合わせて判定（ネットワーク必須） |
 
 ## ローカルセキュリティ検知
 
@@ -149,7 +151,10 @@ heretix-cli detect --image myapp:latest --dockerfile ./Dockerfile
 
 `scan` および `detect` コマンドは、ネットワークアクセスを必要としない 5 種類のローカル検知を実行します。
 
-Docker イメージスキャン（`--image`）時は、全検知器が OS のシステムディレクトリを自動スキップします（`/usr/share`、`/usr/lib/python*`、`/var/cache`、`/proc`、`/sys`、`/dev`、`/boot` 等）。これにより数百万件の無関係なファイルのスキャンを回避します。
+**自動スキップパス** — 誤検知防止と不要な I/O 削減のため、以下のディレクトリを自動的にスキップします。
+
+- **ホストスキャン時**: `/proc`、`/sys`、`/dev`、`/boot`、`/run`、`/tmp`、`/var/lib/docker`、`/var/lib/containerd`、`/var/lib/kubelet`、`/usr/src`、`/usr/local/lib/python*`、`/usr/lib/python*`
+- **Docker イメージスキャン時**（`--image`）: 上記に加え `/usr/share`、`/usr/lib/locale`、`/usr/lib/node_modules`、`/var/cache`、`/var/lib/apt`、`/var/lib/dpkg`
 
 ### GlassWorm 検知
 
@@ -163,22 +168,30 @@ Docker イメージスキャン（`--image`）時は、全検知器が OS のシ
 | U+200B/C/D ゼロ幅スペース・結合子 | MEDIUM |
 | U+2060, U+034F ワードジョイナー等 | MEDIUM |
 
-対象ファイル: `*.py`, `*.js`, `*.ts`, `*.go`, `*.php`, `*.rb`, `*.json`, `*.lock`, `*.toml`, `*.cfg`
+**U+200B/200C/200D のコンテキスト判定**: これらの文字はデーバーナーガリー・アラビア文字・ヘブライ文字・タイ語など非ラテン系スクリプトの合字・改行制御に必須です。隣接文字が両側とも ASCII の場合のみフラグを立てます（コードへの注入パターン）。
+
+対象ファイル: `*.py`, `*.js`, `*.ts`, `*.go`, `*.php`, `*.rb`, `*.lock`, `*.toml`, `*.cfg`（JSON は実行されるコードではないため除外）
+
+スキップ: `site-packages`、`dist-packages`、`Trash`、`.Trash`、`node_modules`、`vendor`、`.venv`、`venv`、`__pycache__`、`.tox`、`.git`。`*.min.js` などのミニファイルおよびコンテンツハッシュを含む webpack/vite チャンクファイルも除外。
 
 ### Dependency Confusion 検知（Shai-hulud）
 
 内部パッケージ名を公開レジストリに登録し、意図しない公開版がインストールされる攻撃（依存関係混乱攻撃）への脆弱な設定を検出します。
 
+`@types`、`@prisma`、`@fastify`、`@nestjs`、`@aws-sdk` など広く知られた公開スコープは自動的に除外します。`--check-registry` を使うと、アローリスト外のスコープを npmjs.org に問い合わせて動的に判定できます。
+
 | チェック内容 | エコシステム | Severity |
 |---|---|---|
-| スコープパッケージ（`@scope/pkg`）に対応する `.npmrc` レジストリマッピングがない | npm | HIGH |
-| `package-lock.json` / `yarn.lock` / `pnpm-lock.yaml` でスコープパッケージが公開レジストリから解決されている | npm | HIGH |
-| バージョン未固定（`^`, `~`, `*`） | npm | MEDIUM |
+| 社内スコープパッケージ（`@scope/pkg`）に対応する `.npmrc` レジストリマッピングがない | npm | HIGH |
+| `package-lock.json` / `yarn.lock` / `pnpm-lock.yaml` で社内スコープパッケージが公開レジストリから解決されている | npm | HIGH |
+| 完全に未固定のバージョン（`*`、`latest`、`next`、またはバージョン未指定） | npm | MEDIUM |
 | `requirements.txt` / `pip.conf` に `--extra-index-url`（pip は全インデックスで最高バージョンを選択） | PyPI | HIGH |
 | 範囲指定バージョン（`>=`, `~=`） | PyPI | MEDIUM |
 | `--hash=sha256:` インテグリティチェックなし | PyPI | LOW |
 | 公開 `GOPROXY` かつ内部モジュールパスを `GOPRIVATE` がカバーしていない | Go | HIGH |
 | `go.mod` にあるモジュールが `go.sum` に存在しない | Go | MEDIUM |
+
+`--check-registry` は `https://registry.npmjs.org/-/v1/search?text=scope:<name>&size=1` で未知スコープを検索します。パッケージが1件以上あれば公開スコープとして除外します。1回のスキャン中はキャッシュされます。
 
 ### Malicious Install Scripts 検知
 

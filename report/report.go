@@ -247,9 +247,6 @@ func PrintFindings(w io.Writer, findings []detector.Finding) {
 		}
 
 		fileDisplay := f.File
-		if len(fileDisplay) > 34 {
-			fileDisplay = "..." + fileDisplay[len(fileDisplay)-31:]
-		}
 
 		detail := f.Detail
 		if len(detail) > 60 {

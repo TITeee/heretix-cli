@@ -22,17 +22,18 @@ type Finding struct {
 	Detail    string // human-readable description
 }
 
-// baseDetector holds container-specific path skip logic shared by all detectors.
+// baseDetector holds path skip logic and shared options for all detectors.
 type baseDetector struct {
-	containerAbsSkipPaths map[string]bool
-	containerPathPrefixes []string
+	absSkipPaths    map[string]bool
+	prefixSkipPaths []string
+	checkRegistry   bool // query npmjs.org to classify unknown scopes
 }
 
 func (b *baseDetector) shouldSkipDir(path string) bool {
-	if b.containerAbsSkipPaths[path] {
+	if b.absSkipPaths[path] {
 		return true
 	}
-	for _, prefix := range b.containerPathPrefixes {
+	for _, prefix := range b.prefixSkipPaths {
 		if strings.HasPrefix(path, prefix) {
 			return true
 		}
@@ -40,23 +41,46 @@ func (b *baseDetector) shouldSkipDir(path string) bool {
 	return false
 }
 
-func buildBaseDetector(scanPath string, isContainer bool) baseDetector {
-	if !isContainer {
-		return baseDetector{}
-	}
+func buildBaseDetector(scanPath string, isContainer bool, checkRegistry bool) baseDetector {
 	abs := map[string]bool{}
-	for _, rel := range []string{
-		"usr/share", "usr/lib/locale",
-		"var/cache", "var/lib/apt", "var/lib/dpkg",
-		"proc", "sys", "dev", "boot", "run", "tmp",
-	} {
-		abs[filepath.Join(scanPath, rel)] = true
+	var prefixes []string
+
+	if isContainer {
+		// Container rootfs: skip OS system directories that are irrelevant to app code.
+		for _, rel := range []string{
+			"usr/share", "usr/lib/locale",
+			"var/cache", "var/lib/apt", "var/lib/dpkg",
+			"proc", "sys", "dev", "boot", "run", "tmp",
+		} {
+			abs[filepath.Join(scanPath, rel)] = true
+		}
+		prefixes = []string{
+			filepath.Join(scanPath, "usr/lib/python"),
+			filepath.Join(scanPath, "usr/lib/node_modules"),
+		}
+	} else {
+		// Host scan: skip OS virtual filesystems, container runtime storage,
+		// system library trees, and build source archives.
+		// These contain no application source code and would generate enormous noise.
+		// Use --image to scan Docker/containerd images properly.
+		for _, p := range []string{
+			"/proc", "/sys", "/dev", "/boot", "/run", "/tmp",
+			"/var/lib/docker",
+			"/var/lib/containerd",
+			"/var/lib/kubelet",
+			"/usr/src", // kernel headers, language source tarballs (e.g. Python-3.x.y/)
+		} {
+			abs[p] = true
+		}
+		// Skip system Python installations (stdlib + system-installed packages).
+		// Installed third-party packages are also caught by the site-packages/dist-packages
+		// skipDirs in the GlassWorm detector; these prefix skips cover the stdlib itself.
+		prefixes = []string{
+			"/usr/local/lib/python",
+			"/usr/lib/python",
+		}
 	}
-	prefixes := []string{
-		filepath.Join(scanPath, "usr/lib/python"),
-		filepath.Join(scanPath, "usr/lib/node_modules"),
-	}
-	return baseDetector{containerAbsSkipPaths: abs, containerPathPrefixes: prefixes}
+	return baseDetector{absSkipPaths: abs, prefixSkipPaths: prefixes, checkRegistry: checkRegistry}
 }
 
 // Detector is the interface implemented by each local security check.
@@ -67,8 +91,8 @@ type Detector interface {
 
 // RunAll runs all detectors against scanPath and returns the combined findings.
 // Errors from individual detectors are logged as warnings and do not abort the run.
-func RunAll(scanPath string, verbose bool, isContainer bool) ([]Finding, error) {
-	base := buildBaseDetector(scanPath, isContainer)
+func RunAll(scanPath string, verbose bool, isContainer bool, checkRegistry bool) ([]Finding, error) {
+	base := buildBaseDetector(scanPath, isContainer, checkRegistry)
 	detectors := []Detector{
 		&GlassWormDetector{baseDetector: base},
 		&DepConfusionDetector{baseDetector: base},

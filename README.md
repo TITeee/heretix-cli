@@ -120,6 +120,7 @@ This command inherits all flags from both `collect` and `check`.
 | `--image` | (none) | Docker image reference to scan |
 | `--dockerfile` | (none) | Dockerfile path: also chain-scans the FROM base image |
 | `--skip-local` | `false` | Skip local security checks (GlassWorm, Dependency Confusion, Malicious Install, CI/CD Poisoning, Lock File Integrity) |
+| `--check-registry` | `false` | Query npmjs.org to classify unknown npm scopes (requires network) |
 
 ### Local-only Detection (`detect`)
 
@@ -142,6 +143,7 @@ heretix-cli detect --image myapp:latest --dockerfile ./Dockerfile
 | `--dockerfile` | (none) | Dockerfile path: also chain-scans the FROM base image |
 | `--format` | `table` | Output format: `table` / `json` |
 | `--verbose` | `false` | Enable verbose logging |
+| `--check-registry` | `false` | Query npmjs.org to classify unknown npm scopes (requires network) |
 
 ## Local Security Checks
 
@@ -149,7 +151,10 @@ heretix-cli detect --image myapp:latest --dockerfile ./Dockerfile
 
 The `scan` and `detect` commands run five local checks that require no network access.
 
-When scanning a Docker image (`--image`), OS system directories are automatically skipped across all detectors (`/usr/share`, `/usr/lib/python*`, `/var/cache`, `/proc`, `/sys`, `/dev`, `/boot`, etc.) to avoid scanning millions of irrelevant OS files.
+**Automatic skip paths** — irrelevant directories are skipped to avoid false positives and unnecessary I/O:
+
+- **Host scan**: `/proc`, `/sys`, `/dev`, `/boot`, `/run`, `/tmp`, `/var/lib/docker`, `/var/lib/containerd`, `/var/lib/kubelet`, `/usr/src`, `/usr/local/lib/python*`, `/usr/lib/python*`
+- **Docker image scan** (`--image`): additionally `/usr/share`, `/usr/lib/locale`, `/usr/lib/node_modules`, `/var/cache`, `/var/lib/apt`, `/var/lib/dpkg`
 
 ### GlassWorm Detection
 
@@ -163,22 +168,30 @@ Scans source files for invisible and zero-width Unicode characters that can be u
 | U+200B/C/D Zero Width Space/Joiner | MEDIUM |
 | U+2060, U+034F Word Joiner, etc. | MEDIUM |
 
-Scans `*.py`, `*.js`, `*.ts`, `*.go`, `*.php`, `*.rb`, `*.json`, `*.lock`, `*.toml`, `*.cfg`.
+**Context-aware detection for U+200B/200C/200D**: these characters are legitimately required by non-Latin scripts (Devanagari, Arabic, Hebrew, Thai, etc.) for glyph shaping and word-wrapping. They are only flagged when both neighbouring characters are ASCII — the pattern indicative of code-context injection.
+
+Scans `*.py`, `*.js`, `*.ts`, `*.go`, `*.php`, `*.rb`, `*.lock`, `*.toml`, `*.cfg`. JSON files are excluded (data, not executed code).
+
+Skips `site-packages`, `dist-packages`, `Trash`, `.Trash`, `node_modules`, `vendor`, `.venv`, `venv`, `__pycache__`, `.tox`, `.git`. Also skips minified files (`*.min.js`) and webpack/vite chunk files containing a content hash in the filename.
 
 ### Dependency Confusion Detection (Shai-hulud)
 
 Detects configuration patterns that leave projects vulnerable to substitution attacks, where a privately-named package is overridden by a malicious public registry version.
 
+Well-known public scopes (`@types`, `@prisma`, `@fastify`, `@nestjs`, `@aws-sdk`, etc.) are excluded automatically since they cannot be subject to dependency confusion. Use `--check-registry` to dynamically verify unknown scopes against npmjs.org.
+
 | Check | Ecosystem | Severity |
 |---|---|---|
-| Scoped package (`@scope/pkg`) with no registry mapping in `.npmrc` | npm | HIGH |
-| `package-lock.json` / `yarn.lock` / `pnpm-lock.yaml`: scoped package resolved from public registry | npm | HIGH |
-| Unpinned version specifiers (`^`, `~`, `*`) | npm | MEDIUM |
+| Private scoped package (`@scope/pkg`) with no registry mapping in `.npmrc` | npm | HIGH |
+| `package-lock.json` / `yarn.lock` / `pnpm-lock.yaml`: private scoped package resolved from public registry | npm | HIGH |
+| Completely unpinned version (`*`, `latest`, `next`, or missing) | npm | MEDIUM |
 | `--extra-index-url` in `requirements.txt` or `pip.conf` (pip picks highest version across all indexes) | PyPI | HIGH |
 | Non-exact version specifiers (`>=`, `~=`) | PyPI | MEDIUM |
 | Missing `--hash=sha256:` integrity check | PyPI | LOW |
 | Public `GOPROXY` without `GOPRIVATE` covering internal module paths | Go | HIGH |
 | Module present in `go.mod` but missing from `go.sum` | Go | MEDIUM |
+
+`--check-registry` queries `https://registry.npmjs.org/-/v1/search?text=scope:<name>&size=1` for each unknown scope. A scope with published packages is treated as public and excluded. Requires network access; scopes are cached within a single run.
 
 ### Malicious Install Scripts Detection
 

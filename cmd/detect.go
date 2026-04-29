@@ -21,11 +21,12 @@ var detectCmd = &cobra.Command{
 }
 
 var (
-	detectScanPath   string
-	detectImage      string
-	detectDockerfile string
-	detectFormat     string
-	detectVerbose    bool
+	detectScanPath      string
+	detectImage         string
+	detectDockerfile    string
+	detectFormat        string
+	detectVerbose       bool
+	detectCheckRegistry bool
 )
 
 func init() {
@@ -34,6 +35,7 @@ func init() {
 	detectCmd.Flags().StringVar(&detectDockerfile, "dockerfile", "", "Dockerfile path: also scan the base image from its FROM instruction")
 	detectCmd.Flags().StringVar(&detectFormat, "format", "table", "Output format: table / json")
 	detectCmd.Flags().BoolVar(&detectVerbose, "verbose", false, "Enable verbose logging")
+	detectCmd.Flags().BoolVar(&detectCheckRegistry, "check-registry", false, "Query npmjs.org to classify unknown scopes (requires network)")
 	rootCmd.AddCommand(detectCmd)
 }
 
@@ -66,13 +68,13 @@ func runDetect(cmd *cobra.Command, args []string) error {
 				return fmt.Errorf("extract image %s: %w", imageRef, err)
 			}
 			fmt.Fprintf(os.Stderr, "Scanning image %s...\n", imageRef)
-			f, _ := detector.RunAll(rootfs, detectVerbose, true)
+			f, _ := detector.RunAll(rootfs, detectVerbose, true, detectCheckRegistry)
 			cleanup()
 			findings = append(findings, f...)
 		}
 	} else {
 		fmt.Fprintf(os.Stderr, "Running local security checks (scan-path: %s)...\n", detectScanPath)
-		findings, _ = detector.RunAll(detectScanPath, detectVerbose, false)
+		findings, _ = detector.RunAll(detectScanPath, detectVerbose, false, detectCheckRegistry)
 	}
 
 	switch detectFormat {

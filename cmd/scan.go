@@ -26,18 +26,19 @@ var scanCmd = &cobra.Command{
 }
 
 var (
-	scanScanPath    string
-	scanSkip        []string
-	scanSkipLocal   bool
-	scanAPIURL      string
-	scanAPIKey      string
-	scanFormat      string
-	scanSeverity    float64
-	scanConcurrency int
-	scanTimeout     string
-	scanVerbose     bool
-	scanImage       string
-	scanDockerfile  string
+	scanScanPath      string
+	scanSkip          []string
+	scanSkipLocal     bool
+	scanAPIURL        string
+	scanAPIKey        string
+	scanFormat        string
+	scanSeverity      float64
+	scanConcurrency   int
+	scanTimeout       string
+	scanVerbose       bool
+	scanImage         string
+	scanDockerfile    string
+	scanCheckRegistry bool
 )
 
 func init() {
@@ -55,6 +56,7 @@ func init() {
 	scanCmd.Flags().BoolVar(&scanVerbose, "verbose", false, "Enable verbose logging")
 	scanCmd.Flags().StringVar(&scanImage, "image", "", "Docker image to scan (e.g. nginx:latest, registry.example.com/app:v1)")
 	scanCmd.Flags().StringVar(&scanDockerfile, "dockerfile", "", "Dockerfile path: also scan the base image from its FROM instruction")
+	scanCmd.Flags().BoolVar(&scanCheckRegistry, "check-registry", false, "Query npmjs.org to classify unknown scopes (requires network)")
 	rootCmd.AddCommand(scanCmd)
 }
 
@@ -79,7 +81,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 	} else {
 		inv, err = collectFromFilesystem()
 		if err == nil && !scanSkipLocal {
-			localFindings, _ = detector.RunAll(scanScanPath, scanVerbose, false)
+			localFindings, _ = detector.RunAll(scanScanPath, scanVerbose, false, scanCheckRegistry)
 		}
 	}
 	if err != nil {
@@ -180,7 +182,7 @@ func collectFromImages(ctx context.Context) (*inventory.Inventory, []detector.Fi
 		fmt.Fprintf(os.Stderr, "Scanning image %s...\n", imageRef)
 		inv, err := collector.CollectAll(rootfs, scanSkip, scanVerbose, true)
 		if err == nil && !scanSkipLocal {
-			if findings, detErr := detector.RunAll(rootfs, scanVerbose, true); detErr == nil {
+			if findings, detErr := detector.RunAll(rootfs, scanVerbose, true, scanCheckRegistry); detErr == nil {
 				allFindings = append(allFindings, findings...)
 			}
 		}

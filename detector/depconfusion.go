@@ -4,10 +4,13 @@ import (
 	"bufio"
 	"encoding/json"
 	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // DepConfusionDetector scans project configuration and lockfiles for indicators
@@ -18,10 +21,77 @@ type DepConfusionDetector struct {
 
 func (d *DepConfusionDetector) Name() string { return "dep-confusion" }
 
+// scopeChecker determines whether an npm scope is publicly registered.
+// wellKnownPublicScopes is checked first (no network); unknown scopes are
+// optionally verified against the npm registry when checkRegistry is true.
+type scopeChecker struct {
+	checkRegistry bool
+	mu            sync.Mutex
+	cache         map[string]bool
+}
+
+func newScopeChecker(checkRegistry bool) *scopeChecker {
+	return &scopeChecker{checkRegistry: checkRegistry, cache: map[string]bool{}}
+}
+
+// isPublic returns true when the scope is known or confirmed to be a public
+// npm scope. Returns false when the scope is unknown and registry checks are
+// disabled, or when the registry returns 404.
+func (s *scopeChecker) isPublic(scope string) bool {
+	if wellKnownPublicScopes[scope] {
+		return true
+	}
+	if !s.checkRegistry {
+		return false
+	}
+	s.mu.Lock()
+	if v, ok := s.cache[scope]; ok {
+		s.mu.Unlock()
+		return v
+	}
+	s.mu.Unlock()
+
+	public := queryNpmScope(scope)
+
+	s.mu.Lock()
+	s.cache[scope] = public
+	s.mu.Unlock()
+	return public
+}
+
+// queryNpmScope uses the npm search API to check whether any packages are
+// published under the given scope (e.g. "@auth").
+// The registry does not support GET /@scope directly (returns 405), so we use
+// the search endpoint with the scope: qualifier instead.
+// Returns false on network errors so that unknown scopes are still flagged.
+func queryNpmScope(scope string) bool {
+	name := strings.TrimPrefix(scope, "@")
+	url := "https://registry.npmjs.org/-/v1/search?text=scope:" + name + "&size=1"
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+
+	var result struct {
+		Total int `json:"total"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return false
+	}
+	return result.Total > 0
+}
+
 // Detect walks scanPath looking for dependency confusion indicators across
 // npm, Python, and Go ecosystems.
 func (d *DepConfusionDetector) Detect(scanPath string, verbose bool, progress *atomic.Int64) ([]Finding, error) {
 	var findings []Finding
+	sc := newScopeChecker(d.checkRegistry)
 
 	err := filepath.WalkDir(scanPath, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -38,15 +108,15 @@ func (d *DepConfusionDetector) Detect(scanPath string, verbose bool, progress *a
 		name := entry.Name()
 		switch name {
 		case "package.json":
-			findings = append(findings, checkPackageJSON(path)...)
+			findings = append(findings, checkPackageJSON(path, sc)...)
 		case ".npmrc":
 			// .npmrc is read together with package.json; handled there
 		case "package-lock.json":
-			findings = append(findings, checkPackageLock(path)...)
+			findings = append(findings, checkPackageLock(path, sc)...)
 		case "yarn.lock":
-			findings = append(findings, checkYarnLock(path)...)
+			findings = append(findings, checkYarnLock(path, sc)...)
 		case "pnpm-lock.yaml":
-			findings = append(findings, checkPnpmLock(path)...)
+			findings = append(findings, checkPnpmLock(path, sc)...)
 		case "requirements.txt":
 			findings = append(findings, checkRequirementsTxt(path)...)
 		case "pip.conf", "pip.ini":
@@ -66,9 +136,57 @@ func (d *DepConfusionDetector) Detect(scanPath string, verbose bool, progress *a
 
 // ── npm ──────────────────────────────────────────────────────────────────────
 
+// wellKnownPublicScopes lists npm scopes that are always resolved from the
+// public registry by design. Dependency confusion only applies to private/internal
+// scoped packages, so these scopes are excluded from the .npmrc check.
+var wellKnownPublicScopes = map[string]bool{
+	"@types":            true,
+	"@babel":            true,
+	"@jest":             true,
+	"@testing-library":  true,
+	"@angular":          true,
+	"@vue":              true,
+	"@react":            true,
+	"@storybook":        true,
+	"@rollup":           true,
+	"@vitejs":           true,
+	"@vite":             true,
+	"@webpack":          true,
+	"@swc":              true,
+	"@esbuild":          true,
+	"@fastify":          true,
+	"@nestjs":           true,
+	"@hapi":             true,
+	"@koa":              true,
+	"@prisma":           true,
+	"@typeorm":          true,
+	"@aws-sdk":          true,
+	"@google-cloud":     true,
+	"@azure":            true,
+	"@octokit":          true,
+	"@sentry":           true,
+	"@mui":              true,
+	"@chakra-ui":        true,
+	"@radix-ui":         true,
+	"@tailwindcss":      true,
+	"@mermaid-js":       true,
+	"@graphql-tools":    true,
+	"@apollo":           true,
+	"@tanstack":         true,
+	"@biomejs":          true,
+	"@eslint":           true,
+	"@typescript-eslint": true,
+	"@vitest":           true,
+	"@playwright":       true,
+	"@emotion":          true,
+	"@trpc":             true,
+	"@auth":             true, // Auth.js (auth.js.dev)
+	"@base-ui":          true, // MUI Base UI (base-ui.com)
+}
+
 // checkPackageJSON checks for scoped packages without a corresponding .npmrc
 // registry mapping, and for unpinned version specifiers.
-func checkPackageJSON(path string) []Finding {
+func checkPackageJSON(path string, sc *scopeChecker) []Finding {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil
@@ -103,11 +221,16 @@ func checkPackageJSON(path string) []Finding {
 
 	var findings []Finding
 
-	// (1) Check .npmrc in the same directory for scope→registry mappings
+	// (1) Check .npmrc in the same directory for scope→registry mappings.
+	// Well-known public scopes are excluded: they are meant to resolve from
+	// the public registry and are not vulnerable to dependency confusion.
 	if len(scopes) > 0 {
 		npmrcPath := filepath.Join(filepath.Dir(path), ".npmrc")
 		mappedScopes := readNpmrcScopeMappings(npmrcPath)
 		for scope := range scopes {
+			if sc.isPublic(scope) {
+				continue
+			}
 			if !mappedScopes[scope] {
 				findings = append(findings, Finding{
 					Type:      "dep-confusion",
@@ -115,38 +238,26 @@ func checkPackageJSON(path string) []Finding {
 					File:      path,
 					Package:   scope,
 					Ecosystem: "npm",
-					Detail:    "scoped package " + scope + " has no registry mapping in .npmrc — npm will resolve from public registry",
+					Detail:    "scoped package " + scope + " has no registry mapping in .npmrc — if this is a private package, npm will resolve from public registry",
 				})
 			}
 		}
 	}
 
-	// (2) Unpinned version specifiers
-	unpinnedPrefixes := []string{"^", "~", "*", "x", "latest", "next", ""}
+	// (2) Truly unpinned version specifiers only.
+	// ^ and ~ are standard semver practice and excluded to reduce noise.
+	// Only flag *, latest, next, and missing versions which are genuinely uncontrolled.
+	trulyUnpinned := map[string]bool{"*": true, "latest": true, "next": true, "": true}
 	for name, ver := range allDeps {
-		for _, pfx := range unpinnedPrefixes {
-			if pfx == "" {
-				if ver == "" {
-					findings = append(findings, Finding{
-						Type:      "dep-confusion",
-						Severity:  "MEDIUM",
-						File:      path,
-						Package:   name,
-						Ecosystem: "npm",
-						Detail:    "package " + name + " has no version pinned — attacker can publish higher version to public registry",
-					})
-				}
-			} else if strings.HasPrefix(ver, pfx) {
-				findings = append(findings, Finding{
-					Type:      "dep-confusion",
-					Severity:  "MEDIUM",
-					File:      path,
-					Package:   name,
-					Ecosystem: "npm",
-					Detail:    "package " + name + " uses unpinned version \"" + ver + "\" — attacker can publish higher version to public registry",
-				})
-				break
-			}
+		if trulyUnpinned[strings.ToLower(strings.TrimSpace(ver))] {
+			findings = append(findings, Finding{
+				Type:      "dep-confusion",
+				Severity:  "MEDIUM",
+				File:      path,
+				Package:   name,
+				Ecosystem: "npm",
+				Detail:    "package " + name + " uses unpinned version \"" + ver + "\" — attacker can publish any version to public registry",
+			})
 		}
 	}
 
@@ -176,7 +287,7 @@ func readNpmrcScopeMappings(path string) map[string]bool {
 
 // checkPackageLock checks package-lock.json for scoped packages resolved from
 // the public npm registry.
-func checkPackageLock(path string) []Finding {
+func checkPackageLock(path string, sc *scopeChecker) []Finding {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil
@@ -200,6 +311,10 @@ func checkPackageLock(path string) []Finding {
 		if !strings.HasPrefix(name, "@") {
 			return
 		}
+		scope := strings.SplitN(name, "/", 2)[0]
+		if sc.isPublic(scope) {
+			return
+		}
 		if strings.Contains(resolved, "registry.npmjs.org") {
 			findings = append(findings, Finding{
 				Type:      "dep-confusion",
@@ -207,7 +322,7 @@ func checkPackageLock(path string) []Finding {
 				File:      path,
 				Package:   name,
 				Ecosystem: "npm",
-				Detail:    "scoped package " + name + " resolved from public registry.npmjs.org — verify this is intentional",
+				Detail:    "scoped package " + name + " resolved from public registry.npmjs.org — if this is a private package, verify the registry configuration",
 			})
 		}
 	}
@@ -225,7 +340,7 @@ func checkPackageLock(path string) []Finding {
 }
 
 // checkYarnLock checks yarn.lock for scoped packages resolved from the public registry.
-func checkYarnLock(path string) []Finding {
+func checkYarnLock(path string, sc *scopeChecker) []Finding {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil
@@ -246,6 +361,11 @@ func checkYarnLock(path string) []Finding {
 		}
 
 		if strings.HasPrefix(trimmed, "resolved ") && strings.HasPrefix(currentPkg, "@") {
+			scope := strings.SplitN(currentPkg, "/", 2)[0]
+			scope = strings.Trim(scope, `"`)
+			if sc.isPublic(scope) {
+				continue
+			}
 			// Extract quoted URL
 			parts := strings.Fields(trimmed)
 			if len(parts) >= 2 {
@@ -261,7 +381,7 @@ func checkYarnLock(path string) []Finding {
 						File:      path,
 						Package:   pkgName,
 						Ecosystem: "npm",
-						Detail:    "scoped package resolved from public registry.npmjs.org in yarn.lock — verify this is intentional",
+						Detail:    "scoped package resolved from public registry.npmjs.org in yarn.lock — if this is a private package, verify the registry configuration",
 					})
 				}
 			}
@@ -273,7 +393,7 @@ func checkYarnLock(path string) []Finding {
 // checkPnpmLock checks pnpm-lock.yaml for scoped packages with tarball URLs
 // pointing to the public npm registry. Uses line-by-line parsing to avoid
 // an external YAML dependency.
-func checkPnpmLock(path string) []Finding {
+func checkPnpmLock(path string, sc *scopeChecker) []Finding {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil
@@ -304,17 +424,20 @@ func checkPnpmLock(path string) []Finding {
 
 		// tarball: https://registry.npmjs.org/...
 		if currentPkg != "" && strings.HasPrefix(trimmed, "tarball:") {
-			url := strings.TrimSpace(strings.TrimPrefix(trimmed, "tarball:"))
-			if strings.Contains(url, "registry.npmjs.org") && !reported[currentPkg] {
-				reported[currentPkg] = true
-				findings = append(findings, Finding{
-					Type:      "dep-confusion",
-					Severity:  "HIGH",
-					File:      path,
-					Package:   currentPkg,
-					Ecosystem: "npm",
-					Detail:    "scoped package " + currentPkg + " tarball resolved from public registry.npmjs.org in pnpm-lock.yaml",
-				})
+			scope := strings.SplitN(currentPkg, "/", 2)[0]
+			if !sc.isPublic(scope) {
+				url := strings.TrimSpace(strings.TrimPrefix(trimmed, "tarball:"))
+				if strings.Contains(url, "registry.npmjs.org") && !reported[currentPkg] {
+					reported[currentPkg] = true
+					findings = append(findings, Finding{
+						Type:      "dep-confusion",
+						Severity:  "HIGH",
+						File:      path,
+						Package:   currentPkg,
+						Ecosystem: "npm",
+						Detail:    "scoped package " + currentPkg + " tarball resolved from public registry.npmjs.org in pnpm-lock.yaml — if this is a private package, verify the registry configuration",
+					})
+				}
 			}
 		}
 	}
