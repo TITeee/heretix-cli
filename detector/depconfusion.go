@@ -140,48 +140,66 @@ func (d *DepConfusionDetector) Detect(scanPath string, verbose bool, progress *a
 // public registry by design. Dependency confusion only applies to private/internal
 // scoped packages, so these scopes are excluded from the .npmrc check.
 var wellKnownPublicScopes = map[string]bool{
-	"@types":            true,
-	"@babel":            true,
-	"@jest":             true,
-	"@testing-library":  true,
-	"@angular":          true,
-	"@vue":              true,
-	"@react":            true,
-	"@storybook":        true,
-	"@rollup":           true,
-	"@vitejs":           true,
-	"@vite":             true,
-	"@webpack":          true,
-	"@swc":              true,
-	"@esbuild":          true,
-	"@fastify":          true,
-	"@nestjs":           true,
-	"@hapi":             true,
-	"@koa":              true,
-	"@prisma":           true,
-	"@typeorm":          true,
-	"@aws-sdk":          true,
-	"@google-cloud":     true,
-	"@azure":            true,
-	"@octokit":          true,
-	"@sentry":           true,
-	"@mui":              true,
-	"@chakra-ui":        true,
-	"@radix-ui":         true,
-	"@tailwindcss":      true,
-	"@mermaid-js":       true,
-	"@graphql-tools":    true,
-	"@apollo":           true,
-	"@tanstack":         true,
-	"@biomejs":          true,
-	"@eslint":           true,
+	"@types":             true,
+	"@babel":             true,
+	"@jest":              true,
+	"@testing-library":   true,
+	"@angular":           true,
+	"@vue":               true,
+	"@react":             true,
+	"@storybook":         true,
+	"@rollup":            true,
+	"@vitejs":            true,
+	"@vite":              true,
+	"@webpack":           true,
+	"@swc":               true,
+	"@esbuild":           true,
+	"@fastify":           true,
+	"@nestjs":            true,
+	"@hapi":              true,
+	"@koa":               true,
+	"@prisma":            true,
+	"@typeorm":           true,
+	"@aws-sdk":           true,
+	"@google-cloud":      true,
+	"@azure":             true,
+	"@octokit":           true,
+	"@sentry":            true,
+	"@mui":               true,
+	"@chakra-ui":         true,
+	"@radix-ui":          true,
+	"@tailwindcss":       true,
+	"@mermaid-js":        true,
+	"@graphql-tools":     true,
+	"@apollo":            true,
+	"@tanstack":          true,
+	"@biomejs":           true,
+	"@eslint":            true,
 	"@typescript-eslint": true,
-	"@vitest":           true,
-	"@playwright":       true,
-	"@emotion":          true,
-	"@trpc":             true,
-	"@auth":             true, // Auth.js (auth.js.dev)
-	"@base-ui":          true, // MUI Base UI (base-ui.com)
+	"@vitest":            true,
+	"@playwright":        true,
+	"@emotion":           true,
+	"@trpc":              true,
+	"@auth":              true, // Auth.js (auth.js.dev)
+	"@base-ui":           true, // MUI Base UI (base-ui.com)
+	// Additional well-known public scopes
+	"@next":             true, // Next.js (Vercel)
+	"@img":              true, // sharp image processing
+	"@floating-ui":      true,
+	"@jridgewell":       true, // source map tooling
+	"@eslint-community": true,
+	"@humanwhocodes":    true, // ESLint ecosystem (Nicholas Zakas)
+	"@humanfs":          true,
+	"@nodelib":          true,
+	"@pinojs":           true,
+	"@pkgjs":            true, // npm-owned packages
+	"@isaacs":           true, // Isaac Schlueter (npm)
+	"@rushstack":        true, // Microsoft Rush Stack
+	"@panva":            true, // JOSE / openid-client
+	"@rtsao":            true,
+	"@alloc":            true,
+	"@emnapi":           true, // Node-API runtime emulation
+	"@nolyfill":         true,
 }
 
 // checkPackageJSON checks for scoped packages without a corresponding .npmrc
@@ -285,15 +303,46 @@ func readNpmrcScopeMappings(path string) map[string]bool {
 	return mapped
 }
 
-// checkPackageLock checks package-lock.json for scoped packages resolved from
-// the public npm registry.
-func checkPackageLock(path string, sc *scopeChecker) []Finding {
+// readNpmrcPrivateScopeMappings returns scopes explicitly mapped to a private
+// (non-npmjs.org) registry in the .npmrc file. These are the only scopes for
+// which a lockfile resolving from registry.npmjs.org is a dep-confusion signal.
+func readNpmrcPrivateScopeMappings(path string) map[string]bool {
+	private := map[string]bool{}
+	f, err := os.Open(path)
+	if err != nil {
+		return private
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "@") && strings.Contains(line, ":registry=") {
+			parts := strings.SplitN(line, ":registry=", 2)
+			if len(parts) == 2 {
+				scope := parts[0]
+				registry := strings.TrimSpace(parts[1])
+				if !strings.Contains(registry, "registry.npmjs.org") {
+					private[scope] = true
+				}
+			}
+		}
+	}
+	return private
+}
+
+// checkPackageLock checks package-lock.json for scoped packages that are
+// mapped to a private registry in .npmrc but are resolved from the public
+// npm registry — a definitive dep-confusion indicator.
+// Packages with no .npmrc mapping are not flagged: without an explicit private
+// registry declaration we cannot distinguish private from public packages, and
+// doing so produces massive false-positive noise for transitive dependencies.
+func checkPackageLock(path string, _ *scopeChecker) []Finding {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil
 	}
 
-	// Support both lockfileVersion 1 (packages at top level) and v2/v3
 	var lock struct {
 		Packages map[string]struct {
 			Resolved string `json:"resolved"`
@@ -306,13 +355,19 @@ func checkPackageLock(path string, sc *scopeChecker) []Finding {
 		return nil
 	}
 
+	npmrcPath := filepath.Join(filepath.Dir(path), ".npmrc")
+	privateScopes := readNpmrcPrivateScopeMappings(npmrcPath)
+	if len(privateScopes) == 0 {
+		return nil
+	}
+
 	var findings []Finding
 	check := func(name, resolved string) {
 		if !strings.HasPrefix(name, "@") {
 			return
 		}
 		scope := strings.SplitN(name, "/", 2)[0]
-		if sc.isPublic(scope) {
+		if !privateScopes[scope] {
 			return
 		}
 		if strings.Contains(resolved, "registry.npmjs.org") {
@@ -322,13 +377,12 @@ func checkPackageLock(path string, sc *scopeChecker) []Finding {
 				File:      path,
 				Package:   name,
 				Ecosystem: "npm",
-				Detail:    "scoped package " + name + " resolved from public registry.npmjs.org — if this is a private package, verify the registry configuration",
+				Detail:    "scoped package " + name + " resolved from public registry.npmjs.org — .npmrc maps " + scope + " to a private registry but lockfile shows public resolution",
 			})
 		}
 	}
 
 	for name, pkg := range lock.Packages {
-		// v2/v3: keys like "node_modules/@scope/pkg"
 		pkgName := strings.TrimPrefix(name, "node_modules/")
 		check(pkgName, pkg.Resolved)
 	}
@@ -339,8 +393,15 @@ func checkPackageLock(path string, sc *scopeChecker) []Finding {
 	return findings
 }
 
-// checkYarnLock checks yarn.lock for scoped packages resolved from the public registry.
-func checkYarnLock(path string, sc *scopeChecker) []Finding {
+// checkYarnLock checks yarn.lock for scoped packages that are mapped to a
+// private registry in .npmrc but resolved from the public npm registry.
+func checkYarnLock(path string, _ *scopeChecker) []Finding {
+	npmrcPath := filepath.Join(filepath.Dir(path), ".npmrc")
+	privateScopes := readNpmrcPrivateScopeMappings(npmrcPath)
+	if len(privateScopes) == 0 {
+		return nil
+	}
+
 	f, err := os.Open(path)
 	if err != nil {
 		return nil
@@ -354,7 +415,6 @@ func checkYarnLock(path string, sc *scopeChecker) []Finding {
 	for scanner.Scan() {
 		line := scanner.Text()
 
-		// Package header: `"@scope/name@version":`  or  `@scope/name@version:`
 		trimmed := strings.TrimSpace(line)
 		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") && strings.HasSuffix(trimmed, ":") {
 			currentPkg = trimmed
@@ -363,10 +423,9 @@ func checkYarnLock(path string, sc *scopeChecker) []Finding {
 		if strings.HasPrefix(trimmed, "resolved ") && strings.HasPrefix(currentPkg, "@") {
 			scope := strings.SplitN(currentPkg, "/", 2)[0]
 			scope = strings.Trim(scope, `"`)
-			if sc.isPublic(scope) {
+			if !privateScopes[scope] {
 				continue
 			}
-			// Extract quoted URL
 			parts := strings.Fields(trimmed)
 			if len(parts) >= 2 {
 				url := strings.Trim(parts[1], `"`)
@@ -381,7 +440,7 @@ func checkYarnLock(path string, sc *scopeChecker) []Finding {
 						File:      path,
 						Package:   pkgName,
 						Ecosystem: "npm",
-						Detail:    "scoped package resolved from public registry.npmjs.org in yarn.lock — if this is a private package, verify the registry configuration",
+						Detail:    "scoped package " + scope + " resolved from public registry.npmjs.org — .npmrc maps " + scope + " to a private registry but yarn.lock shows public resolution",
 					})
 				}
 			}
@@ -390,10 +449,16 @@ func checkYarnLock(path string, sc *scopeChecker) []Finding {
 	return findings
 }
 
-// checkPnpmLock checks pnpm-lock.yaml for scoped packages with tarball URLs
-// pointing to the public npm registry. Uses line-by-line parsing to avoid
-// an external YAML dependency.
-func checkPnpmLock(path string, sc *scopeChecker) []Finding {
+// checkPnpmLock checks pnpm-lock.yaml for scoped packages that are mapped to a
+// private registry in .npmrc but resolved from the public npm registry.
+// Uses line-by-line parsing to avoid an external YAML dependency.
+func checkPnpmLock(path string, _ *scopeChecker) []Finding {
+	npmrcPath := filepath.Join(filepath.Dir(path), ".npmrc")
+	privateScopes := readNpmrcPrivateScopeMappings(npmrcPath)
+	if len(privateScopes) == 0 {
+		return nil
+	}
+
 	f, err := os.Open(path)
 	if err != nil {
 		return nil
@@ -409,9 +474,6 @@ func checkPnpmLock(path string, sc *scopeChecker) []Finding {
 		line := scanner.Text()
 		trimmed := strings.TrimSpace(line)
 
-		// Package key lines look like:
-		//   /@scope/name@1.0.0:   (v5/v6)
-		//   @scope/name@1.0.0:    (v9)
 		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") && strings.HasSuffix(trimmed, ":") {
 			key := strings.TrimSuffix(trimmed, ":")
 			key = strings.TrimPrefix(key, "/") // v5/v6 prefix
@@ -422,10 +484,9 @@ func checkPnpmLock(path string, sc *scopeChecker) []Finding {
 			}
 		}
 
-		// tarball: https://registry.npmjs.org/...
 		if currentPkg != "" && strings.HasPrefix(trimmed, "tarball:") {
 			scope := strings.SplitN(currentPkg, "/", 2)[0]
-			if !sc.isPublic(scope) {
+			if privateScopes[scope] {
 				url := strings.TrimSpace(strings.TrimPrefix(trimmed, "tarball:"))
 				if strings.Contains(url, "registry.npmjs.org") && !reported[currentPkg] {
 					reported[currentPkg] = true
@@ -435,7 +496,7 @@ func checkPnpmLock(path string, sc *scopeChecker) []Finding {
 						File:      path,
 						Package:   currentPkg,
 						Ecosystem: "npm",
-						Detail:    "scoped package " + currentPkg + " tarball resolved from public registry.npmjs.org in pnpm-lock.yaml — if this is a private package, verify the registry configuration",
+						Detail:    "scoped package " + currentPkg + " tarball resolved from public registry.npmjs.org — .npmrc maps " + scope + " to a private registry but pnpm-lock.yaml shows public resolution",
 					})
 				}
 			}

@@ -44,10 +44,10 @@ func (c *GoCollector) Collect(scanPath string, verbose bool) ([]inventory.Packag
 			return nil
 		}
 
-		p, err := parseGoMod(path, verbose)
+		p, err := goModulePackages(path, verbose)
 		if err != nil {
 			if verbose {
-				log.Printf("[go] error parsing %s: %v", path, err)
+				log.Printf("[go] error collecting %s: %v", path, err)
 			}
 			return nil
 		}
@@ -60,7 +60,7 @@ func (c *GoCollector) Collect(scanPath string, verbose bool) ([]inventory.Packag
 	}
 
 	if !found {
-		p, err := goListFallback(verbose)
+		p, err := goListAllInDir(scanPath, verbose)
 		if err != nil {
 			if verbose {
 				log.Printf("[go] go list fallback failed: %v", err)
@@ -72,6 +72,67 @@ func (c *GoCollector) Collect(scanPath string, verbose bool) ([]inventory.Packag
 
 	if verbose {
 		log.Printf("[go] collected %d packages", len(pkgs))
+	}
+	return pkgs, nil
+}
+
+// goModulePackages returns all modules in the dependency graph for the module
+// rooted at goModPath. It prefers "go list -m -json all" (run in the module
+// directory) because that includes every transitive dependency — the same set
+// that govulncheck / Dependabot use. Falls back to parsing go.mod directly
+// when the go binary is unavailable or the command fails.
+func goModulePackages(goModPath string, verbose bool) ([]inventory.Package, error) {
+	dir := filepath.Dir(goModPath)
+	pkgs, err := goListAllInDir(dir, verbose)
+	if err == nil && len(pkgs) > 0 {
+		return pkgs, nil
+	}
+	if verbose && err != nil {
+		log.Printf("[go] go list failed for %s, falling back to go.mod parse: %v", dir, err)
+	}
+	return parseGoMod(goModPath, verbose)
+}
+
+// goListAllInDir runs "go list -m -json all" in dir and returns all modules
+// in the resolved dependency graph (direct + indirect + transitive).
+func goListAllInDir(dir string, verbose bool) ([]inventory.Package, error) {
+	if _, err := exec.LookPath("go"); err != nil {
+		return nil, fmt.Errorf("go not found in PATH")
+	}
+
+	cmd := exec.Command("go", "list", "-m", "-json", "all")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("go list in %s: %w", dir, err)
+	}
+
+	var pkgs []inventory.Package
+	decoder := json.NewDecoder(strings.NewReader(string(out)))
+	for decoder.More() {
+		var mod struct {
+			Path    string `json:"Path"`
+			Version string `json:"Version"`
+			Main    bool   `json:"Main"`
+		}
+		if err := decoder.Decode(&mod); err != nil {
+			break
+		}
+		if mod.Main || mod.Path == "" || mod.Version == "" {
+			continue
+		}
+		pkgs = append(pkgs, inventory.Package{
+			Name:       mod.Path,
+			Version:    mod.Version,
+			RawVersion: mod.Version,
+			Ecosystem:  "Go",
+			Source:     "go.mod",
+			Location:   filepath.Join(dir, "go.mod"),
+		})
+	}
+
+	if verbose {
+		log.Printf("[go] go list collected %d packages from %s", len(pkgs), dir)
 	}
 	return pkgs, nil
 }
@@ -168,53 +229,3 @@ func parseRequireLine(line, location string) *inventory.Package {
 	}
 }
 
-// goListFallback uses "go list -m -json all" to collect module dependencies.
-func goListFallback(verbose bool) ([]inventory.Package, error) {
-	if _, err := exec.LookPath("go"); err != nil {
-		return nil, fmt.Errorf("go not found")
-	}
-
-	cmd := exec.Command("go", "list", "-m", "-json", "all")
-	out, err := cmd.Output()
-	if err != nil {
-		if out == nil {
-			return nil, fmt.Errorf("go list failed: %w", err)
-		}
-	}
-
-	// "go list -m -json all" outputs one JSON object per line (not an array)
-	var pkgs []inventory.Package
-	decoder := json.NewDecoder(strings.NewReader(string(out)))
-	first := true
-	for decoder.More() {
-		var mod struct {
-			Path    string `json:"Path"`
-			Version string `json:"Version"`
-			Main    bool   `json:"Main"`
-		}
-		if err := decoder.Decode(&mod); err != nil {
-			break
-		}
-		// Skip the main module itself
-		if first || mod.Main {
-			first = false
-			continue
-		}
-		first = false
-		if mod.Path == "" || mod.Version == "" {
-			continue
-		}
-		pkgs = append(pkgs, inventory.Package{
-			Name:       mod.Path,
-			Version:    mod.Version,
-			RawVersion: mod.Version,
-			Ecosystem:  "Go",
-			Source:     "go-list",
-		})
-	}
-
-	if verbose {
-		log.Printf("[go] go list fallback collected %d packages", len(pkgs))
-	}
-	return pkgs, nil
-}
