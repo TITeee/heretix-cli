@@ -135,7 +135,7 @@ func runCollectWithImage() error {
 
 func writeCollectOutput(inv *inventory.Inventory, path string, format string) error {
 	if format == "cyclonedx" {
-		bom := sbom.GenerateCycloneDX(inv)
+		bom := sbom.GenerateCycloneDX(inv, rootCmd.Version)
 		if err := sbom.WriteToFile(bom, path); err != nil {
 			return fmt.Errorf("write cyclonedx output: %w", err)
 		}

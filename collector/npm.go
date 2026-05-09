@@ -431,8 +431,13 @@ func findPnpmVirtualStorePackages(scanPath string, verbose bool) ([]inventory.Pa
 }
 
 // parsePnpmVirtualStore reads package entries from a pnpm virtual store directory (.pnpm/).
-// Each subdirectory is named "{pkg}@{version}" or "@scope/{pkg}@{version}", optionally
-// followed by a peer-dep suffix separated by "_" or "(".
+// pnpm encodes directory names as:
+//   - unscoped:  pkg@version  or  pkg@version_peer@peerVer
+//   - scoped:    @scope+name@version  (slash encoded as +, peer suffix may follow)
+//
+// pnpm v9 shortens the version in the directory name when a peer-hash suffix is
+// appended (e.g. "1.1." instead of "1.1.10"). The authoritative version is
+// always read from the package.json inside the virtual store entry.
 func parsePnpmVirtualStore(pnpmPath string, verbose bool) ([]inventory.Package, error) {
 	entries, err := os.ReadDir(pnpmPath)
 	if err != nil {
@@ -444,29 +449,23 @@ func parsePnpmVirtualStore(pnpmPath string, verbose bool) ([]inventory.Package, 
 		if !entry.IsDir() {
 			continue
 		}
-		entryName := entry.Name()
-
-		// Find last "@" to split name and version (handles scoped packages like @scope/pkg@1.0.0)
-		atIdx := strings.LastIndex(entryName, "@")
-		if atIdx <= 0 {
+		pkgName, dirVersion, ok := parsePnpmStoreEntry(entry.Name())
+		if !ok {
 			continue
 		}
-		pkgName := entryName[:atIdx]
-		rawVersion := entryName[atIdx+1:]
 
-		// Strip peer-dep / patch suffixes: "4.18.2_peer@1.0.0" → "4.18.2"
-		version := rawVersion
-		if idx := strings.IndexAny(rawVersion, "_(+"); idx > 0 {
-			version = rawVersion[:idx]
+		// Read the authoritative version from the package.json inside the store entry.
+		// pnpm v9 truncates the version in the directory name when it appends a peer hash.
+		pkgJSONPath := filepath.Join(pnpmPath, entry.Name(), "node_modules", pkgName, "package.json")
+		version, err := readPackageJSONVersion(pkgJSONPath)
+		if err != nil {
+			version = dirVersion // fallback to directory-name version
 		}
 
-		if pkgName == "" || version == "" {
-			continue
-		}
 		pkgs = append(pkgs, inventory.Package{
 			Name:       pkgName,
 			Version:    version,
-			RawVersion: rawVersion,
+			RawVersion: entry.Name(),
 			Ecosystem:  "npm",
 			Source:     "pnpm-virtual-store",
 			Location:   pnpmPath,
@@ -477,4 +476,66 @@ func parsePnpmVirtualStore(pnpmPath string, verbose bool) ([]inventory.Package, 
 		log.Printf("[npm] scanned %d packages from pnpm virtual store at %s", len(pkgs), pnpmPath)
 	}
 	return pkgs, nil
+}
+
+// readPackageJSONVersion reads the "version" field from a package.json file.
+func readPackageJSONVersion(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	var pkg struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return "", fmt.Errorf("parse %s: %w", path, err)
+	}
+	if pkg.Version == "" {
+		return "", fmt.Errorf("no version in %s", path)
+	}
+	return pkg.Version, nil
+}
+
+// parsePnpmStoreEntry extracts package name and version from a pnpm virtual store
+// directory entry name.
+//
+// The correct "@" separator is the FIRST one that is not the leading "@" of a scoped
+// package. Using LastIndex is wrong when the peer-dep suffix contains "@".
+//
+//	styled-jsx@5.1.6_@babel+core@7.29.0_react@19.2.3  →  styled-jsx, 5.1.6
+//	@babel+core@7.29.0                                 →  @babel/core, 7.29.0
+//	@babel+core@7.29.0_@types+node@20.0.0              →  @babel/core, 7.29.0
+func parsePnpmStoreEntry(entryName string) (name, version string, ok bool) {
+	// Locate the "@" that begins the version field.
+	// Scoped packages start with "@", so we skip that leading character.
+	searchFrom := 0
+	if strings.HasPrefix(entryName, "@") {
+		searchFrom = 1
+	}
+	rel := strings.Index(entryName[searchFrom:], "@")
+	if rel < 0 {
+		return "", "", false
+	}
+	atIdx := searchFrom + rel
+
+	name = entryName[:atIdx]
+	rawVer := entryName[atIdx+1:]
+
+	// Strip peer-dep / patch suffixes: "4.18.2_peer@1.0.0" or "4.18.2(peer@1.0.0)" → "4.18.2"
+	if idx := strings.IndexAny(rawVer, "_("); idx > 0 {
+		rawVer = rawVer[:idx]
+	}
+
+	if name == "" || rawVer == "" {
+		return "", "", false
+	}
+
+	// pnpm encodes "@scope/name" as "@scope+name" in directory names — restore the slash.
+	if strings.HasPrefix(name, "@") {
+		if plusIdx := strings.Index(name[1:], "+"); plusIdx >= 0 {
+			name = "@" + name[1:plusIdx+1] + "/" + name[plusIdx+2:]
+		}
+	}
+
+	return name, rawVer, true
 }
