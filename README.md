@@ -59,6 +59,15 @@ heretix-cli collect --format cyclonedx --output sbom.json
 heretix-cli collect --image nginx:latest --format cyclonedx --output nginx-sbom.json
 ```
 
+> **CycloneDX SBOM — OS package PURL format:**
+> OS packages (apk/rpm/deb) include a `?distro=` qualifier so that importers can resolve
+> the exact OSV ecosystem without ambiguity:
+> ```
+> pkg:apk/alpine/curl@7.79.1-r0?distro=alpine-3.18
+> pkg:rpm/almalinux/curl@7.76.1?distro=almalinux-9
+> pkg:deb/ubuntu/curl@7.81.0?distro=ubuntu-22.04
+> ```
+
 | Flag | Default | Description |
 |---|---|---|
 | `--output` | `inventory.json` | Output file path |
