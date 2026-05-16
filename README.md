@@ -59,14 +59,15 @@ heretix-cli collect --format cyclonedx --output sbom.json
 heretix-cli collect --image nginx:latest --format cyclonedx --output nginx-sbom.json
 ```
 
-> **CycloneDX SBOM — OS package PURL format:**
-> OS packages (apk/rpm/deb) include a `?distro=` qualifier so that importers can resolve
-> the exact OSV ecosystem without ambiguity:
-> ```
-> pkg:apk/alpine/curl@7.79.1-r0?distro=alpine-3.18
-> pkg:rpm/almalinux/curl@7.76.1?distro=almalinux-9
-> pkg:deb/ubuntu/curl@7.81.0?distro=ubuntu-22.04
-> ```
+> **CycloneDX SBOM output includes:**
+> - **PURL with `?distro=` qualifier** for OS packages (apk/rpm/deb):
+>   ```
+>   pkg:apk/alpine/curl@7.79.1-r0?distro=alpine-3.18
+>   pkg:rpm/almalinux/curl@7.76.1?distro=almalinux-9
+>   ```
+> - **`hashes`** per component from lockfile integrity fields (SHA-512 for npm/pnpm, SHA-256 for PyPI)
+> - **`properties[cdx:direct]`** marking direct vs. indirect dependencies
+> - **`bom.dependencies`** section with full dependency graph (npm package-lock.json, pnpm-lock.yaml, uv.lock, poetry.lock)
 
 | Flag | Default | Description |
 |---|---|---|
@@ -130,6 +131,34 @@ This command inherits all flags from both `collect` and `check`.
 | `--dockerfile` | (none) | Dockerfile path: also chain-scans the FROM base image |
 | `--skip-local` | `false` | Skip local security checks (GlassWorm, Dependency Confusion, Malicious Install, CI/CD Poisoning, Lock File Integrity) |
 | `--check-registry` | `false` | Query npmjs.org to classify unknown npm scopes (requires network) |
+
+### GitHub Dependency Submission (`submit`)
+
+Reads an inventory JSON and submits it to the [GitHub Dependency Submission API](https://docs.github.com/en/rest/dependency-graph/dependency-submission) so that Dependabot can generate vulnerability alerts for the detected packages.
+
+```bash
+# Typical CI/CD usage — env vars are set automatically by GitHub Actions
+heretix-cli collect --output inventory.json
+heretix-cli submit inventory.json
+
+# Manual usage
+heretix-cli submit inventory.json \
+  --token ghp_xxx \
+  --repo owner/repo \
+  --sha $(git rev-parse HEAD) \
+  --ref refs/heads/main
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--token` | `$GITHUB_TOKEN` | GitHub token with `contents: write` permission |
+| `--repo` | `$GITHUB_REPOSITORY` | Repository in `owner/repo` format |
+| `--sha` | `$GITHUB_SHA` | Commit SHA to associate the snapshot with |
+| `--ref` | `$GITHUB_REF` | Git ref (e.g. `refs/heads/main`) |
+| `--correlator` | `heretix-cli` | Unique string identifying this detector — same value overwrites the previous snapshot |
+| `--job-id` | `$GITHUB_RUN_ID` | Unique ID for this run |
+
+Packages detected from lock files are grouped into manifests by source file. Direct dependencies (detected from `// indirect` in `go.mod`, root `dependencies` in `package-lock.json`, or `importers:` in `pnpm-lock.yaml`) are submitted with `relationship: "direct"`; all others use `"indirect"`.
 
 ### Local-only Detection (`detect`)
 
@@ -370,6 +399,21 @@ heretix-cli scan --image myapp:latest --dockerfile ./Dockerfile \
   --api-url http://heretix-api:5000 --api-key your-secret-key --severity 7.0 --format json > vuln-report.json
 ```
 
+### Dependabot Integration (GitHub Actions)
+
+```yaml
+- name: Collect packages
+  run: heretix-cli collect --output inventory.json
+
+- name: Submit to GitHub Dependency Graph
+  run: heretix-cli submit inventory.json
+  env:
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    # GITHUB_REPOSITORY, GITHUB_SHA, GITHUB_REF, GITHUB_RUN_ID are set automatically
+```
+
+Once submitted, Dependabot analyses the snapshot and generates vulnerability alerts for any package with a known CVE.
+
 ## Project Structure
 
 ```
@@ -382,7 +426,8 @@ heretix-cli/
 ├── checker/                # Vulnerability API client
 ├── detector/               # Local security checks (Detector interface)
 ├── report/                 # Table & JSON output
-└── sbom/                   # CycloneDX SBOM generation
+├── sbom/                   # CycloneDX SBOM generation
+└── depgraph/               # GitHub Dependency Submission API client
 ```
 
 ## Extending

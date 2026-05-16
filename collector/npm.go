@@ -110,6 +110,9 @@ func (c *NPMCollector) Collect(scanPath string, verbose bool) ([]inventory.Packa
 }
 
 // parsePackageLock parses a package-lock.json (v2/v3 format with "packages" key).
+// It uses a two-pass approach to resolve dependency names to PURLs:
+//   Pass 1 – build a name→version map from all packages entries.
+//   Pass 2 – build Package structs with Direct and Deps populated.
 func parsePackageLock(path string, verbose bool) ([]inventory.Package, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -128,18 +131,49 @@ func parsePackageLock(path string, verbose bool) ([]inventory.Package, error) {
 
 	// v2/v3 format: "packages" field
 	if len(lockfile.Packages) > 0 {
+		// Pass 1: build name→version lookup (first occurrence wins for multi-version packages)
+		nameVer := make(map[string]string, len(lockfile.Packages))
 		for key, entry := range lockfile.Packages {
-			if key == "" {
-				continue // skip root package
-			}
-			name := key
-			// Strip "node_modules/" prefix(es)
-			for strings.HasPrefix(name, "node_modules/") {
-				name = strings.TrimPrefix(name, "node_modules/")
-			}
-			if entry.Version == "" || name == "" {
+			if key == "" || entry.Version == "" {
 				continue
 			}
+			name := pkgNameFromPath(key)
+			if _, exists := nameVer[name]; !exists {
+				nameVer[name] = entry.Version
+			}
+		}
+
+		// Collect direct dependency names from the root package entry
+		directSet := make(map[string]bool)
+		if root, ok := lockfile.Packages[""]; ok {
+			for name := range root.Dependencies {
+				directSet[name] = true
+			}
+			for name := range root.DevDependencies {
+				directSet[name] = true
+			}
+		}
+
+		// Pass 2: build packages with Direct and Deps
+		for key, entry := range lockfile.Packages {
+			if key == "" || entry.Version == "" {
+				continue
+			}
+			name := pkgNameFromPath(key)
+			if name == "" {
+				continue
+			}
+
+			isDirect := directSet[name]
+
+			// Resolve requires → PURLs (best-effort; unresolved names are skipped)
+			var deps []string
+			for depName := range entry.Requires {
+				if depVer, ok := nameVer[depName]; ok {
+					deps = append(deps, npmDepPURL(depName, depVer))
+				}
+			}
+
 			pkgs = append(pkgs, inventory.Package{
 				Name:       name,
 				Version:    entry.Version,
@@ -147,10 +181,13 @@ func parsePackageLock(path string, verbose bool) ([]inventory.Package, error) {
 				Ecosystem:  "npm",
 				Source:     "package-lock.json",
 				Location:   path,
+				Direct:     inventory.BoolPtr(isDirect),
+				Deps:       deps,
+				Integrity:  entry.Integrity,
 			})
 		}
 	} else if len(lockfile.Dependencies) > 0 {
-		// v1 format: "dependencies" field
+		// v1 format: "dependencies" field (no Deps extraction, Direct unknown)
 		pkgs = append(pkgs, flattenDeps("", lockfile.Dependencies, path)...)
 	}
 
@@ -160,8 +197,36 @@ func parsePackageLock(path string, verbose bool) ([]inventory.Package, error) {
 	return pkgs, nil
 }
 
+// pkgNameFromPath strips "node_modules/" prefixes from a package-lock.json path key.
+// "node_modules/foo"                       → "foo"
+// "node_modules/@scope/foo"                → "@scope/foo"
+// "node_modules/bar/node_modules/baz"      → "baz"  (take the last component)
+func pkgNameFromPath(key string) string {
+	name := key
+	for strings.Contains(name, "node_modules/") {
+		idx := strings.LastIndex(name, "node_modules/")
+		name = name[idx+len("node_modules/"):]
+	}
+	return name
+}
+
+// npmDepPURL generates a PURL for an npm dependency.
+// Scoped packages (@scope/name) are percent-encoded as per the PURL spec.
+func npmDepPURL(name, version string) string {
+	if strings.HasPrefix(name, "@") {
+		if parts := strings.SplitN(name[1:], "/", 2); len(parts) == 2 {
+			return fmt.Sprintf("pkg:npm/%%40%s/%s@%s", parts[0], parts[1], version)
+		}
+	}
+	return fmt.Sprintf("pkg:npm/%s@%s", name, version)
+}
+
 type packageLockEntry struct {
-	Version string `json:"version"`
+	Version         string            `json:"version"`
+	Integrity       string            `json:"integrity"`
+	Requires        map[string]string `json:"requires"`
+	Dependencies    map[string]string `json:"dependencies"`
+	DevDependencies map[string]string `json:"devDependencies"`
 }
 
 type packageLockDep struct {
@@ -244,25 +309,56 @@ func parseYarnLock(path string, verbose bool) ([]inventory.Package, error) {
 }
 
 // parsePnpmLock parses a pnpm-lock.yaml file (v5/v6/v9 formats).
-// It extracts packages from the "packages:" section only, skipping "snapshots:"
-// and "importers:" to avoid duplicates and unresolved specifiers.
+// It reads the "importers:" section to collect direct dependency names,
+// then reads the "packages:" section for all resolved packages.
 func parsePnpmLock(path string, verbose bool) ([]inventory.Package, error) {
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
 
+	directSet := parsePnpmImporters(string(data))
+	snapshotDeps := parsePnpmSnapshots(string(data))
+
+	// State machine: track current package entry to capture integrity alongside name/version.
+	type pnpmEntry struct {
+		name      string
+		version   string
+		integrity string
+	}
+	var cur pnpmEntry
 	var pkgs []inventory.Package
 	inPackages := false
-	scanner := bufio.NewScanner(f)
+
+	flushPnpm := func() {
+		if cur.name != "" && cur.version != "" {
+			isDirect := directSet[cur.name]
+			deps := snapshotDeps[cur.name+"@"+cur.version]
+			pkgs = append(pkgs, inventory.Package{
+				Name:       cur.name,
+				Version:    cur.version,
+				RawVersion: cur.version,
+				Ecosystem:  "npm",
+				Source:     "pnpm-lock.yaml",
+				Location:   path,
+				Direct:     inventory.BoolPtr(isDirect),
+				Integrity:  cur.integrity,
+				Deps:       deps,
+			})
+		}
+		cur = pnpmEntry{}
+	}
+
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
 	for scanner.Scan() {
 		line := scanner.Text()
 
 		// Top-level section header (no leading whitespace)
 		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
-			// Blank lines between sections must not reset the current section
 			if trimmedLine := strings.TrimSpace(line); trimmedLine != "" {
+				if inPackages {
+					flushPnpm()
+				}
 				inPackages = trimmedLine == "packages:"
 			}
 			continue
@@ -272,48 +368,203 @@ func parsePnpmLock(path string, verbose bool) ([]inventory.Package, error) {
 			continue
 		}
 
-		// Package key lines are indented with exactly 2 spaces and end with ":"
-		// e.g. "  /express@4.18.2:" (v5/v6) or "  express@4.18.2:" (v9)
-		if !strings.HasPrefix(line, "  ") || strings.HasPrefix(line, "   ") {
-			continue
-		}
-		trimmed := strings.TrimSpace(line)
-		if !strings.HasSuffix(trimmed, ":") || !strings.Contains(trimmed, "@") {
+		// Package key lines: indented with exactly 2 spaces, end with ":"
+		if strings.HasPrefix(line, "  ") && !strings.HasPrefix(line, "   ") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasSuffix(trimmed, ":") && strings.Contains(trimmed, "@") {
+				flushPnpm()
+				key := strings.TrimSuffix(trimmed, ":")
+				key = strings.Trim(key, "'")
+				key = strings.TrimPrefix(key, "/")
+				if idx := strings.Index(key, "("); idx > 0 {
+					key = key[:idx]
+				}
+				if idx := strings.LastIndex(key, "@"); idx > 0 {
+					cur.name = key[:idx]
+					cur.version = key[idx+1:]
+				}
+			}
 			continue
 		}
 
-		key := strings.TrimSuffix(trimmed, ":")
-		// Remove YAML single quotes wrapping scoped packages (e.g. '@scope/pkg@1.0.0')
-		key = strings.Trim(key, "'")
-		// Remove leading slash used in v5/v6 format
-		key = strings.TrimPrefix(key, "/")
-		// Strip parenthetical peer-dep suffixes present in pnpm v9 lockfiles:
-		// "hono@4.11.4(@prisma/client@5.0.0)" → "hono@4.11.4"
-		if idx := strings.Index(key, "("); idx > 0 {
-			key = key[:idx]
-		}
-
-		// Split name and version at the last "@"
-		if idx := strings.LastIndex(key, "@"); idx > 0 {
-			name := key[:idx]
-			version := key[idx+1:]
-			if name != "" && version != "" {
-				pkgs = append(pkgs, inventory.Package{
-					Name:       name,
-					Version:    version,
-					RawVersion: version,
-					Ecosystem:  "npm",
-					Source:     "pnpm-lock.yaml",
-					Location:   path,
-				})
+		// Property lines: indented with 4 spaces inside a package block
+		if strings.HasPrefix(line, "    ") && !strings.HasPrefix(line, "     ") && cur.name != "" {
+			trimmed := strings.TrimSpace(line)
+			// Standalone:  "integrity: sha512-..."
+			if strings.HasPrefix(trimmed, "integrity: ") {
+				cur.integrity = strings.TrimPrefix(trimmed, "integrity: ")
+				continue
+			}
+			// Inline resolution block:  "resolution: {integrity: sha512-...}"
+			if strings.HasPrefix(trimmed, "resolution: {integrity: ") {
+				val := strings.TrimPrefix(trimmed, "resolution: {integrity: ")
+				val = strings.TrimSuffix(val, "}")
+				cur.integrity = val
 			}
 		}
 	}
+	flushPnpm()
 
 	if verbose {
 		log.Printf("[npm] parsed %d packages from %s", len(pkgs), path)
 	}
 	return pkgs, scanner.Err()
+}
+
+// parsePnpmSnapshots extracts the resolved dependency graph from the "snapshots:" section
+// of a pnpm-lock.yaml (v9+). It returns a map of "name@version" to a slice of dependency
+// PURLs. Peer-dependency suffixes in parentheses are stripped from both keys and values.
+//
+// Snapshot entry structure:
+//
+//	snapshots:
+//	  '@auth/core@0.41.1':          ← 2-space key (may have peer suffix)
+//	    dependencies:               ← 4-space section header
+//	      '@panva/hkdf': 1.2.1     ← 6-space dep entry
+//	      preact: 10.24.3(...)      ← peer suffix on version — stripped
+//	    transitivePeerDependencies: ← ignored
+func parsePnpmSnapshots(content string) map[string][]string {
+	depsMap := make(map[string][]string)
+	inSnapshots := false
+	currentKey := ""
+	inDeps := false
+
+	scanner := bufio.NewScanner(strings.NewReader(content))
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Top-level section header
+		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+			if t := strings.TrimSpace(line); t != "" {
+				inSnapshots = t == "snapshots:"
+				currentKey = ""
+				inDeps = false
+			}
+			continue
+		}
+		if !inSnapshots {
+			continue
+		}
+
+		// 2-space indent: snapshot package key
+		if strings.HasPrefix(line, "  ") && !strings.HasPrefix(line, "   ") {
+			t := strings.TrimSpace(line)
+			// Keys end with ":" or ": {}" (no-deps shorthand)
+			t = strings.TrimSuffix(t, ": {}")
+			t = strings.TrimSuffix(t, ":")
+			t = strings.TrimSpace(t)
+			t = strings.Trim(t, "'\"")
+			// Strip peer-dep suffix
+			if idx := strings.Index(t, "("); idx > 0 {
+				t = t[:idx]
+			}
+			if strings.Contains(t, "@") {
+				currentKey = t
+			} else {
+				currentKey = ""
+			}
+			inDeps = false
+			continue
+		}
+
+		if currentKey == "" {
+			continue
+		}
+
+		// 4-space indent: section headers inside snapshot entry
+		if strings.HasPrefix(line, "    ") && !strings.HasPrefix(line, "     ") {
+			t := strings.TrimSpace(line)
+			inDeps = t == "dependencies:"
+			if !inDeps {
+				// transitivePeerDependencies: or other — stop collecting deps
+				if t != "" && !strings.HasSuffix(t, ":") {
+					inDeps = false
+				}
+			}
+			continue
+		}
+
+		// 6-space indent: individual dependency entries
+		if inDeps && strings.HasPrefix(line, "      ") && !strings.HasPrefix(line, "       ") {
+			t := strings.TrimSpace(line)
+			colonIdx := strings.Index(t, ": ")
+			if colonIdx < 0 {
+				continue
+			}
+			depName := strings.Trim(t[:colonIdx], "'\"")
+			depVer := t[colonIdx+2:]
+			// Strip peer-dep suffix from version: "6.5.11(preact@10.24.3)" → "6.5.11"
+			if idx := strings.Index(depVer, "("); idx > 0 {
+				depVer = depVer[:idx]
+			}
+			depVer = strings.TrimSpace(depVer)
+			if depName != "" && depVer != "" {
+				depsMap[currentKey] = append(depsMap[currentKey], npmDepPURL(depName, depVer))
+			}
+		}
+	}
+	return depsMap
+}
+
+// parsePnpmImporters extracts direct dependency names from the "importers:" section
+// of a pnpm-lock.yaml. Only the root importer (".") is considered.
+// Returns a set of package names that are direct dependencies.
+func parsePnpmImporters(content string) map[string]bool {
+	directSet := make(map[string]bool)
+	inImporters := false
+	inRootImporter := false
+	inDepSection := false // inside dependencies: or devDependencies:
+
+	scanner := bufio.NewScanner(strings.NewReader(content))
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Top-level section
+		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+			if t := strings.TrimSpace(line); t != "" {
+				inImporters = t == "importers:"
+				inRootImporter = false
+				inDepSection = false
+			}
+			continue
+		}
+		if !inImporters {
+			continue
+		}
+
+		// 2-space indent: importer key (e.g. "  .:")
+		if strings.HasPrefix(line, "  ") && !strings.HasPrefix(line, "   ") {
+			t := strings.TrimSpace(line)
+			inRootImporter = t == ".:"
+			inDepSection = false
+			continue
+		}
+		if !inRootImporter {
+			continue
+		}
+
+		// 4-space indent: section inside root importer
+		if strings.HasPrefix(line, "    ") && !strings.HasPrefix(line, "     ") {
+			t := strings.TrimSpace(line)
+			inDepSection = t == "dependencies:" || t == "devDependencies:"
+			continue
+		}
+		if !inDepSection {
+			continue
+		}
+
+		// 6-space indent: individual dependency entry
+		if strings.HasPrefix(line, "      ") && !strings.HasPrefix(line, "       ") {
+			t := strings.TrimSpace(line)
+			// Line looks like "react:" — the name is everything before the colon
+			name := strings.TrimSuffix(t, ":")
+			name = strings.Trim(name, "'\"")
+			if name != "" {
+				directSet[name] = true
+			}
+		}
+	}
+	return directSet
 }
 
 // npmGlobalFallback uses npm list -g --json to collect global packages.

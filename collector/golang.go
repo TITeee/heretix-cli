@@ -152,7 +152,11 @@ func parseGoMod(path string, verbose bool) ([]inventory.Package, error) {
 	scanner := bufio.NewScanner(f)
 
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+		raw := scanner.Text()
+		line := strings.TrimSpace(raw)
+
+		// Check for // indirect before stripping the comment
+		isIndirect := strings.Contains(line, "// indirect")
 
 		// Strip inline comments
 		if idx := strings.Index(line, "//"); idx != -1 {
@@ -176,7 +180,7 @@ func parseGoMod(path string, verbose bool) ([]inventory.Package, error) {
 		}
 
 		if inRequireBlock {
-			pkg := parseRequireLine(line, path)
+			pkg := parseRequireLine(line, path, isIndirect)
 			if pkg != nil {
 				pkgs = append(pkgs, *pkg)
 			}
@@ -192,7 +196,7 @@ func parseGoMod(path string, verbose bool) ([]inventory.Package, error) {
 				inRequireBlock = true
 				continue
 			}
-			pkg := parseRequireLine(rest, path)
+			pkg := parseRequireLine(rest, path, isIndirect)
 			if pkg != nil {
 				pkgs = append(pkgs, *pkg)
 			}
@@ -206,7 +210,8 @@ func parseGoMod(path string, verbose bool) ([]inventory.Package, error) {
 }
 
 // parseRequireLine parses a single "name version" line from a require block.
-func parseRequireLine(line, location string) *inventory.Package {
+// isIndirect should be true when the original line contained "// indirect".
+func parseRequireLine(line, location string, isIndirect bool) *inventory.Package {
 	fields := strings.Fields(line)
 	if len(fields) < 2 {
 		return nil
@@ -219,6 +224,7 @@ func parseRequireLine(line, location string) *inventory.Package {
 		return nil
 	}
 
+	direct := inventory.BoolPtr(!isIndirect)
 	return &inventory.Package{
 		Name:       name,
 		Version:    version,
@@ -226,6 +232,7 @@ func parseRequireLine(line, location string) *inventory.Package {
 		Ecosystem:  "Go",
 		Source:     "go.mod",
 		Location:   location,
+		Direct:     direct,
 	}
 }
 

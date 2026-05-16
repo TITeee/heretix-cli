@@ -59,14 +59,15 @@ heretix-cli collect --format cyclonedx --output sbom.json
 heretix-cli collect --image nginx:latest --format cyclonedx --output nginx-sbom.json
 ```
 
-> **CycloneDX SBOM — OS パッケージの PURL 形式:**
-> OS パッケージ（apk/rpm/deb）には `?distro=` qualifier を付与する。
-> これによりインポート側が OSV エコシステムを正確に解決できる:
-> ```
-> pkg:apk/alpine/curl@7.79.1-r0?distro=alpine-3.18
-> pkg:rpm/almalinux/curl@7.76.1?distro=almalinux-9
-> pkg:deb/ubuntu/curl@7.81.0?distro=ubuntu-22.04
-> ```
+> **CycloneDX SBOM 出力には以下が含まれる:**
+> - OS パッケージ（apk/rpm/deb）の **PURL に `?distro=` qualifier** を付与:
+>   ```
+>   pkg:apk/alpine/curl@7.79.1-r0?distro=alpine-3.18
+>   pkg:rpm/almalinux/curl@7.76.1?distro=almalinux-9
+>   ```
+> - lockfile の integrity ハッシュを **`hashes`** に格納（npm/pnpm は SHA-512、PyPI は SHA-256）
+> - direct/indirect を示す **`properties[cdx:direct]`** プロパティ
+> - **`bom.dependencies`** セクションによる依存グラフ（npm package-lock.json, pnpm-lock.yaml, uv.lock, poetry.lock）
 
 | フラグ | デフォルト | 説明 |
 |---|---|---|
@@ -130,6 +131,34 @@ HERETIX_API_KEY=your-secret-key heretix-cli scan --api-url http://heretix-api:50
 | `--dockerfile` | (なし) | Dockerfile パス: FROM のベースイメージも連鎖スキャン |
 | `--skip-local` | `false` | ローカルセキュリティ検知をスキップ（GlassWorm・Dependency Confusion・Malicious Install・CI/CD Poisoning・Lock File Integrity） |
 | `--check-registry` | `false` | 未知の npm スコープを npmjs.org に問い合わせて判定（ネットワーク必須） |
+
+### GitHub Dependency Submission (`submit`)
+
+インベントリ JSON を読み込み、[GitHub Dependency Submission API](https://docs.github.com/en/rest/dependency-graph/dependency-submission) に送信する。送信後、Dependabot が検出パッケージの既知の脆弱性に対してアラートを生成する。
+
+```bash
+# GitHub Actions での典型的な使い方（環境変数は Actions が自動設定）
+heretix-cli collect --output inventory.json
+heretix-cli submit inventory.json
+
+# 手動実行
+heretix-cli submit inventory.json \
+  --token ghp_xxx \
+  --repo owner/repo \
+  --sha $(git rev-parse HEAD) \
+  --ref refs/heads/main
+```
+
+| フラグ | デフォルト | 説明 |
+|---|---|---|
+| `--token` | `$GITHUB_TOKEN` | `contents: write` 権限を持つ GitHub トークン |
+| `--repo` | `$GITHUB_REPOSITORY` | `owner/repo` 形式のリポジトリ名 |
+| `--sha` | `$GITHUB_SHA` | スナップショットと紐付けるコミット SHA |
+| `--ref` | `$GITHUB_REF` | Git ref（例: `refs/heads/main`） |
+| `--correlator` | `heretix-cli` | 検出器を識別する文字列。同じ値で送信すると前回のスナップショットを上書き |
+| `--job-id` | `$GITHUB_RUN_ID` | 今回の実行を識別する一意 ID |
+
+lockfile から検出されたパッケージはソースファイル単位でマニフェストにグループ化される。`go.mod` の `// indirect`・`package-lock.json` のルート `dependencies`・`pnpm-lock.yaml` の `importers:` から判定した direct 依存は `relationship: "direct"` で送信される。
 
 ### ローカル検知のみ実行 (`detect`)
 
@@ -370,6 +399,21 @@ heretix-cli scan --image myapp:latest --dockerfile ./Dockerfile \
   --api-url http://heretix-api:5000 --api-key your-secret-key --severity 7.0 --format json > vuln-report.json
 ```
 
+### Dependabot 連携（GitHub Actions）
+
+```yaml
+- name: パッケージ収集
+  run: heretix-cli collect --output inventory.json
+
+- name: GitHub Dependency Graph に送信
+  run: heretix-cli submit inventory.json
+  env:
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    # GITHUB_REPOSITORY / GITHUB_SHA / GITHUB_REF / GITHUB_RUN_ID は Actions が自動設定
+```
+
+送信後、Dependabot がスナップショットを解析し、既知の CVE を持つパッケージに対してアラートを生成する。
+
 ## プロジェクト構成
 
 ```
@@ -382,7 +426,8 @@ heretix-cli/
 ├── checker/                # 脆弱性 API クライアント
 ├── detector/               # ローカルセキュリティ検知 (Detector インターフェース)
 ├── report/                 # テーブル・JSON 出力
-└── sbom/                   # CycloneDX SBOM 生成
+├── sbom/                   # CycloneDX SBOM 生成
+└── depgraph/               # GitHub Dependency Submission API クライアント
 ```
 
 ## 拡張
