@@ -79,6 +79,32 @@ heretix-cli collect --image nginx:latest --format cyclonedx --output nginx-sbom.
 | `--image` | (なし) | スキャンする Docker イメージ参照 (例: `nginx:latest`) |
 | `--dockerfile` | (なし) | Dockerfile パス: FROM のベースイメージも連鎖スキャン |
 
+#### lockfile 別 SBOM / インベントリ対応状況
+
+各 lockfile から取得できるメタデータフィールドの対応表。
+`✓`=完全対応、`△`=部分対応（注記参照）、`—`=フォーマット上取得不可。
+
+| lockfile | パッケージ収集 | `direct` | `deps` | `integrity` |
+|---|---|---|---|---|
+| `package-lock.json` v2/v3 | ✓ | ✓ | ✓ | ✓ |
+| `package-lock.json` v1 | ✓ | — | — | — |
+| `yarn.lock` | ✓ | — | — | — |
+| `pnpm-lock.yaml` v9 | ✓ | ✓ | ✓ | ✓ |
+| `pnpm-lock.yaml` v5/v6 | ✓ | ✓ | — | ✓ |
+| `requirements.txt` | △ `==` のみ | ✓ | — | △ `--hash=` 付きのみ |
+| `Pipfile.lock` | ✓ | ✓ | — | ✓ |
+| `poetry.lock` | ✓ | — ¹ | ✓ | — |
+| `uv.lock` | ✓ | ✓ | ✓ | ✓ |
+| `go.mod`（直接解析） | △ 宣言済みのみ | ✓ | — | — |
+| `go list`（フォールバック） | ✓ transitive 含む | — ² | — | — |
+| `composer.lock` | ✓ | — | — | — |
+| RPM / DPKG / APK | ✓ | — | — | — |
+
+¹ poetry.lock の `direct` 判定は `pyproject.toml` の読み取りが必要なため未実装。  
+² `go` コマンドが利用可能な場合は `go list` を優先するため transitive deps が取れるが、`direct` 情報は失われる。
+
+`deps` の PURL および `integrity` ハッシュは、CycloneDX 出力の `bom.dependencies` および `components[].hashes` にそれぞれ反映される。
+
 ### 脆弱性チェック (`check`)
 
 collect で出力した JSON を読み込み、脆弱性 API に問い合わせる。
