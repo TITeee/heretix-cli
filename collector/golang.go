@@ -95,6 +95,7 @@ func goModulePackages(goModPath string, verbose bool) ([]inventory.Package, erro
 
 // goListAllInDir runs "go list -m -json all" in dir and returns all modules
 // in the resolved dependency graph (direct + indirect + transitive).
+// It also calls goModGraph to populate Deps and Direct on each package.
 func goListAllInDir(dir string, verbose bool) ([]inventory.Package, error) {
 	if _, err := exec.LookPath("go"); err != nil {
 		return nil, fmt.Errorf("go not found in PATH")
@@ -131,10 +132,90 @@ func goListAllInDir(dir string, verbose bool) ([]inventory.Package, error) {
 		})
 	}
 
+	// Populate Deps and Direct from go mod graph (best-effort; skipped on failure)
+	depsByKey, directKeys := goModGraph(dir, verbose)
+	for i := range pkgs {
+		key := pkgs[i].Name + "@" + pkgs[i].Version
+		if deps, ok := depsByKey[key]; ok {
+			pkgs[i].Deps = deps
+		}
+		if len(directKeys) > 0 {
+			pkgs[i].Direct = inventory.BoolPtr(directKeys[key])
+		}
+	}
+
 	if verbose {
 		log.Printf("[go] go list collected %d packages from %s", len(pkgs), dir)
 	}
 	return pkgs, nil
+}
+
+// goModGraph runs "go mod graph" in dir and returns:
+//   - depsByKey: map of "module@version" → []PURL of its direct dependencies
+//   - directKeys: set of "module@version" strings that are direct deps of the main module
+//
+// Returns empty maps on any failure (go binary missing, network unavailable, etc.)
+// so callers can treat it as best-effort enrichment.
+func goModGraph(dir string, verbose bool) (depsByKey map[string][]string, directKeys map[string]bool) {
+	depsByKey = make(map[string][]string)
+	directKeys = make(map[string]bool)
+
+	if _, err := exec.LookPath("go"); err != nil {
+		return
+	}
+
+	cmd := exec.Command("go", "mod", "graph")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		if verbose {
+			log.Printf("[go] go mod graph failed in %s: %v", dir, err)
+		}
+		return
+	}
+
+	var mainModule string
+	var lines []string
+	scanner := bufio.NewScanner(strings.NewReader(string(out)))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) != 2 {
+			continue
+		}
+		lines = append(lines, line)
+		// The main module appears on the left side without an "@version" suffix
+		if !strings.Contains(parts[0], "@") {
+			mainModule = parts[0]
+		}
+	}
+
+	for _, line := range lines {
+		parts := strings.Fields(line)
+		left, right := parts[0], parts[1]
+		depsByKey[left] = append(depsByKey[left], goModuleToPURL(right))
+		if mainModule != "" && left == mainModule {
+			directKeys[right] = true
+		}
+	}
+
+	if verbose {
+		log.Printf("[go] go mod graph: %d module edges from %s", len(lines), dir)
+	}
+	return
+}
+
+// goModuleToPURL converts a "module@version" token from go mod graph output
+// to a CycloneDX-compatible PURL (pkg:golang/MODULE@VERSION).
+func goModuleToPURL(moduleAtVersion string) string {
+	at := strings.LastIndex(moduleAtVersion, "@")
+	if at < 0 {
+		return "pkg:golang/" + moduleAtVersion
+	}
+	return fmt.Sprintf("pkg:golang/%s@%s", moduleAtVersion[:at], moduleAtVersion[at+1:])
 }
 
 // parseGoMod parses a go.mod file and returns the declared dependencies.
