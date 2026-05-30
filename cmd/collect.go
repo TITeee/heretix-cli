@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -41,16 +42,18 @@ var (
 	collectImage      string
 	collectDockerfile string
 	collectFormat     string
+	collectName       string
 )
 
 func init() {
-	collectCmd.Flags().StringVar(&collectOutput, "output", "inventory.json", "Output file path")
+	collectCmd.Flags().StringVar(&collectOutput, "output", "", "Output file path (default: {name}.json, {scan-path-basename}.json, or inventory.json)")
 	collectCmd.Flags().StringVar(&collectScanPath, "scan-path", defaultScanPath(), "Filesystem root path to scan")
 	collectCmd.Flags().StringSliceVar(&collectSkip, "skip", nil, "Sources to skip (e.g. --skip npm,pypi)")
 	collectCmd.Flags().BoolVar(&collectVerbose, "verbose", false, "Enable verbose logging")
 	collectCmd.Flags().StringVar(&collectImage, "image", "", "Docker image to scan (e.g. nginx:latest, registry.example.com/app:v1)")
 	collectCmd.Flags().StringVar(&collectDockerfile, "dockerfile", "", "Dockerfile path: also scan the base image from its FROM instruction")
 	collectCmd.Flags().StringVar(&collectFormat, "format", "json", "Output format: json or cyclonedx")
+	collectCmd.Flags().StringVar(&collectName, "name", "", "Override hostname in output (useful to distinguish multiple projects on the same host)")
 	rootCmd.AddCommand(collectCmd)
 }
 
@@ -73,11 +76,16 @@ func runCollect(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("collection failed: %w", err)
 	}
 
-	if err := writeCollectOutput(inv, collectOutput, collectFormat); err != nil {
+	if collectName != "" {
+		inv.Hostname = collectName
+	}
+
+	out := resolveOutputPath()
+	if err := writeCollectOutput(inv, out, collectFormat); err != nil {
 		return err
 	}
 
-	fmt.Fprintf(os.Stderr, "Collected %d packages -> %s\n", len(inv.Packages), collectOutput)
+	fmt.Fprintf(os.Stderr, "Collected %d packages -> %s\n", len(inv.Packages), out)
 	return nil
 }
 
@@ -123,14 +131,39 @@ func runCollectWithImage() error {
 
 	combinedInv.Packages = inventory.Deduplicate(allPkgs)
 	combinedInv.Type = "docker_image"
-	combinedInv.Hostname = collectImage
+	if collectName != "" {
+		combinedInv.Hostname = collectName
+	} else {
+		combinedInv.Hostname = collectImage
+	}
 
-	if err := writeCollectOutput(combinedInv, collectOutput, collectFormat); err != nil {
+	out := resolveOutputPath()
+	if err := writeCollectOutput(combinedInv, out, collectFormat); err != nil {
 		return err
 	}
 
-	fmt.Fprintf(os.Stderr, "Collected %d packages -> %s\n", len(combinedInv.Packages), collectOutput)
+	fmt.Fprintf(os.Stderr, "Collected %d packages -> %s\n", len(combinedInv.Packages), out)
 	return nil
+}
+
+// resolveOutputPath determines the output file path using the following priority:
+//  1. --output (explicitly set)
+//  2. --name + ".json"
+//  3. basename of --scan-path + ".json" (skipped for root paths like "/" or "C:\")
+//  4. "inventory.json"
+func resolveOutputPath() string {
+	if collectOutput != "" {
+		return collectOutput
+	}
+	if collectName != "" {
+		return collectName + ".json"
+	}
+	base := filepath.Base(collectScanPath)
+	// Exclude root-like basenames (e.g. "/", "\", "C:\")
+	if base != "" && base != "." && base != "/" && base != "\\" && !strings.HasSuffix(base, ":\\") {
+		return base + ".json"
+	}
+	return "inventory.json"
 }
 
 func writeCollectOutput(inv *inventory.Inventory, path string, format string) error {
