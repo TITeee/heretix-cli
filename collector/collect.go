@@ -85,7 +85,7 @@ func stripScanPathPrefix(pkgs []inventory.Package, scanPath string) []inventory.
 // detectOSInfo reads <scanPath>/etc/os-release (or /usr/lib/os-release as fallback)
 // to populate OS metadata. Alpine Linux uses a symlink for /etc/os-release which
 // may not be resolved correctly after tar extraction, so both paths are tried.
-// On Windows hosts, it queries `cmd /c ver` instead of reading os-release.
+// On Windows hosts scanning the native filesystem, it falls back to `cmd /c ver`.
 func detectOSInfo(scanPath string) inventory.OSInfo {
 	info := inventory.OSInfo{
 		ID:        "unknown",
@@ -93,10 +93,7 @@ func detectOSInfo(scanPath string) inventory.OSInfo {
 		Name:      "Unknown",
 	}
 
-	if runtime.GOOS == "windows" {
-		return detectOSInfoWindows()
-	}
-
+	// Always try os-release first — this handles container rootfs scans on any platform.
 	candidates := []string{
 		filepath.Join(scanPath, "etc", "os-release"),
 		filepath.Join(scanPath, "usr", "lib", "os-release"),
@@ -109,25 +106,30 @@ func detectOSInfo(scanPath string) inventory.OSInfo {
 			break
 		}
 	}
-	if data == nil {
+
+	if data != nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			k, v, ok := strings.Cut(line, "=")
+			if !ok {
+				continue
+			}
+			v = strings.Trim(v, `"`)
+			switch k {
+			case "ID":
+				info.ID = v
+			case "VERSION_ID":
+				info.VersionID = v
+			case "PRETTY_NAME":
+				info.Name = v
+			}
+		}
 		return info
 	}
 
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		k, v, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		v = strings.Trim(v, `"`)
-		switch k {
-		case "ID":
-			info.ID = v
-		case "VERSION_ID":
-			info.VersionID = v
-		case "PRETTY_NAME":
-			info.Name = v
-		}
+	// No os-release found — fall back to host OS detection on Windows.
+	if runtime.GOOS == "windows" {
+		return detectOSInfoWindows()
 	}
 	return info
 }
