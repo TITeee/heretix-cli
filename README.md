@@ -97,11 +97,12 @@ The table below shows which metadata fields are populated for each lockfile sour
 | `uv.lock` | ✓ | ✓ | ✓ | ✓ |
 | `go.mod` (parsed) | △ declared only | ✓ | — | — |
 | `go list` (fallback) | ✓ incl. transitive | — ² | — | — |
-| `composer.lock` | ✓ | — | — | — |
+| `composer.lock` | ✓ | △ ³ | ✓ | — |
 | RPM / DPKG / APK | ✓ | — | — | — |
 
 ¹ `direct` for poetry.lock requires reading `pyproject.toml` — not implemented.  
-² When the `go` binary is available `go list` is preferred, which provides transitive dependencies but loses `direct` information.
+² When the `go` binary is available `go list` is preferred, which provides transitive dependencies but loses `direct` information.  
+³ `direct` for composer.lock requires `composer.json` in the same directory.
 
 `deps` PURLs and `integrity` hashes are carried through to the CycloneDX `bom.dependencies` and `components[].hashes` fields respectively.
 

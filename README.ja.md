@@ -97,11 +97,12 @@ heretix-cli collect --image nginx:latest --format cyclonedx --output nginx-sbom.
 | `uv.lock` | ✓ | ✓ | ✓ | ✓ |
 | `go.mod`（直接解析） | △ 宣言済みのみ | ✓ | — | — |
 | `go list`（フォールバック） | ✓ transitive 含む | — ² | — | — |
-| `composer.lock` | ✓ | — | — | — |
+| `composer.lock` | ✓ | △ ³ | ✓ | — |
 | RPM / DPKG / APK | ✓ | — | — | — |
 
 ¹ poetry.lock の `direct` 判定は `pyproject.toml` の読み取りが必要なため未実装。  
-² `go` コマンドが利用可能な場合は `go list` を優先するため transitive deps が取れるが、`direct` 情報は失われる。
+² `go` コマンドが利用可能な場合は `go list` を優先するため transitive deps が取れるが、`direct` 情報は失われる。  
+³ composer.lock の `direct` 判定は同ディレクトリに `composer.json` が必要。
 
 `deps` の PURL および `integrity` ハッシュは、CycloneDX 出力の `bom.dependencies` および `components[].hashes` にそれぞれ反映される。
 

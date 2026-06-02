@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/TITeee/heretix-cli/inventory"
 )
@@ -53,9 +54,42 @@ func (c *ComposerCollector) Collect(scanPath string, verbose bool) ([]inventory.
 	return pkgs, nil
 }
 
-type composerPackage struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
+type composerLockEntry struct {
+	Name     string            `json:"name"`
+	Version  string            `json:"version"`
+	Require  map[string]string `json:"require"`
+	Licenses []string          `json:"license"`
+}
+
+func composerPURL(name, version string) string {
+	return "pkg:composer/" + name + "@" + version
+}
+
+// loadComposerDirectSet reads composer.json in the same directory and returns
+// the set of directly required package names. Returns nil if composer.json is absent.
+func loadComposerDirectSet(lockPath string) map[string]bool {
+	composerJSON := filepath.Join(filepath.Dir(lockPath), "composer.json")
+	data, err := os.ReadFile(composerJSON)
+	if err != nil {
+		return nil
+	}
+
+	var manifest struct {
+		Require    map[string]string `json:"require"`
+		RequireDev map[string]string `json:"require-dev"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return nil
+	}
+
+	directSet := make(map[string]bool, len(manifest.Require)+len(manifest.RequireDev))
+	for name := range manifest.Require {
+		directSet[name] = true
+	}
+	for name := range manifest.RequireDev {
+		directSet[name] = true
+	}
+	return directSet
 }
 
 // parseComposerLock parses a composer.lock (JSON) and returns all packages,
@@ -67,18 +101,49 @@ func parseComposerLock(path string, verbose bool) ([]inventory.Package, error) {
 	}
 
 	var lockfile struct {
-		Packages    []composerPackage `json:"packages"`
-		PackagesDev []composerPackage `json:"packages-dev"`
+		Packages    []composerLockEntry `json:"packages"`
+		PackagesDev []composerLockEntry `json:"packages-dev"`
 	}
 	if err := json.Unmarshal(data, &lockfile); err != nil {
 		return nil, fmt.Errorf("parse composer.lock: %w", err)
 	}
 
-	var pkgs []inventory.Package
-	for _, entry := range append(lockfile.Packages, lockfile.PackagesDev...) {
+	all := append(lockfile.Packages, lockfile.PackagesDev...)
+
+	// Pass 1: build name→version lookup (first occurrence wins)
+	nameVer := make(map[string]string, len(all))
+	for _, entry := range all {
 		if entry.Name == "" || entry.Version == "" {
 			continue
 		}
+		if _, exists := nameVer[entry.Name]; !exists {
+			nameVer[entry.Name] = entry.Version
+		}
+	}
+
+	// Direct set from composer.json (nil when absent → Direct stays nil)
+	directSet := loadComposerDirectSet(path)
+
+	// Pass 2: build packages with Deps and Direct
+	var pkgs []inventory.Package
+	for _, entry := range all {
+		if entry.Name == "" || entry.Version == "" {
+			continue
+		}
+
+		// Resolve require → PURLs; entries not found in nameVer (e.g. "php", "ext-*") are skipped
+		var deps []string
+		for depName := range entry.Require {
+			if depVer, ok := nameVer[depName]; ok {
+				deps = append(deps, composerPURL(depName, depVer))
+			}
+		}
+
+		var direct *bool
+		if directSet != nil {
+			direct = inventory.BoolPtr(directSet[entry.Name])
+		}
+
 		pkgs = append(pkgs, inventory.Package{
 			Name:       entry.Name,
 			Version:    entry.Version,
@@ -86,6 +151,9 @@ func parseComposerLock(path string, verbose bool) ([]inventory.Package, error) {
 			Ecosystem:  "composer",
 			Source:     "composer.lock",
 			Location:   path,
+			Direct:     direct,
+			Deps:       deps,
+			License:    strings.Join(entry.Licenses, " OR "),
 		})
 	}
 
