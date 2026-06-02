@@ -25,6 +25,7 @@ type Package struct {
 	Direct     *bool    `json:"direct,omitempty"`    // nil=unknown, true=direct dep, false=indirect dep
 	Deps       []string `json:"deps,omitempty"`      // PURLs of this package's direct dependencies
 	Integrity  string   `json:"integrity,omitempty"` // raw integrity string from lockfile (SRI or sha256:hex)
+	License    string   `json:"license,omitempty"`   // SPDX expression (e.g. "MIT", "Apache-2.0 OR MIT")
 }
 
 // BoolPtr returns a pointer to b, for use with Package.Direct.
@@ -32,12 +33,13 @@ func BoolPtr(b bool) *bool { return &b }
 
 // Inventory is the top-level structure for the detection list JSON.
 type Inventory struct {
-	Version   string    `json:"version"`
-	Type      string    `json:"type,omitempty"`
-	Hostname  string    `json:"hostname"`
-	ScannedAt string    `json:"scannedAt"`
-	OS        OSInfo    `json:"os"`
-	Packages  []Package `json:"packages"`
+	Version     string    `json:"version"`
+	Type        string    `json:"type,omitempty"`
+	Hostname    string    `json:"hostname"`
+	ScannedAt   string    `json:"scannedAt"`
+	OS          OSInfo    `json:"os"`
+	Packages    []Package `json:"packages"`
+	ImageDigest string    `json:"imageDigest,omitempty"` // set when Type == "docker_image"
 }
 
 // New creates an Inventory with metadata populated.
@@ -102,6 +104,10 @@ func mergePkg(a, b Package) Package {
 	// Integrity: prefer non-empty
 	if a.Integrity == "" {
 		a.Integrity = b.Integrity
+	}
+	// License: prefer non-empty
+	if a.License == "" {
+		a.License = b.License
 	}
 	// Deps: prefer non-empty
 	if len(a.Deps) == 0 {

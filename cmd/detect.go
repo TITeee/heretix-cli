@@ -63,7 +63,7 @@ func runDetect(cmd *cobra.Command, args []string) error {
 
 		for _, imageRef := range images {
 			fmt.Fprintf(os.Stderr, "Loading image %s...\n", imageRef)
-			rootfs, cleanup, err := container.ExtractImage(ctx, imageRef, detectVerbose)
+			rootfs, _, cleanup, err := container.ExtractImage(ctx, imageRef, detectVerbose)
 			if err != nil {
 				return fmt.Errorf("extract image %s: %w", imageRef, err)
 			}

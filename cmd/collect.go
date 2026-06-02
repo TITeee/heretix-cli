@@ -109,9 +109,10 @@ func runCollectWithImage() error {
 	var allPkgs []inventory.Package
 	var combinedInv *inventory.Inventory
 
+	var primaryDigest string
 	for _, imageRef := range images {
 		fmt.Fprintf(os.Stderr, "Loading image %s...\n", imageRef)
-		rootfs, cleanup, err := container.ExtractImage(ctx, imageRef, collectVerbose)
+		rootfs, digest, cleanup, err := container.ExtractImage(ctx, imageRef, collectVerbose)
 		if err != nil {
 			return fmt.Errorf("extract image %s: %w", imageRef, err)
 		}
@@ -125,12 +126,14 @@ func runCollectWithImage() error {
 
 		if combinedInv == nil {
 			combinedInv = inv
+			primaryDigest = digest
 		}
 		allPkgs = append(allPkgs, inv.Packages...)
 	}
 
 	combinedInv.Packages = inventory.Deduplicate(allPkgs)
 	combinedInv.Type = "docker_image"
+	combinedInv.ImageDigest = primaryDigest
 	if collectName != "" {
 		combinedInv.Hostname = collectName
 	} else {

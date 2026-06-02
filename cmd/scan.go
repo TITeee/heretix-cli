@@ -174,7 +174,7 @@ func collectFromImages(ctx context.Context) (*inventory.Inventory, []detector.Fi
 
 	for _, imageRef := range images {
 		fmt.Fprintf(os.Stderr, "Loading image %s...\n", imageRef)
-		rootfs, cleanup, err := container.ExtractImage(ctx, imageRef, scanVerbose)
+		rootfs, _, cleanup, err := container.ExtractImage(ctx, imageRef, scanVerbose)
 		if err != nil {
 			return nil, nil, fmt.Errorf("extract image %s: %w", imageRef, err)
 		}

@@ -22,7 +22,7 @@ func (c *RPMCollector) Collect(scanPath string, verbose bool) ([]inventory.Packa
 		return nil, nil
 	}
 
-	args := []string{"-qa", "--queryformat", `%{NAME}\t%{EPOCH}:%{VERSION}-%{RELEASE}\n`}
+	args := []string{"-qa", "--queryformat", `%{NAME}\t%{EPOCH}:%{VERSION}-%{RELEASE}\t%{LICENSE}\n`}
 	if scanPath != "/" {
 		// Use alternate root for container/image scanning
 		args = append([]string{"--root", scanPath}, args...)
@@ -43,8 +43,8 @@ func (c *RPMCollector) Collect(scanPath string, verbose bool) ([]inventory.Packa
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "\t", 2)
-		if len(parts) != 2 {
+		parts := strings.SplitN(line, "\t", 3)
+		if len(parts) < 2 {
 			if verbose {
 				log.Printf("[rpm] skipping malformed line: %s", line)
 			}
@@ -53,6 +53,10 @@ func (c *RPMCollector) Collect(scanPath string, verbose bool) ([]inventory.Packa
 		name := parts[0]
 		rawVersion := parts[1]
 		version := cleanRPMVersion(rawVersion)
+		var license string
+		if len(parts) == 3 && parts[2] != "(none)" {
+			license = parts[2]
+		}
 
 		pkgs = append(pkgs, inventory.Package{
 			Name:       name,
@@ -60,6 +64,7 @@ func (c *RPMCollector) Collect(scanPath string, verbose bool) ([]inventory.Packa
 			RawVersion: rawVersion,
 			Ecosystem:  ecosystem,
 			Source:     "rpm",
+			License:    license,
 		})
 	}
 

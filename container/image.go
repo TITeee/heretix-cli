@@ -19,21 +19,27 @@ import (
 
 // ExtractImage loads a container image and extracts its merged filesystem to a temp directory.
 // It tries the local Docker daemon first, then falls back to the remote registry.
+// Returns the rootfs path, the image digest (e.g. "sha256:abc..."), and a cleanup function.
 // The caller must call the returned cleanup function when done.
-func ExtractImage(ctx context.Context, imageRef string, verbose bool) (string, func(), error) {
+func ExtractImage(ctx context.Context, imageRef string, verbose bool) (string, string, func(), error) {
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
-		return "", nil, fmt.Errorf("invalid image reference %q: %w", imageRef, err)
+		return "", "", nil, fmt.Errorf("invalid image reference %q: %w", imageRef, err)
 	}
 
 	img, err := loadImage(ctx, ref, verbose)
 	if err != nil {
-		return "", nil, fmt.Errorf("load image %q: %w", imageRef, err)
+		return "", "", nil, fmt.Errorf("load image %q: %w", imageRef, err)
+	}
+
+	digest, err := img.Digest()
+	if err != nil {
+		return "", "", nil, fmt.Errorf("get image digest: %w", err)
 	}
 
 	dir, err := os.MkdirTemp("", "heretix-rootfs-")
 	if err != nil {
-		return "", nil, fmt.Errorf("create temp dir: %w", err)
+		return "", "", nil, fmt.Errorf("create temp dir: %w", err)
 	}
 	cleanup := func() { os.RemoveAll(dir) }
 
@@ -43,10 +49,10 @@ func ExtractImage(ctx context.Context, imageRef string, verbose bool) (string, f
 
 	if err := extractLayers(img, dir); err != nil {
 		cleanup()
-		return "", nil, fmt.Errorf("extract layers: %w", err)
+		return "", "", nil, fmt.Errorf("extract layers: %w", err)
 	}
 
-	return dir, cleanup, nil
+	return dir, digest.String(), cleanup, nil
 }
 
 // loadImage tries the local Docker daemon first, then falls back to the remote registry.

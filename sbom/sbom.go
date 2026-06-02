@@ -35,26 +35,7 @@ var ecosystemToPURLType = map[string]string{
 func GenerateCycloneDX(inv *inventory.Inventory, version string) *cdx.BOM {
 	components := make([]cdx.Component, 0, len(inv.Packages))
 	for _, p := range inv.Packages {
-		purlType, ok := ecosystemToPURLType[p.Source]
-		if !ok {
-			purlType = p.Source
-		}
-
-		var purl string
-		switch p.Source {
-		case "rpm", "dpkg", "apk-db":
-			ns := osIDToPURLNamespace(inv.OS.ID)
-			if q := ecosystemToDistroQualifier(p.Ecosystem); q != "" {
-				purl = fmt.Sprintf("pkg:%s/%s/%s@%s?distro=%s", purlType, ns, p.Name, p.Version, q)
-			} else {
-				purl = fmt.Sprintf("pkg:%s/%s/%s@%s", purlType, ns, p.Name, p.Version)
-			}
-		case "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "npm-global", "pnpm-global", "pnpm-virtual-store":
-			purl = npmPURL(p.Name, p.Version)
-		default:
-			purl = fmt.Sprintf("pkg:%s/%s@%s", purlType, p.Name, p.Version)
-		}
-
+		purl := PackagePURL(p, inv.OS.ID)
 		hashes := parseIntegrity(p.Integrity)
 
 		var props *[]cdx.Property
@@ -67,22 +48,27 @@ func GenerateCycloneDX(inv *inventory.Inventory, version string) *cdx.BOM {
 			props = &pp
 		}
 
+		var licenses *cdx.Licenses
+		if p.License != "" {
+			l := cdx.Licenses{cdx.LicenseChoice{Expression: p.License}}
+			licenses = &l
+		}
+
 		components = append(components, cdx.Component{
+			BOMRef:     purl,
 			Type:       cdx.ComponentTypeLibrary,
 			Name:       p.Name,
 			Version:    p.Version,
 			PackageURL: purl,
+			Licenses:   licenses,
 			Hashes:     hashes,
 			Properties: props,
 		})
 	}
 
-	// Build bom.Dependencies from packages that have Deps populated.
-	var depItems []cdx.Dependency
+	// Build bom.Dependencies for all components (leaf nodes get an empty slice per CycloneDX spec).
+	depItems := make([]cdx.Dependency, 0, len(inv.Packages))
 	for _, p := range inv.Packages {
-		if len(p.Deps) == 0 {
-			continue
-		}
 		purl := PackagePURL(p, inv.OS.ID)
 		deps := make([]string, len(p.Deps))
 		copy(deps, p.Deps)
@@ -94,16 +80,10 @@ func GenerateCycloneDX(inv *inventory.Inventory, version string) *cdx.BOM {
 	bom.Metadata = &cdx.Metadata{
 		Timestamp: inv.ScannedAt,
 		Tools:     &cdx.ToolsChoice{Tools: &legacyTools},
-		Component: &cdx.Component{
-			Type:    metadataComponentType(inv),
-			Name:    inv.Hostname,
-			Version: inv.OS.Name,
-		},
+		Component: metadataComponent(inv),
 	}
 	bom.Components = &components
-	if len(depItems) > 0 {
-		bom.Dependencies = &depItems
-	}
+	bom.Dependencies = &depItems
 	return bom
 }
 
@@ -140,13 +120,48 @@ func npmPURL(name, version string) string {
 	return fmt.Sprintf("pkg:npm/%s@%s", name, version)
 }
 
-// metadataComponentType returns the CycloneDX component type for the BOM metadata
-// based on the inventory scan type.
-func metadataComponentType(inv *inventory.Inventory) cdx.ComponentType {
-	if inv.Type == "docker_image" {
-		return cdx.ComponentTypeContainer
+// metadataComponent builds the CycloneDX metadata.component describing the scanned target.
+// For container images it includes a PURL with the image digest.
+func metadataComponent(inv *inventory.Inventory) *cdx.Component {
+	comp := &cdx.Component{
+		Name:    inv.Hostname,
+		Version: inv.OS.Name,
 	}
-	return cdx.ComponentTypeOS
+	if inv.Type == "docker_image" {
+		comp.Type = cdx.ComponentTypeContainer
+		if inv.ImageDigest != "" {
+			purl := containerPURL(inv.Hostname, inv.ImageDigest)
+			comp.BOMRef = purl
+			comp.PackageURL = purl
+		}
+	} else {
+		comp.Type = cdx.ComponentTypeOS
+	}
+	return comp
+}
+
+// containerPURL builds an OCI PURL for a container image reference and digest.
+// imageRef examples: "nginx:latest", "registry.example.com/myapp:v1.2"
+func containerPURL(imageRef, digest string) string {
+	ref := imageRef
+	tag := "latest"
+	// Extract tag: last colon segment that contains no slash (avoids matching registry ports)
+	if i := strings.LastIndex(ref, ":"); i != -1 && !strings.Contains(ref[i+1:], "/") {
+		tag = ref[i+1:]
+		ref = ref[:i]
+	}
+	// ref is now "nginx" or "registry.example.com/ns/name"
+	imgName := ref
+	repoURL := ""
+	if i := strings.LastIndex(ref, "/"); i != -1 {
+		repoURL = ref[:i]
+		imgName = ref[i+1:]
+	}
+	q := "tag=" + tag
+	if repoURL != "" {
+		q += "&repository_url=" + repoURL
+	}
+	return fmt.Sprintf("pkg:oci/%s@%s?%s", imgName, digest, q)
 }
 
 // osIDToPURLNamespace maps os-release ID values to PURL-compliant namespace strings.

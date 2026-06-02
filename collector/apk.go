@@ -97,7 +97,7 @@ func parseAPKDatabase(dbPath string, ecosystem string, verbose bool) ([]inventor
 	defer f.Close()
 
 	var pkgs []inventory.Package
-	var name, version string
+	var name, version, license string
 
 	flush := func() {
 		if name != "" && version != "" {
@@ -108,10 +108,12 @@ func parseAPKDatabase(dbPath string, ecosystem string, verbose bool) ([]inventor
 				Ecosystem:  ecosystem,
 				Source:     "apk-db",
 				Location:   dbPath,
+				License:    license,
 			})
 		}
 		name = ""
 		version = ""
+		license = ""
 	}
 
 	scanner := bufio.NewScanner(f)
@@ -132,6 +134,8 @@ func parseAPKDatabase(dbPath string, ecosystem string, verbose bool) ([]inventor
 			name = v
 		case "V":
 			version = v
+		case "L":
+			license = v
 		}
 	}
 	flush() // last entry may not be followed by a blank line
