@@ -109,6 +109,18 @@ func (c *PyPICollector) Collect(scanPath string, verbose bool) ([]inventory.Pack
 		}
 	}
 
+	// Enrich packages with license info from installed site-packages METADATA
+	licenseMap := scanSitePackagesLicenses(scanPath, verbose)
+	if len(licenseMap) > 0 {
+		for i := range pkgs {
+			if pkgs[i].License == "" {
+				if lic, ok := licenseMap[normalizePyPIName(pkgs[i].Name)]; ok {
+					pkgs[i].License = lic
+				}
+			}
+		}
+	}
+
 	if verbose {
 		log.Printf("[pypi] collected %d packages", len(pkgs))
 	}
@@ -549,4 +561,88 @@ func pipListFallback(verbose bool) ([]inventory.Package, error) {
 		log.Printf("[pypi] pip fallback collected %d packages", len(pkgs))
 	}
 	return pkgs, nil
+}
+
+func normalizePyPIName(name string) string {
+	return strings.ToLower(strings.ReplaceAll(name, "-", "_"))
+}
+
+// scanSitePackagesLicenses walks scanPath looking for Python site-packages/dist-packages
+// directories and parses *.dist-info/METADATA for license information.
+// Returns a map of normalized-name → SPDX license string.
+func scanSitePackagesLicenses(scanPath string, verbose bool) map[string]string {
+	licenseMap := map[string]string{}
+
+	_ = filepath.WalkDir(scanPath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		name := d.Name()
+		// Skip irrelevant directories early
+		if name == ".git" || name == "node_modules" || name == "vendor" || name == "__pycache__" {
+			return fs.SkipDir
+		}
+		if name != "site-packages" && name != "dist-packages" {
+			return nil
+		}
+		// Found a site-packages directory — scan its *.dist-info/METADATA files
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			return fs.SkipDir
+		}
+		for _, e := range entries {
+			if !e.IsDir() || !strings.HasSuffix(e.Name(), ".dist-info") {
+				continue
+			}
+			metadataPath := filepath.Join(path, e.Name(), "METADATA")
+			pkgName, license := parseDistInfoMetadata(metadataPath)
+			if pkgName != "" && license != "" {
+				licenseMap[normalizePyPIName(pkgName)] = license
+			}
+		}
+		return fs.SkipDir
+	})
+
+	if verbose && len(licenseMap) > 0 {
+		log.Printf("[pypi] found licenses for %d packages from site-packages", len(licenseMap))
+	}
+	return licenseMap
+}
+
+// parseDistInfoMetadata reads a METADATA file and extracts the Name and License fields.
+// License-Expression (PEP 639) takes priority over the legacy License header.
+func parseDistInfoMetadata(path string) (name, license string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", ""
+	}
+	defer f.Close()
+
+	var legacyLicense string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		// Stop at the first blank line (end of headers, start of description body)
+		if line == "" {
+			break
+		}
+		if strings.HasPrefix(line, "Name: ") {
+			name = strings.TrimPrefix(line, "Name: ")
+		} else if strings.HasPrefix(line, "License-Expression: ") {
+			license = strings.TrimPrefix(line, "License-Expression: ")
+		} else if strings.HasPrefix(line, "License: ") {
+			legacyLicense = strings.TrimPrefix(line, "License: ")
+		}
+	}
+	if license == "" {
+		license = legacyLicense
+	}
+	// Skip unhelpful values
+	if license == "UNKNOWN" || license == "" {
+		return name, ""
+	}
+	return name, license
 }

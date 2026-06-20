@@ -155,6 +155,7 @@ func parsePackageLock(path string, verbose bool) ([]inventory.Package, error) {
 		}
 
 		// Pass 2: build packages with Direct and Deps
+		lockfileDir := filepath.Dir(path)
 		for key, entry := range lockfile.Packages {
 			if key == "" || entry.Version == "" {
 				continue
@@ -184,6 +185,7 @@ func parsePackageLock(path string, verbose bool) ([]inventory.Package, error) {
 				Direct:     inventory.BoolPtr(isDirect),
 				Deps:       deps,
 				Integrity:  entry.Integrity,
+				License:    readNodeModuleLicense(lockfileDir, name),
 			})
 		}
 	} else if len(lockfile.Dependencies) > 0 {
@@ -269,6 +271,7 @@ func parseYarnLock(path string, verbose bool) ([]inventory.Package, error) {
 
 	var pkgs []inventory.Package
 	var currentName string
+	lockfileDir := filepath.Dir(path)
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -297,6 +300,7 @@ func parseYarnLock(path string, verbose bool) ([]inventory.Package, error) {
 				Ecosystem:  "npm",
 				Source:     "yarn.lock",
 				Location:   path,
+				License:    readNodeModuleLicense(lockfileDir, currentName),
 			})
 			currentName = ""
 		}
@@ -330,6 +334,7 @@ func parsePnpmLock(path string, verbose bool) ([]inventory.Package, error) {
 	var pkgs []inventory.Package
 	inPackages := false
 
+	lockfileDir := filepath.Dir(path)
 	flushPnpm := func() {
 		if cur.name != "" && cur.version != "" {
 			isDirect := directSet[cur.name]
@@ -344,6 +349,7 @@ func parsePnpmLock(path string, verbose bool) ([]inventory.Package, error) {
 				Direct:     inventory.BoolPtr(isDirect),
 				Integrity:  cur.integrity,
 				Deps:       deps,
+				License:    readNodeModuleLicense(lockfileDir, cur.name),
 			})
 		}
 		cur = pnpmEntry{}
@@ -745,6 +751,45 @@ func readPackageJSONVersion(path string) (string, error) {
 		return "", fmt.Errorf("no version in %s", path)
 	}
 	return pkg.Version, nil
+}
+
+// readNodeModuleLicense reads the license from node_modules/{name}/package.json.
+// Returns "" when the file does not exist or has no license field.
+func readNodeModuleLicense(lockfileDir, pkgName string) string {
+	pkgJSON := filepath.Join(lockfileDir, "node_modules", pkgName, "package.json")
+	data, err := os.ReadFile(pkgJSON)
+	if err != nil {
+		return ""
+	}
+	var pkg struct {
+		License  json.RawMessage `json:"license"`
+		Licenses []struct {
+			Type string `json:"type"`
+		} `json:"licenses"`
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return ""
+	}
+	// Standard: "license": "MIT"
+	if len(pkg.License) > 0 {
+		var s string
+		if json.Unmarshal(pkg.License, &s) == nil && s != "" {
+			return s
+		}
+	}
+	// Legacy: "licenses": [{"type":"MIT"}]
+	if len(pkg.Licenses) > 0 {
+		types := make([]string, 0, len(pkg.Licenses))
+		for _, l := range pkg.Licenses {
+			if l.Type != "" {
+				types = append(types, l.Type)
+			}
+		}
+		if len(types) > 0 {
+			return strings.Join(types, " OR ")
+		}
+	}
+	return ""
 }
 
 // parsePnpmStoreEntry extracts package name and version from a pnpm virtual store
