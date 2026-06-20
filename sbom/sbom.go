@@ -77,6 +77,7 @@ func GenerateCycloneDX(inv *inventory.Inventory, version string) *cdx.BOM {
 
 	legacyTools := []cdx.Tool{{Vendor: "heretix", Name: "heretix-cli", Version: version}}
 	bom := cdx.NewBOM()
+	bom.SpecVersion = cdx.SpecVersion1_6
 	bom.Metadata = &cdx.Metadata{
 		Timestamp: inv.ScannedAt,
 		Tools:     &cdx.ToolsChoice{Tools: &legacyTools},

@@ -65,9 +65,12 @@ heretix-cli collect --image nginx:latest --format cyclonedx --output nginx-sbom.
 >   pkg:apk/alpine/curl@7.79.1-r0?distro=alpine-3.18
 >   pkg:rpm/almalinux/curl@7.76.1?distro=almalinux-9
 >   ```
+> - **`bom-ref`** on every component, matching its PURL for correct dependency resolution
 > - **`hashes`** per component from lockfile integrity fields (SHA-512 for npm/pnpm, SHA-256 for PyPI)
+> - **`licenses`** per component from lockfiles and installed packages (APK, RPM, Composer, npm node_modules, PyPI site-packages)
 > - **`properties[cdx:direct]`** marking direct vs. indirect dependencies
-> - **`bom.dependencies`** section with full dependency graph (npm package-lock.json, pnpm-lock.yaml, uv.lock, poetry.lock)
+> - **`bom.dependencies`** section with full dependency graph (npm package-lock.json, pnpm-lock.yaml, uv.lock, poetry.lock, composer.lock)
+> - **`metadata.component`** with OCI PURL and image digest for container scans
 
 | Flag | Default | Description |
 |---|---|---|
@@ -84,27 +87,31 @@ heretix-cli collect --image nginx:latest --format cyclonedx --output nginx-sbom.
 The table below shows which metadata fields are populated for each lockfile source.
 `✓` = fully supported, `△` = partially supported (see note), `—` = not available in format.
 
-| Lockfile | Packages | `direct` | `deps` | `integrity` |
-|---|---|---|---|---|
-| `package-lock.json` v2/v3 | ✓ | ✓ | ✓ | ✓ |
-| `package-lock.json` v1 | ✓ | — | — | — |
-| `yarn.lock` | ✓ | — | — | — |
-| `pnpm-lock.yaml` v9 | ✓ | ✓ | ✓ | ✓ |
-| `pnpm-lock.yaml` v5/v6 | ✓ | ✓ | — | ✓ |
-| `requirements.txt` | △ `==` only | ✓ | — | △ with `--hash=` |
-| `Pipfile.lock` | ✓ | ✓ | — | ✓ |
-| `poetry.lock` | ✓ | — ¹ | ✓ | — |
-| `uv.lock` | ✓ | ✓ | ✓ | ✓ |
-| `go.mod` (parsed) | △ declared only | ✓ | — | — |
-| `go list` (fallback) | ✓ incl. transitive | — ² | — | — |
-| `composer.lock` | ✓ | △ ³ | ✓ | — |
-| RPM / DPKG / APK | ✓ | — | — | — |
+| Lockfile | Packages | `direct` | `deps` | `integrity` | `license` |
+|---|---|---|---|---|---|
+| `package-lock.json` v2/v3 | ✓ | ✓ | ✓ | ✓ | △ ⁴ |
+| `package-lock.json` v1 | ✓ | — | — | — | △ ⁴ |
+| `yarn.lock` | ✓ | — | — | — | △ ⁴ |
+| `pnpm-lock.yaml` v9 | ✓ | ✓ | ✓ | ✓ | △ ⁴ |
+| `pnpm-lock.yaml` v5/v6 | ✓ | ✓ | — | ✓ | △ ⁴ |
+| `requirements.txt` | △ `==` only | ✓ | — | △ with `--hash=` | △ ⁵ |
+| `Pipfile.lock` | ✓ | ✓ | — | ✓ | △ ⁵ |
+| `poetry.lock` | ✓ | — ¹ | ✓ | — | △ ⁵ |
+| `uv.lock` | ✓ | ✓ | ✓ | ✓ | △ ⁵ |
+| `go.mod` (parsed) | △ declared only | ✓ | — | — | — |
+| `go list` (fallback) | ✓ incl. transitive | — ² | — | — | — |
+| `composer.lock` | ✓ | △ ³ | ✓ | — | ✓ |
+| RPM | ✓ | — | — | — | ✓ |
+| DPKG | ✓ | — | — | — | — |
+| APK | ✓ | — | — | — | ✓ |
 
 ¹ `direct` for poetry.lock requires reading `pyproject.toml` — not implemented.  
 ² When the `go` binary is available `go list` is preferred, which provides transitive dependencies but loses `direct` information.  
-³ `direct` for composer.lock requires `composer.json` in the same directory.
+³ `direct` for composer.lock requires `composer.json` in the same directory.  
+⁴ `license` for npm is read from `node_modules/*/package.json` — requires packages to be installed.  
+⁵ `license` for PyPI is read from `site-packages/*.dist-info/METADATA` — requires packages to be installed.
 
-`deps` PURLs and `integrity` hashes are carried through to the CycloneDX `bom.dependencies` and `components[].hashes` fields respectively.
+`deps` PURLs, `integrity` hashes, and `license` information are carried through to the CycloneDX `bom.dependencies`, `components[].hashes`, and `components[].licenses` fields respectively.
 
 ### Vulnerability Check (`check`)
 

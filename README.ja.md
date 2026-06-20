@@ -65,9 +65,12 @@ heretix-cli collect --image nginx:latest --format cyclonedx --output nginx-sbom.
 >   pkg:apk/alpine/curl@7.79.1-r0?distro=alpine-3.18
 >   pkg:rpm/almalinux/curl@7.76.1?distro=almalinux-9
 >   ```
+> - 全コンポーネントに **`bom-ref`** を設定（PURL と同値、依存グラフの参照解決に必要）
 > - lockfile の integrity ハッシュを **`hashes`** に格納（npm/pnpm は SHA-512、PyPI は SHA-256）
+> - **`licenses`** をコンポーネントに付与（APK, RPM, Composer, npm node_modules, PyPI site-packages から取得）
 > - direct/indirect を示す **`properties[cdx:direct]`** プロパティ
-> - **`bom.dependencies`** セクションによる依存グラフ（npm package-lock.json, pnpm-lock.yaml, uv.lock, poetry.lock）
+> - **`bom.dependencies`** セクションによる依存グラフ（npm package-lock.json, pnpm-lock.yaml, uv.lock, poetry.lock, composer.lock）
+> - コンテナスキャン時は **`metadata.component`** に OCI PURL とイメージ digest を記録
 
 | フラグ | デフォルト | 説明 |
 |---|---|---|
@@ -84,27 +87,31 @@ heretix-cli collect --image nginx:latest --format cyclonedx --output nginx-sbom.
 各 lockfile から取得できるメタデータフィールドの対応表。
 `✓`=完全対応、`△`=部分対応（注記参照）、`—`=フォーマット上取得不可。
 
-| lockfile | パッケージ収集 | `direct` | `deps` | `integrity` |
-|---|---|---|---|---|
-| `package-lock.json` v2/v3 | ✓ | ✓ | ✓ | ✓ |
-| `package-lock.json` v1 | ✓ | — | — | — |
-| `yarn.lock` | ✓ | — | — | — |
-| `pnpm-lock.yaml` v9 | ✓ | ✓ | ✓ | ✓ |
-| `pnpm-lock.yaml` v5/v6 | ✓ | ✓ | — | ✓ |
-| `requirements.txt` | △ `==` のみ | ✓ | — | △ `--hash=` 付きのみ |
-| `Pipfile.lock` | ✓ | ✓ | — | ✓ |
-| `poetry.lock` | ✓ | — ¹ | ✓ | — |
-| `uv.lock` | ✓ | ✓ | ✓ | ✓ |
-| `go.mod`（直接解析） | △ 宣言済みのみ | ✓ | — | — |
-| `go list`（フォールバック） | ✓ transitive 含む | — ² | — | — |
-| `composer.lock` | ✓ | △ ³ | ✓ | — |
-| RPM / DPKG / APK | ✓ | — | — | — |
+| lockfile | パッケージ収集 | `direct` | `deps` | `integrity` | `license` |
+|---|---|---|---|---|---|
+| `package-lock.json` v2/v3 | ✓ | ✓ | ✓ | ✓ | △ ⁴ |
+| `package-lock.json` v1 | ✓ | — | — | — | △ ⁴ |
+| `yarn.lock` | ✓ | — | — | — | △ ⁴ |
+| `pnpm-lock.yaml` v9 | ✓ | ✓ | ✓ | ✓ | △ ⁴ |
+| `pnpm-lock.yaml` v5/v6 | ✓ | ✓ | — | ✓ | △ ⁴ |
+| `requirements.txt` | △ `==` のみ | ✓ | — | △ `--hash=` 付きのみ | △ ⁵ |
+| `Pipfile.lock` | ✓ | ✓ | — | ✓ | △ ⁵ |
+| `poetry.lock` | ✓ | — ¹ | ✓ | — | △ ⁵ |
+| `uv.lock` | ✓ | ✓ | ✓ | ✓ | △ ⁵ |
+| `go.mod`（直接解析） | △ 宣言済みのみ | ✓ | — | — | — |
+| `go list`（フォールバック） | ✓ transitive 含む | — ² | — | — | — |
+| `composer.lock` | ✓ | △ ³ | ✓ | — | ✓ |
+| RPM | ✓ | — | — | — | ✓ |
+| DPKG | ✓ | — | — | — | — |
+| APK | ✓ | — | — | — | ✓ |
 
 ¹ poetry.lock の `direct` 判定は `pyproject.toml` の読み取りが必要なため未実装。  
 ² `go` コマンドが利用可能な場合は `go list` を優先するため transitive deps が取れるが、`direct` 情報は失われる。  
-³ composer.lock の `direct` 判定は同ディレクトリに `composer.json` が必要。
+³ composer.lock の `direct` 判定は同ディレクトリに `composer.json` が必要。  
+⁴ npm の `license` は `node_modules/*/package.json` から取得（パッケージがインストール済みの場合のみ）。  
+⁵ PyPI の `license` は `site-packages/*.dist-info/METADATA` から取得（パッケージがインストール済みの場合のみ）。
 
-`deps` の PURL および `integrity` ハッシュは、CycloneDX 出力の `bom.dependencies` および `components[].hashes` にそれぞれ反映される。
+`deps` の PURL、`integrity` ハッシュ、および `license` 情報は、CycloneDX 出力の `bom.dependencies`、`components[].hashes`、`components[].licenses` にそれぞれ反映される。
 
 ### 脆弱性チェック (`check`)
 
