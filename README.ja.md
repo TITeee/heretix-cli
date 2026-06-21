@@ -8,7 +8,7 @@ Linux/Windows サーバや Docker コンテナイメージの OS パッケージ
 
 | エコシステム | スキャン対象 | 対応プラットフォーム |
 |---|---|---|
-| AlmaLinux / Oracle Linux / RHEL 系 (RPM) | `rpm -qa` / コンテナは `rpm --root <rootfs>` | Linux のみ |
+| RHEL / AlmaLinux / Rocky Linux / Oracle Linux / CentOS (RPM) | `rpm -qa` / コンテナは `rpm --root <rootfs>` | Linux のみ |
 | Debian / Ubuntu 系 (DPKG) | `var/lib/dpkg/status` を直接解析 | Linux のみ |
 | Alpine (APK) | `/lib/apk/db/installed` を直接解析 | Linux のみ |
 | PyPI | `requirements.txt`, `Pipfile.lock`, `poetry.lock`, `uv.lock` / フォールバック: `pip list` | Linux / Windows |
