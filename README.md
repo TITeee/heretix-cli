@@ -2,7 +2,7 @@
 
 [日本語版 README](README.ja.md)
 
-A CLI tool that scans OS packages (RPM, DPKG) and OSS ecosystems (PyPI, npm/yarn/pnpm) on Linux/Windows servers or Docker container images, then queries a vulnerability API to detect known vulnerabilities. Also performs local supply-chain security checks without any API access: **GlassWorm** (invisible character injection), **Dependency Confusion** (Shai-hulud), **Malicious Install Scripts**, **CI/CD Pipeline Poisoning**, and **Lock File Integrity** detection.
+A CLI tool that scans OS packages (RPM, DPKG, APK) and OSS ecosystems (PyPI, npm/yarn/pnpm, Go modules, Composer, Maven) on Linux/Windows servers or Docker container images, then queries a vulnerability API to detect known vulnerabilities. Also performs local supply-chain security checks without any API access: **GlassWorm** (invisible character injection), **Dependency Confusion** (Shai-hulud), **Malicious Install Scripts**, **CI/CD Pipeline Poisoning**, and **Lock File Integrity** detection.
 
 ## Supported Ecosystems
 
@@ -15,6 +15,7 @@ A CLI tool that scans OS packages (RPM, DPKG) and OSS ecosystems (PyPI, npm/yarn
 | npm / yarn / pnpm | `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` / fallback: `npm list -g`, `pnpm list -g` | Linux / Windows |
 | Go (go modules) | `go.mod` / fallback: `go list -m -json all` | Linux / Windows |
 | Composer (PHP) | `composer.lock` | Linux / Windows |
+| Maven (Java) | `pom.xml` / fallback: `mvn dependency:tree` | Linux / Windows |
 
 ## Installation
 
@@ -101,6 +102,8 @@ The table below shows which metadata fields are populated for each lockfile sour
 | `go.mod` (parsed) | △ declared only | ✓ | — | — | — |
 | `go list` (fallback) | ✓ incl. transitive | — ² | — | — | — |
 | `composer.lock` | ✓ | △ ³ | ✓ | — | ✓ |
+| `pom.xml` (mvn command) | ✓ incl. transitive | ✓ | ✓ | — | △ ⁶ |
+| `pom.xml` (direct parse) | △ declared only | △ | — | — | △ ⁶ |
 | RPM | ✓ | — | — | — | ✓ |
 | DPKG | ✓ | — | — | — | — |
 | APK | ✓ | — | — | — | ✓ |
@@ -109,7 +112,8 @@ The table below shows which metadata fields are populated for each lockfile sour
 ² When the `go` binary is available `go list` is preferred, which provides transitive dependencies but loses `direct` information.  
 ³ `direct` for composer.lock requires `composer.json` in the same directory.  
 ⁴ `license` for npm is read from `node_modules/*/package.json` — requires packages to be installed.  
-⁵ `license` for PyPI is read from `site-packages/*.dist-info/METADATA` — requires packages to be installed.
+⁵ `license` for PyPI is read from `site-packages/*.dist-info/METADATA` — requires packages to be installed.  
+⁶ `license` for Maven `pom.xml` is extracted from `<licenses>` tag — only root project license, not transitive dependency licenses.
 
 `deps` PURLs, `integrity` hashes, and `license` information are carried through to the CycloneDX `bom.dependencies`, `components[].hashes`, and `components[].licenses` fields respectively.
 

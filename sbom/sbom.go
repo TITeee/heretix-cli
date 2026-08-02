@@ -28,6 +28,7 @@ var ecosystemToPURLType = map[string]string{
 	"pnpm-virtual-store": "npm",
 	"go.mod":             "golang",
 	"composer.lock":      "composer",
+	"pom.xml":            "maven",
 }
 
 // GenerateCycloneDX converts an Inventory to a CycloneDX BOM.
@@ -54,10 +55,19 @@ func GenerateCycloneDX(inv *inventory.Inventory, version string) *cdx.BOM {
 			licenses = &l
 		}
 
+		// Extract artifactId from Maven "groupId:artifactId" Name format
+		displayName := p.Name
+		if p.Source == "pom.xml" {
+			parts := strings.SplitN(p.Name, ":", 2)
+			if len(parts) == 2 {
+				displayName = parts[1] // Use only artifactId
+			}
+		}
+
 		components = append(components, cdx.Component{
 			BOMRef:     purl,
 			Type:       cdx.ComponentTypeLibrary,
-			Name:       p.Name,
+			Name:       displayName,
 			Version:    p.Version,
 			PackageURL: purl,
 			Licenses:   licenses,
@@ -104,6 +114,15 @@ func PackagePURL(p inventory.Package, osID string) string {
 		return fmt.Sprintf("pkg:%s/%s/%s@%s", purlType, ns, p.Name, p.Version)
 	case "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "npm-global", "pnpm-global", "pnpm-virtual-store":
 		return npmPURL(p.Name, p.Version)
+	case "pom.xml":
+		// Maven format: "groupId:artifactId" in Name field
+		// PURL format: pkg:maven/groupId/artifactId@version
+		parts := strings.SplitN(p.Name, ":", 2)
+		if len(parts) == 2 {
+			return fmt.Sprintf("pkg:%s/%s/%s@%s", purlType, parts[0], parts[1], p.Version)
+		}
+		// Fallback if Name doesn't contain groupId
+		return fmt.Sprintf("pkg:%s/%s@%s", purlType, p.Name, p.Version)
 	default:
 		return fmt.Sprintf("pkg:%s/%s@%s", purlType, p.Name, p.Version)
 	}
