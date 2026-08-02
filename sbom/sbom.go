@@ -29,6 +29,9 @@ var ecosystemToPURLType = map[string]string{
 	"go.mod":             "golang",
 	"composer.lock":      "composer",
 	"pom.xml":            "maven",
+	"build.gradle":       "maven",
+	"build.gradle.kts":   "maven",
+	"gradle.lockfile":    "maven",
 }
 
 // GenerateCycloneDX converts an Inventory to a CycloneDX BOM.
