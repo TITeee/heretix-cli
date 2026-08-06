@@ -2,7 +2,7 @@
 
 [日本語版 README](README.ja.md)
 
-A CLI tool that scans OS packages (RPM, DPKG, APK) and OSS ecosystems (PyPI, npm/yarn/pnpm, Go modules, Composer, Maven, Gradle) on Linux/Windows servers or Docker container images, then queries a vulnerability API to detect known vulnerabilities. Also performs local supply-chain security checks without any API access: **GlassWorm** (invisible character injection), **Dependency Confusion** (Shai-hulud), **Malicious Install Scripts**, **CI/CD Pipeline Poisoning**, and **Lock File Integrity** detection.
+A CLI tool that scans OS packages (RPM, DPKG, APK) and OSS ecosystems (PyPI, npm/yarn/pnpm, Go modules, Composer, Maven, Gradle, JAR/WAR archives) on Linux/Windows servers or Docker container images, then queries a vulnerability API to detect known vulnerabilities. Also performs local supply-chain security checks without any API access: **GlassWorm** (invisible character injection), **Dependency Confusion** (Shai-hulud), **Malicious Install Scripts**, **CI/CD Pipeline Poisoning**, and **Lock File Integrity** detection.
 
 ## Supported Ecosystems
 
@@ -17,6 +17,7 @@ A CLI tool that scans OS packages (RPM, DPKG, APK) and OSS ecosystems (PyPI, npm
 | Composer (PHP) | `composer.lock` | Linux / Windows |
 | Maven (Java) | `pom.xml` / fallback: `mvn dependency:tree` | Linux / Windows |
 | Gradle (Java/Kotlin) | `gradle.lockfile` / `build.gradle` / `build.gradle.kts` | Linux / Windows |
+| Java artifacts | `*.jar`, `*.war`, `*.ear` — reads `META-INF/maven/*/pom.properties`, recurses into `WEB-INF/lib` and `BOOT-INF/lib` | Linux / Windows |
 
 ## Installation
 
@@ -107,6 +108,7 @@ The table below shows which metadata fields are populated for each lockfile sour
 | `pom.xml` (direct parse) | △ declared only | △ | — | — | △ ⁶ |
 | `gradle.lockfile` | ✓ incl. transitive | — ⁷ | ✓ | — | — |
 | `build.gradle(.kts)` (direct parse) | △ declared only | △ | — | — | — |
+| `*.jar` / `*.war` / `*.ear` | ✓ ⁸ | — ⁹ | — | ✓ SHA-256 | △ ¹⁰ |
 | RPM | ✓ | — | — | — | ✓ |
 | DPKG | ✓ | — | — | — | — |
 | APK | ✓ | — | — | — | ✓ |
@@ -117,7 +119,10 @@ The table below shows which metadata fields are populated for each lockfile sour
 ⁴ `license` for npm is read from `node_modules/*/package.json` — requires packages to be installed.  
 ⁵ `license` for PyPI is read from `site-packages/*.dist-info/METADATA` — requires packages to be installed.  
 ⁶ `license` for Maven `pom.xml` is extracted from `<licenses>` tag — only root project license, not transitive dependency licenses.  
-⁷ `direct` information is not available in gradle.lockfile (all deps appear flattened); use `direct: null` to indicate unknown.
+⁷ `direct` information is not available in gradle.lockfile (all deps appear flattened); use `direct: null` to indicate unknown.  
+⁸ Coordinates come from `META-INF/maven/{groupId}/{artifactId}/pom.properties`, falling back to `MANIFEST.MF` when it supplies `Implementation-Vendor-Id`/`-Title`/`-Version`. Archives with neither are skipped rather than guessed at from the filename, since a missing groupId yields a PURL that matches no advisory. Nested archives are reported as `app.war!/WEB-INF/lib/lib.jar`.  
+⁹ A compiled artifact carries no record of whether it was a declared or transitive dependency. When the same package is also found in a `pom.xml`, the two entries merge and the build file's `direct` value wins.  
+¹⁰ `license` is read from the `pom.xml` embedded alongside `pom.properties` — present only when the JAR was built by Maven.
 
 `deps` PURLs, `integrity` hashes, and `license` information are carried through to the CycloneDX `bom.dependencies`, `components[].hashes`, and `components[].licenses` fields respectively.
 

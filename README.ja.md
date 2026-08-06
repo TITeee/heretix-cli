@@ -2,7 +2,7 @@
 
 [English README](README.md)
 
-Linux/Windows サーバや Docker コンテナイメージの OS パッケージ（RPM, DPKG, APK）および OSS エコシステム（PyPI, npm/yarn/pnpm, Go modules, Composer, Maven, Gradle）をスキャンし、脆弱性 API に問い合わせて既知の脆弱性を検出する CLI ツール。API なしで動作するローカルセキュリティ検知として、**GlassWorm**（不可視文字によるマルウェア混入）、**Dependency Confusion（Shai-hulud）**、**Malicious Install Scripts**（悪意ある install スクリプト）、**CI/CD Pipeline Poisoning**（パイプライン汚染）、**Lock File Integrity**（ロックファイル整合性）の検出に対応。
+Linux/Windows サーバや Docker コンテナイメージの OS パッケージ（RPM, DPKG, APK）および OSS エコシステム（PyPI, npm/yarn/pnpm, Go modules, Composer, Maven, Gradle, JAR/WAR アーカイブ）をスキャンし、脆弱性 API に問い合わせて既知の脆弱性を検出する CLI ツール。API なしで動作するローカルセキュリティ検知として、**GlassWorm**（不可視文字によるマルウェア混入）、**Dependency Confusion（Shai-hulud）**、**Malicious Install Scripts**（悪意ある install スクリプト）、**CI/CD Pipeline Poisoning**（パイプライン汚染）、**Lock File Integrity**（ロックファイル整合性）の検出に対応。
 
 ## 対応エコシステム
 
@@ -17,6 +17,7 @@ Linux/Windows サーバや Docker コンテナイメージの OS パッケージ
 | Composer (PHP) | `composer.lock` | Linux / Windows |
 | Maven (Java) | `pom.xml` / フォールバック: `mvn dependency:tree` | Linux / Windows |
 | Gradle (Java/Kotlin) | `gradle.lockfile` / `build.gradle` / `build.gradle.kts` | Linux / Windows |
+| Java アーティファクト | `*.jar`, `*.war`, `*.ear` — `META-INF/maven/*/pom.properties` を読み、`WEB-INF/lib` / `BOOT-INF/lib` を再帰的に解析 | Linux / Windows |
 
 ## インストール
 
@@ -107,6 +108,7 @@ heretix-cli collect --image nginx:latest --format cyclonedx --output nginx-sbom.
 | `pom.xml`（直接解析） | △ 宣言済みのみ | △ | — | — | △ ⁶ |
 | `gradle.lockfile` | ✓ transitive 含む | — ⁷ | ✓ | — | — |
 | `build.gradle(.kts)`（直接解析） | △ 宣言済みのみ | △ | — | — | — |
+| `*.jar` / `*.war` / `*.ear` | ✓ ⁸ | — ⁹ | — | ✓ SHA-256 | △ ¹⁰ |
 | RPM | ✓ | — | — | — | ✓ |
 | DPKG | ✓ | — | — | — | — |
 | APK | ✓ | — | — | — | ✓ |
@@ -117,7 +119,10 @@ heretix-cli collect --image nginx:latest --format cyclonedx --output nginx-sbom.
 ⁴ npm の `license` は `node_modules/*/package.json` から取得（パッケージがインストール済みの場合のみ）。  
 ⁵ PyPI の `license` は `site-packages/*.dist-info/METADATA` から取得（パッケージがインストール済みの場合のみ）。  
 ⁶ Maven の `license` は `pom.xml` の `<licenses>` タグから取得（ルートプロジェクトのライセンスのみ、transitive 依存のライセンスは含まれない）。  
-⁷ `gradle.lockfile` では `direct` 情報が利用不可（すべての依存がフラット化された形式）；`direct: null` で不明を示す。
+⁷ `gradle.lockfile` では `direct` 情報が利用不可（すべての依存がフラット化された形式）；`direct: null` で不明を示す。  
+⁸ 座標は `META-INF/maven/{groupId}/{artifactId}/pom.properties` から取得し、無い場合は `MANIFEST.MF` の `Implementation-Vendor-Id`/`-Title`/`-Version` が揃っていればそれを使う。どちらも無いアーカイブはファイル名から推測せずスキップする（groupId を欠いた PURL はどの脆弱性情報にもマッチしないため）。ネストしたアーカイブは `app.war!/WEB-INF/lib/lib.jar` の形式で記録する。  
+⁹ ビルド済みアーティファクトには直接依存か推移的依存かの記録が無い。同じパッケージが `pom.xml` からも検出された場合は1件にマージされ、ビルド定義側の `direct` が採用される。  
+¹⁰ `license` は `pom.properties` と同じディレクトリに埋め込まれた `pom.xml` から取得する（Maven でビルドされた JAR のみ）。
 
 `deps` の PURL、`integrity` ハッシュ、および `license` 情報は、CycloneDX 出力の `bom.dependencies`、`components[].hashes`、`components[].licenses` にそれぞれ反映される。
 

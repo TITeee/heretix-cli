@@ -32,6 +32,7 @@ var ecosystemToPURLType = map[string]string{
 	"build.gradle":       "maven",
 	"build.gradle.kts":   "maven",
 	"gradle.lockfile":    "maven",
+	"jar":                "maven",
 }
 
 // GenerateCycloneDX converts an Inventory to a CycloneDX BOM.
@@ -58,12 +59,12 @@ func GenerateCycloneDX(inv *inventory.Inventory, version string) *cdx.BOM {
 			licenses = &l
 		}
 
-		// Extract artifactId from Maven "groupId:artifactId" Name format
+		// Maven-family sources carry "groupId:artifactId" in Name; the component
+		// name should show only the artifactId.
 		displayName := p.Name
-		if p.Source == "pom.xml" {
-			parts := strings.SplitN(p.Name, ":", 2)
-			if len(parts) == 2 {
-				displayName = parts[1] // Use only artifactId
+		if ecosystemToPURLType[p.Source] == "maven" {
+			if _, artifactID, ok := strings.Cut(p.Name, ":"); ok {
+				displayName = artifactID
 			}
 		}
 
@@ -117,18 +118,16 @@ func PackagePURL(p inventory.Package, osID string) string {
 		return fmt.Sprintf("pkg:%s/%s/%s@%s", purlType, ns, p.Name, p.Version)
 	case "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "npm-global", "pnpm-global", "pnpm-virtual-store":
 		return npmPURL(p.Name, p.Version)
-	case "pom.xml":
-		// Maven format: "groupId:artifactId" in Name field
-		// PURL format: pkg:maven/groupId/artifactId@version
-		parts := strings.SplitN(p.Name, ":", 2)
-		if len(parts) == 2 {
-			return fmt.Sprintf("pkg:%s/%s/%s@%s", purlType, parts[0], parts[1], p.Version)
-		}
-		// Fallback if Name doesn't contain groupId
-		return fmt.Sprintf("pkg:%s/%s@%s", purlType, p.Name, p.Version)
-	default:
-		return fmt.Sprintf("pkg:%s/%s@%s", purlType, p.Name, p.Version)
 	}
+
+	// Maven-family sources (pom.xml, Gradle build files, JAR archives) store the
+	// coordinate as "groupId:artifactId"; PURL needs it as a namespace/name pair.
+	if purlType == "maven" {
+		if groupID, artifactID, ok := strings.Cut(p.Name, ":"); ok {
+			return fmt.Sprintf("pkg:maven/%s/%s@%s", groupID, artifactID, p.Version)
+		}
+	}
+	return fmt.Sprintf("pkg:%s/%s@%s", purlType, p.Name, p.Version)
 }
 
 // npmPURL returns the PURL for an npm package, correctly handling scoped packages.
