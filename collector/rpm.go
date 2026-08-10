@@ -88,6 +88,13 @@ func cleanRPMVersion(raw string) string {
 
 // detectRPMEcosystem reads <scanPath>/etc/os-release to determine the ecosystem name
 // in the format required by vuln-api: "<Distro>:<MajorVersion>" (e.g., "AlmaLinux:9").
+//
+// Oracle Linux is the one exception: heretix-api's AdvisoryAffectedProduct rows for
+// Oracle Linux aren't split by major version, so its search routing matches the bare
+// value "oracle-linux" with no version suffix (see heretix-api's rpmAdvisoryVendor()).
+// This used to be "Oracle Linux:" + major, changed in 750b4ee under the mistaken
+// assumption that all RPM distros shared one prefix+version convention — heretix-api
+// has carried an alias for that form since, but keep this the canonical value.
 func detectRPMEcosystem(scanPath string) string {
 	id, versionID := parseOSRelease(scanPath)
 	major := strings.SplitN(versionID, ".", 2)[0]
@@ -102,7 +109,7 @@ func detectRPMEcosystem(scanPath string) string {
 	case "centos":
 		return "CentOS:" + major
 	case "ol":
-		return "Oracle Linux:" + major
+		return "oracle-linux"
 	default:
 		return "AlmaLinux:" + major
 	}
