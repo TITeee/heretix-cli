@@ -91,7 +91,12 @@ func (c *DPKGCollector) parseStatusFile(statusPath, scanPath string, verbose boo
 // collectViaDpkgQuery falls back to dpkg-query for live systems without a readable status file.
 func (c *DPKGCollector) collectViaDpkgQuery(verbose bool) ([]inventory.Package, error) {
 	if _, err := exec.LookPath("dpkg-query"); err != nil {
-		return nil, fmt.Errorf("dpkg-query command not found: %w", err)
+		// Not a Debian-based host — same as RPMCollector's LookPath check, this is
+		// a normal "wrong OS" outcome, not a failure worth surfacing as a warning.
+		if verbose {
+			log.Printf("[dpkg] dpkg-query not found, skipping (not a Debian-based system)")
+		}
+		return nil, nil
 	}
 
 	cmd := exec.Command("dpkg-query", "-W", "-f=${Package}\t${Version}\n")
