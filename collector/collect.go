@@ -34,6 +34,7 @@ func CollectAll(scanPath string, skip []string, verbose bool, isContainer bool) 
 
 	var allPkgs []inventory.Package
 	collectorErrors := 0
+	activeCollectors := 0
 
 	for _, c := range collectors {
 		if skipSet[c.Name()] {
@@ -42,6 +43,7 @@ func CollectAll(scanPath string, skip []string, verbose bool, isContainer bool) 
 			}
 			continue
 		}
+		activeCollectors++
 
 		pkgs, err := c.Collect(scanPath, verbose)
 		if err != nil {
@@ -52,8 +54,13 @@ func CollectAll(scanPath string, skip []string, verbose bool, isContainer bool) 
 		allPkgs = append(allPkgs, pkgs...)
 	}
 
-	activeCollectors := len(collectors) - len(skipSet)
-	if collectorErrors >= activeCollectors {
+	// activeCollectors is counted from what actually ran (not len(collectors) -
+	// len(skipSet)), since --skip may name a collector this platform never
+	// registers in the first place (e.g. "rpm" on a non-container Windows scan) —
+	// subtracting those would make this go negative and misfire on every run.
+	// The > 0 guard also means an intentional "skip everything" isn't treated as
+	// a failure: 0 ran, 0 failed, nothing to warn about.
+	if activeCollectors > 0 && collectorErrors >= activeCollectors {
 		return nil, fmt.Errorf("all collectors failed")
 	}
 
