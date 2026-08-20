@@ -1,0 +1,9 @@
+# A typical requirements.txt: loose version specifiers, no integrity hashes,
+# and — crucially — no extra index. Without a second index there is nothing for
+# a substituted package to be resolved from, so none of this is a dependency
+# confusion signal.
+requests>=2.31.0
+flask~=3.0
+django
+pydantic==2.9.2
+numpy>=1.26,<2.0

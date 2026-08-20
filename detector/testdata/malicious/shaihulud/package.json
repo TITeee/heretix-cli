@@ -1,0 +1,8 @@
+{
+  "name": "shaihulud-shape",
+  "version": "1.0.0",
+  "comment": "INERT TEST FIXTURE reproducing the Shai-Hulud worm's structural signature. The hook command itself is unremarkable — the payload lives in bundle.js. Matching only the command string, as the detector did before, misses this entirely.",
+  "scripts": {
+    "postinstall": "node bundle.js"
+  }
+}

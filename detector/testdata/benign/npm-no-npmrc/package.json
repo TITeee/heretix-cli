@@ -1,0 +1,16 @@
+{
+  "name": "benign-app",
+  "version": "1.0.0",
+  "private": true,
+  "comment": "Scoped dependencies from the public registry, and no .npmrc anywhere. Absent a private registry mapping there is no private/public ambiguity to exploit, so no scope here should be reported — including scopes that are not on the built-in well-known list.",
+  "dependencies": {
+    "@tanstack/react-query": "^5.59.0",
+    "@sentry/node": "^8.30.0",
+    "@some-small-org/ui-kit": "^2.1.0",
+    "express": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "typescript": "^5.6.2"
+  }
+}

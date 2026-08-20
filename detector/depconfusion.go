@@ -375,17 +375,25 @@ func checkPackageJSON(path string, sc *scopeChecker) []Finding {
 
 	var findings []Finding
 
-	// (1) Check .npmrc in the same directory for scope→registry mappings.
-	// Well-known public scopes are excluded: they are meant to resolve from
-	// the public registry and are not vulnerable to dependency confusion.
-	if len(scopes) > 0 {
-		npmrcPath := filepath.Join(filepath.Dir(path), ".npmrc")
-		mappedScopes := readNpmrcScopeMappings(npmrcPath)
+	// (1) Scopes used here but not mapped to a registry in the sibling .npmrc.
+	//
+	// Gated on the project actually declaring a private registry. Dependency
+	// confusion needs a private package whose name can also be claimed
+	// publicly; where every package resolves from the public registry by
+	// intent, there is nothing to substitute. Without that gate the check falls
+	// back to wellKnownPublicScopes — a hardcoded list that cannot keep up with
+	// npm — and reports every legitimate scope missing from it.
+	//
+	// Merely having an .npmrc is not the signal: most contain only behaviour
+	// settings such as shamefully-hoist. Both a real project using @tanstack
+	// and the benign fixture cover that case.
+	npmrc := readNpmrcConfig(filepath.Join(filepath.Dir(path), ".npmrc"))
+	if len(scopes) > 0 && npmrc.declaresPrivateRegistry {
 		for scope := range scopes {
 			if sc.isPublic(scope) {
 				continue
 			}
-			if !mappedScopes[scope] {
+			if !npmrc.mappedScopes[scope] {
 				findings = append(findings, Finding{
 					Type:      "dep-confusion",
 					Severity:  "HIGH",
@@ -418,25 +426,57 @@ func checkPackageJSON(path string, sc *scopeChecker) []Finding {
 	return findings
 }
 
-// readNpmrcScopeMappings parses an .npmrc file and returns the set of scopes
-// that have an explicit registry mapping (e.g. @myco:registry=https://...).
-func readNpmrcScopeMappings(path string) map[string]bool {
-	mapped := map[string]bool{}
+// npmrcConfig holds the parts of an .npmrc that decide whether dependency
+// confusion is possible for the project at all.
+type npmrcConfig struct {
+	// mappedScopes are scopes with an explicit @scope:registry= line.
+	mappedScopes map[string]bool
+	// declaresPrivateRegistry is true when some registry — a scoped one or the
+	// default — points somewhere other than npmjs.org. Only then can a package
+	// name exist in two places and be resolved from the wrong one.
+	declaresPrivateRegistry bool
+}
+
+// readNpmrcConfig parses an .npmrc. A missing file yields a zero-value config,
+// which reads as "no private registry" — the correct answer for a project that
+// resolves everything from the public registry.
+func readNpmrcConfig(path string) npmrcConfig {
+	cfg := npmrcConfig{mappedScopes: map[string]bool{}}
+
 	f, err := os.Open(path)
 	if err != nil {
-		return mapped
+		return cfg
 	}
 	defer f.Close()
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(line, "@") && strings.Contains(line, ":registry=") {
+		if line == "" || strings.HasPrefix(line, ";") || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		switch {
+		case strings.HasPrefix(line, "@") && strings.Contains(line, ":registry="):
 			scope := strings.SplitN(line, ":", 2)[0]
-			mapped[scope] = true
+			cfg.mappedScopes[scope] = true
+			if registry, ok := strings.CutPrefix(line, scope+":registry="); ok {
+				if !isPublicNpmRegistry(registry) {
+					cfg.declaresPrivateRegistry = true
+				}
+			}
+		case strings.HasPrefix(line, "registry="):
+			if !isPublicNpmRegistry(strings.TrimPrefix(line, "registry=")) {
+				cfg.declaresPrivateRegistry = true
+			}
 		}
 	}
-	return mapped
+	return cfg
+}
+
+// isPublicNpmRegistry reports whether a registry URL is the public npm registry.
+func isPublicNpmRegistry(registry string) bool {
+	return strings.Contains(strings.TrimSpace(registry), "registry.npmjs.org")
 }
 
 // readNpmrcPrivateScopeMappings returns scopes explicitly mapped to a private
@@ -643,65 +683,69 @@ func checkPnpmLock(path string, _ *scopeChecker) []Finding {
 
 // ── Python ───────────────────────────────────────────────────────────────────
 
-// checkRequirementsTxt checks for --extra-index-url usage and unpinned versions.
+// checkRequirementsTxt reports the extra-index configuration that makes package
+// substitution possible, and — only then — which requirements it exposes.
+//
+// A loose version specifier is not by itself a dependency confusion signal.
+// Substitution needs somewhere to substitute *from*: with a single index, pip
+// resolves the one package that exists and the version range changes nothing.
+// Add a second index and the calculus inverts, because pip takes the highest
+// version across all of them, so a public package published above the internal
+// version wins. Reporting every unpinned line regardless produced up to two
+// findings per requirement on files where no substitution was possible.
 func checkRequirementsTxt(path string) []Finding {
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
+	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
 
-	var findings []Finding
-	lineNum := 0
-	hasExtraIndex := false
+	// Pass 1: locate the extra index. It may appear after the requirements it
+	// affects, so its presence has to be settled before reporting any of them.
+	extraIndexLine := 0
+	for i, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if strings.HasPrefix(line, "--extra-index-url") && extraIndexLine == 0 {
+			extraIndexLine = i + 1
+		}
+	}
 
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		lineNum++
-		line := strings.TrimSpace(scanner.Text())
+	if extraIndexLine == 0 {
+		return nil
+	}
 
-		if line == "" || strings.HasPrefix(line, "#") {
+	findings := []Finding{{
+		Type:      "dep-confusion",
+		Severity:  "HIGH",
+		File:      path,
+		Line:      extraIndexLine,
+		Ecosystem: "PyPI",
+		Detail:    "--extra-index-url found: pip selects highest version across all indexes — attacker can publish higher version to public PyPI",
+	}}
+
+	// Pass 2: with a second index in play, every requirement that does not pin
+	// an exact version can be outbid from the other index.
+	for i, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "-") {
 			continue
 		}
 
-		// (4) --extra-index-url — HIGH risk
-		if strings.HasPrefix(line, "--extra-index-url") || strings.HasPrefix(line, "-e ") {
-			if !hasExtraIndex {
-				findings = append(findings, Finding{
-					Type:      "dep-confusion",
-					Severity:  "HIGH",
-					File:      path,
-					Line:      lineNum,
-					Ecosystem: "PyPI",
-					Detail:    "--extra-index-url found: pip selects highest version across all indexes — attacker can publish higher version to public PyPI",
-				})
-				hasExtraIndex = true
-			}
-			continue
-		}
-
-		// Skip other options
-		if strings.HasPrefix(line, "-") {
-			continue
-		}
-
-		// (5) Unpinned version specifiers
 		if !strings.Contains(line, "==") {
 			pkgName := line
 			if idx := strings.IndexAny(line, "><!~@["); idx > 0 {
 				pkgName = line[:idx]
 			}
 			pkgName = strings.TrimSpace(pkgName)
-			severity := "MEDIUM"
 			detail := "package " + pkgName + " is not pinned with == — use exact version to prevent substitution"
 			if strings.Contains(line, ">=") || strings.Contains(line, "~=") {
-				detail = "package " + pkgName + " uses range specifier — attacker can publish higher version to public PyPI"
+				detail = "package " + pkgName + " uses a range specifier while an extra index is configured — a higher version published to public PyPI wins"
 			}
 			findings = append(findings, Finding{
 				Type:      "dep-confusion",
-				Severity:  severity,
+				Severity:  "MEDIUM",
 				File:      path,
-				Line:      lineNum,
+				Line:      i + 1,
 				Package:   pkgName,
 				Ecosystem: "PyPI",
 				Detail:    detail,
@@ -709,17 +753,16 @@ func checkRequirementsTxt(path string) []Finding {
 			continue
 		}
 
-		// (6) Missing integrity hash
 		if !strings.Contains(line, "--hash=") {
-			pkgName := strings.SplitN(line, "==", 2)[0]
+			pkgName := strings.TrimSpace(strings.SplitN(line, "==", 2)[0])
 			findings = append(findings, Finding{
 				Type:      "dep-confusion",
 				Severity:  "LOW",
 				File:      path,
-				Line:      lineNum,
-				Package:   strings.TrimSpace(pkgName),
+				Line:      i + 1,
+				Package:   pkgName,
 				Ecosystem: "PyPI",
-				Detail:    "package " + strings.TrimSpace(pkgName) + " has no --hash= integrity check",
+				Detail:    "package " + pkgName + " has no --hash= integrity check to bind it to the intended index",
 			})
 		}
 	}

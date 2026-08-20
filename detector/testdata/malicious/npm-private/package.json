@@ -1,0 +1,11 @@
+{
+  "name": "internal-app",
+  "version": "1.0.0",
+  "private": true,
+  "comment": "@acme-internal is a private scope with no registry mapping in the sibling .npmrc, so npm will resolve it from the public registry — where an attacker can publish under that name. @acme-private is mapped and must not be reported.",
+  "dependencies": {
+    "@acme-private/logger": "^1.0.0",
+    "@acme-internal/billing": "^2.3.0",
+    "express": "^4.21.0"
+  }
+}

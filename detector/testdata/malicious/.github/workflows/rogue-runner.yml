@@ -1,0 +1,17 @@
+name: Comment Triggered Build
+
+# INERT TEST FIXTURE — not a working attack.
+# A self-hosted runner reachable from an untrusted trigger. Self-hosted runners
+# sit on internal networks and hold cached credentials, and issue_comment fires
+# for anyone who can comment on the repository.
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  rebuild:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rebuild
+        run: make build

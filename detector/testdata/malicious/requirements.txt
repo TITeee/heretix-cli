@@ -1,0 +1,9 @@
+# INERT TEST FIXTURE.
+# An extra index turns every loose specifier into a substitution opportunity:
+# pip picks the highest version across *all* configured indexes, so a package
+# published to public PyPI with a higher version wins over the internal one.
+--extra-index-url https://pypi.example.invalid/simple
+
+internal-auth-lib>=1.0
+internal-billing
+requests>=2.31.0

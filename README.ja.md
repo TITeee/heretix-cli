@@ -260,22 +260,28 @@ heretix-cli detect --image myapp:latest --dockerfile ./Dockerfile
 
 対象ファイル: `*.py`, `*.js`, `*.ts`, `*.go`, `*.php`, `*.rb`, `*.lock`, `*.toml`, `*.cfg`（JSON は実行されるコードではないため除外）
 
-スキップ: `site-packages`、`dist-packages`、`Trash`、`.Trash`、`node_modules`、`vendor`、`.venv`、`venv`、`__pycache__`、`.tox`、`.git`。`*.min.js` などのミニファイルおよびコンテンツハッシュを含む webpack/vite チャンクファイルも除外。
+**ファイル単位の集約**: 同一文字は出現ごとではなく、ファイル単位で1件にまとめて報告します（最初の出現行と総出現回数を付記）。該当ファイルには同じ文字が多数出現するのが通常であり、対処の単位がファイルと文字の組であるためです。
+
+スキップ: `site-packages`、`dist-packages`、`Trash`、`.Trash`、`node_modules`、`vendor`、`.venv`、`venv`、`__pycache__`、`.tox`、`.git`、`testdata`。`*.min.js` などのミニファイルおよびコンテンツハッシュを含む webpack/vite チャンクファイルも除外。
+
+> `testdata` は全検知器でスキップします。Go ツールチェーンと同様の扱いで、中身はビルドも実行もされないフィクスチャであり、セキュリティツールでは意図的に悪意ある検体を配置するためです。
 
 ### Dependency Confusion 検知（Shai-hulud）
 
 内部パッケージ名を公開レジストリに登録し、意図しない公開版がインストールされる攻撃（依存関係混乱攻撃）への脆弱な設定を検出します。
 
+**追加レジストリを前提とした判定**: 置換攻撃には置換元となる第2のレジストリが必要なため、npm・PyPI とも追加レジストリが設定されている場合にのみ検査します。スコープ検査は `.npmrc` が npmjs.org 以外のレジストリを宣言している場合に限り実行します（`.npmrc` の存在自体は判定材料になりません。多くは `shamefully-hoist` などの動作設定のみを含みます）。PyPI 側も同様に、緩いバージョン指定は `--extra-index-url` がある場合にのみ報告します。インデックスが1つの場合、バージョン範囲が別パッケージに解決されることはありません。
+
 `@types`、`@prisma`、`@fastify`、`@nestjs`、`@aws-sdk` など広く知られた公開スコープは自動的に除外します。`--check-registry` を使うと、アローリスト外のスコープを npmjs.org に問い合わせて動的に判定できます。
 
 | チェック内容 | エコシステム | Severity |
 |---|---|---|
-| 社内スコープパッケージ（`@scope/pkg`）に対応する `.npmrc` レジストリマッピングがない | npm | HIGH |
+| `.npmrc` が私有レジストリを宣言している状況で、マッピングのないスコープ | npm | HIGH |
 | `package-lock.json` / `yarn.lock` / `pnpm-lock.yaml` で社内スコープパッケージが公開レジストリから解決されている | npm | HIGH |
 | 完全に未固定のバージョン（`*`、`latest`、`next`、またはバージョン未指定） | npm | MEDIUM |
 | `requirements.txt` / `pip.conf` に `--extra-index-url`（pip は全インデックスで最高バージョンを選択） | PyPI | HIGH |
-| 範囲指定バージョン（`>=`, `~=`） | PyPI | MEDIUM |
-| `--hash=sha256:` インテグリティチェックなし | PyPI | LOW |
+| 範囲指定バージョン（`>=`, `~=`）— **追加インデックス設定時のみ** | PyPI | MEDIUM |
+| `--hash=sha256:` インテグリティチェックなし — **追加インデックス設定時のみ** | PyPI | LOW |
 | 公開 `GOPROXY` かつ内部モジュールパスを `GOPRIVATE` がカバーしていない | Go | HIGH |
 | `go.mod` にあるモジュールが `go.sum` に存在しない | Go | MEDIUM |
 
@@ -285,36 +291,52 @@ heretix-cli detect --image myapp:latest --dockerfile ./Dockerfile
 
 npm ライフサイクルフック（`preinstall`、`postinstall`、`prepare` 等）や Python `setup.py` 内の危険なコマンドを検出します。パッケージインストール時に自動実行されるため、サプライチェーン攻撃の主要な侵入経路です。
 
+**フックスクリプトの追跡**: フックのコマンド文字列自体は無害な場合が多く、Shai-Hulud ワームでは `node bundle.js` であり、ペイロードは参照先ファイルに存在します。フックがローカルスクリプト（`node x.js`、`python x.py`、`sh x.sh`）を実行する場合、そのファイルの内容も検査対象とします。
+
+**難読化による判別**: インストール時のダウンロードと実行は、ネイティブバイナリを持つパッケージの正当な動作でもあります。esbuild の `install.js` はプラットフォーム別バイナリを取得して実行しており、操作内容は攻撃と同一です。両者の差は可読性にあり、esbuild の最長行は125文字、Shai-Hulud のバンドルは1行が数千文字に達します。このため追跡先スクリプト内でのパターン一致は MEDIUM を上限とし、難読化されたスクリプトの実行自体を HIGH とします。難読化はこの種の検査を回避する目的で行われるためです。
+
 | チェック内容 | エコシステム | Severity |
 |---|---|---|
 | `curl`/`wget` の出力をシェルにパイプ（`\| sh`、`\| bash`） | npm / PyPI | CRITICAL |
 | Base64 デコードしたペイロードをシェルに実行 | npm | CRITICAL |
 | ネットワーク fetch した内容を `eval()` | npm | CRITICAL |
-| install フックで `require('child_process')` をロード | npm | HIGH |
-| ライフサイクルフック内のアウトバウンド `curl`/`wget` | npm | HIGH |
-| `node -e '...'` によるインライン実行 | npm | HIGH |
-| `setup.py` 内の `os.system()` または `subprocess.*()` | PyPI | HIGH |
+| `setup.py` 内の `eval()` | PyPI | CRITICAL |
+| install フックが難読化されたスクリプトを実行 | npm | HIGH |
+| 実行可能な `.pth` ファイル（import 不要で Python 起動のたびに実行される） | PyPI | HIGH |
+| フックコマンド自体に `require('child_process')` / `curl` / `node -e` | npm | HIGH |
+| `setup.py` 内の `exec(compile(...))` 難読化 | PyPI | HIGH |
+| `setup.py` 内の `os.system()` / `subprocess.*()` かつ同一ファイルにネットワーク取得あり | PyPI | HIGH |
+| 上記パターンが**追跡先**フックスクリプト内で見つかった場合 | npm | MEDIUM |
 | フック内の Base64 デコード（`Buffer.from(..., 'base64')`） | npm | MEDIUM |
 | install フック内の `fetch()` アウトバウンド呼び出し | npm | MEDIUM |
 | `setup.py` 内のネットワークリクエスト | PyPI | MEDIUM |
+| `setup.py` 内の `os.system()` / `subprocess.*()` 単独 | PyPI | LOW |
 
-`package.json`（`node_modules/` 配下を含む）と `setup.py` を対象にスキャン。
+`package.json`（`node_modules/` 配下を含む）、`setup.py`、`*.pth` を対象にスキャン。
 
 ### CI/CD Pipeline Poisoning 検知
 
 ビルドパイプラインを乗っ取ったりシークレットを窃取するために使われる CI/CD 設定ファイルのパターンを検出します。
+
+**`run:` ブロック限定の判定**: YAML のインデントを追跡し、シェル系ルールは実際にシェルへ渡される箇所でのみ判定します。シークレットの扱いに特に影響し、`env: TOKEN: ${{ secrets.X }}` や `with: token: ${{ secrets.X }}` は正規の記述であるため報告しません。シェルコマンドに直接展開された場合（コマンドラインとログに露出する）のみ報告します。
+
+**所有者に基づくアクション固定の判定**: GitHub は first-party アクションについてメジャータグでの固定を推奨しているため、`actions/checkout@v4` は報告しません。サードパーティのタグ固定は LOW で報告します。タグは force-push が可能であり、tj-actions/changed-files の侵害（CVE-2025-30066）はこれを悪用した事例ですが、大半のタグ固定は正常な運用です。
 
 | チェック内容 | 対象システム | Severity |
 |---|---|---|
 | `curl`/`wget` の出力をシェルにパイプ | 全システム | CRITICAL |
 | Base64 デコードしたペイロードをシェルに実行 | 全システム | CRITICAL |
 | ユーザー制御の GitHub イベントデータを `run:` ステップに埋め込み（スクリプトインジェクション） | GitHub Actions | CRITICAL |
-| パイプラインステップ内のアウトバウンド `curl`/`wget` | 全システム | HIGH |
-| GitHub シークレット（`${{ secrets.* }}`）をステップで直接使用（ログ漏洩リスク） | GitHub Actions | HIGH |
-| ミュータブルなブランチ参照へのアクション固定（`@main`、`@master`） | GitHub Actions | HIGH |
+| `pull_request_target` ワークフローが PR 自身の head をチェックアウト | GitHub Actions | CRITICAL |
+| `run:` ステップ内のアウトバウンド `curl`/`wget` | 全システム | HIGH |
+| `run:` 内でシェルコマンドに GitHub シークレットを展開 | GitHub Actions | HIGH |
+| ミュータブルな参照へのアクション固定（`@main`、`@master`、`@latest`） | GitHub Actions | HIGH |
+| 信頼できないトリガから到達可能な self-hosted runner | GitHub Actions | HIGH |
 | `remote: https://` によるリモートパイプライン設定読み込み | GitLab CI | HIGH |
-| `node -e` / `python -c` によるインライン実行 | 全システム | MEDIUM |
-| フルコミット SHA ではなく semver タグへのアクション固定 | GitHub Actions | MEDIUM |
+| `run:` ステップ内の `node -e` / `python -c` インライン実行 | 全システム | MEDIUM |
+| サードパーティアクションのコミット SHA ではなくタグへの固定 | GitHub Actions | LOW |
+
+`pull_request_target` はベースリポジトリのシークレットと特権トークンを持つ文脈で動作するため、ここで PR 自身のコードをチェックアウトすると、外部からの変更をその権限で実行することになります（Nx s1ngularity 侵害の起点）。self-hosted runner はキャッシュされた資格情報と内部ネットワークへの到達性を持つため、信頼できないトリガ（`pull_request_target`、`issue_comment`）から到達可能な場合にのみ報告します。信頼できるトリガのみで使用する self-hosted runner は通常の構成です。
 
 `.github/workflows/*.yml`、`Jenkinsfile`、`.gitlab-ci.yml`、`.circleci/config.yml`、`azure-pipelines.yml`、`bitbucket-pipelines.yml` を対象にスキャン。
 

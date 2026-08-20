@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync/atomic"
 )
@@ -59,9 +60,15 @@ var targetExtensions = map[string]bool{
 }
 
 // skipDirs lists directory names to skip during filesystem walk.
+//
+// testdata is skipped by the same reasoning the Go toolchain applies to it: the
+// contents are fixtures, never built or executed. Security tooling in
+// particular keeps deliberately malicious samples there — this repository does
+// — and reporting a project's own detection corpus back to it is pure noise.
 var skipDirs = map[string]bool{
 	".git":         true,
 	"node_modules": true,
+	"testdata":     true,
 	".venv":        true,
 	"venv":         true,
 	"__pycache__":  true,
@@ -115,7 +122,22 @@ func (d *GlassWormDetector) Detect(scanPath string, verbose bool, progress *atom
 	return findings, err
 }
 
-// scanFile reads a file line by line and reports any invisible/zero-width characters found.
+// charOccurrence records where an invisible character was first seen in a file
+// and how many times it appeared.
+type charOccurrence struct {
+	firstLine int
+	count     int
+	severity  string
+	name      string
+}
+
+// scanFile reports invisible/zero-width characters in a file, one finding per
+// distinct character rather than per occurrence.
+//
+// The same character usually appears many times in an affected file \u2014 a
+// stripped build artifact can carry hundreds \u2014 and each repeat adds nothing:
+// the file and the character are what a reviewer acts on. Reporting every
+// occurrence separately turned one problem into hundreds of findings.
 func scanFile(path string) ([]Finding, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -123,7 +145,9 @@ func scanFile(path string) ([]Finding, error) {
 	}
 	defer f.Close()
 
-	var findings []Finding
+	seen := map[rune]*charOccurrence{}
+	var order []rune // preserve first-seen order for stable output
+
 	lineNum := 0
 	isFirst := true
 
@@ -132,11 +156,10 @@ func scanFile(path string) ([]Finding, error) {
 		lineNum++
 		line := scanner.Text()
 		runes := []rune(line)
-		reported := map[rune]bool{}
 
 		for i, r := range runes {
 			for _, ic := range invisibleChars {
-				if r != ic.r || reported[r] {
+				if r != ic.r {
 					continue
 				}
 
@@ -153,20 +176,36 @@ func scanFile(path string) ([]Finding, error) {
 					continue
 				}
 
-				findings = append(findings, Finding{
-					Type:     "glassworm",
-					Severity: ic.severity,
-					File:     path,
-					Line:     lineNum,
-					Detail:   "invisible char U+" + runeHex(ic.r) + " (" + ic.name + ") detected",
-				})
-				reported[r] = true
+				if occ, ok := seen[r]; ok {
+					occ.count++
+				} else {
+					seen[r] = &charOccurrence{firstLine: lineNum, count: 1, severity: ic.severity, name: ic.name}
+					order = append(order, r)
+				}
 			}
 		}
 		isFirst = false
 	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
 
-	return findings, scanner.Err()
+	findings := make([]Finding, 0, len(order))
+	for _, r := range order {
+		occ := seen[r]
+		detail := "invisible char U+" + runeHex(r) + " (" + occ.name + ") detected"
+		if occ.count > 1 {
+			detail += " \u2014 " + strconv.Itoa(occ.count) + " occurrences, first at line " + strconv.Itoa(occ.firstLine)
+		}
+		findings = append(findings, Finding{
+			Type:     "glassworm",
+			Severity: occ.severity,
+			File:     path,
+			Line:     occ.firstLine,
+			Detail:   detail,
+		})
+	}
+	return findings, nil
 }
 
 // adjacentHasNonASCII reports whether the rune at idx in runes has at least one

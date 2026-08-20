@@ -20,6 +20,7 @@ func (d *LockFileIntegrityDetector) Name() string { return "lockfile-integrity" 
 var lockfileSkipDirs = map[string]bool{
 	".git":         true,
 	"node_modules": true,
+	"testdata":     true, // fixtures, never executed — see skipDirs in glassworm.go
 	".venv":        true,
 	"venv":         true,
 	"__pycache__":  true,
@@ -132,7 +133,7 @@ func checkNpmLockIntegrity(path string) ([]Finding, error) {
 		}
 		// Drift: direct dep missing from lockfile.
 		for dep := range directDeps {
-			if _, ok := lock.Packages["node_modules/"+dep]; !ok {
+			if !lockHasPackage(lock.Packages, dep) {
 				findings = append(findings, Finding{
 					Type:      "lockfile-integrity",
 					Severity:  "MEDIUM",
@@ -172,6 +173,23 @@ func checkNpmLockIntegrity(path string) ([]Finding, error) {
 	}
 
 	return findings, nil
+}
+
+// lockHasPackage reports whether dep is installed anywhere in the lockfile tree.
+//
+// npm only writes the top-level "node_modules/<dep>" key when the package can
+// be hoisted there. In a workspace, or when a version conflict forces a nested
+// copy, the same dependency is keyed by its real path —
+// "packages/web/node_modules/<dep>" — so an exact top-level lookup reports a
+// present dependency as missing.
+func lockHasPackage(packages map[string]npmLockPkg, dep string) bool {
+	suffix := "node_modules/" + dep
+	for key := range packages {
+		if key == suffix || strings.HasSuffix(key, "/"+suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 // ── Go ───────────────────────────────────────────────────────────────────────

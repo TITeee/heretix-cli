@@ -260,22 +260,28 @@ Scans source files for invisible and zero-width Unicode characters that can be u
 
 Scans `*.py`, `*.js`, `*.ts`, `*.go`, `*.php`, `*.rb`, `*.lock`, `*.toml`, `*.cfg`. JSON files are excluded (data, not executed code).
 
-Skips `site-packages`, `dist-packages`, `Trash`, `.Trash`, `node_modules`, `vendor`, `.venv`, `venv`, `__pycache__`, `.tox`, `.git`. Also skips minified files (`*.min.js`) and webpack/vite chunk files containing a content hash in the filename.
+Reported once per distinct character per file, with the first line and a total count, rather than once per occurrence — an affected file typically contains many repeats of the same character, and the file plus the character is what a reviewer acts on.
+
+Skips `site-packages`, `dist-packages`, `Trash`, `.Trash`, `node_modules`, `vendor`, `.venv`, `venv`, `__pycache__`, `.tox`, `.git`, `testdata`. Also skips minified files (`*.min.js`) and webpack/vite chunk files containing a content hash in the filename.
+
+> `testdata` is skipped by all detectors, following the Go toolchain's treatment of it: the contents are fixtures, never built or executed. Security tooling in particular keeps deliberately malicious samples there.
 
 ### Dependency Confusion Detection (Shai-hulud)
 
 Detects configuration patterns that leave projects vulnerable to substitution attacks, where a privately-named package is overridden by a malicious public registry version.
 
+Substitution requires somewhere to substitute *from*, so both npm and PyPI checks are gated on the project actually configuring a second registry. Scope checks run only when `.npmrc` declares a registry other than npmjs.org — merely having an `.npmrc` is not enough, since most contain only behaviour settings like `shamefully-hoist`. Likewise, loose PyPI version specifiers are reported only alongside `--extra-index-url`; with a single index, a version range cannot resolve to a different package.
+
 Well-known public scopes (`@types`, `@prisma`, `@fastify`, `@nestjs`, `@aws-sdk`, etc.) are excluded automatically since they cannot be subject to dependency confusion. Use `--check-registry` to dynamically verify unknown scopes against npmjs.org.
 
 | Check | Ecosystem | Severity |
 |---|---|---|
-| Private scoped package (`@scope/pkg`) with no registry mapping in `.npmrc` | npm | HIGH |
+| Scoped package with no registry mapping, where `.npmrc` declares a private registry | npm | HIGH |
 | `package-lock.json` / `yarn.lock` / `pnpm-lock.yaml`: private scoped package resolved from public registry | npm | HIGH |
 | Completely unpinned version (`*`, `latest`, `next`, or missing) | npm | MEDIUM |
 | `--extra-index-url` in `requirements.txt` or `pip.conf` (pip picks highest version across all indexes) | PyPI | HIGH |
-| Non-exact version specifiers (`>=`, `~=`) | PyPI | MEDIUM |
-| Missing `--hash=sha256:` integrity check | PyPI | LOW |
+| Non-exact version specifiers (`>=`, `~=`) — **only when an extra index is configured** | PyPI | MEDIUM |
+| Missing `--hash=sha256:` integrity check — **only when an extra index is configured** | PyPI | LOW |
 | Public `GOPROXY` without `GOPRIVATE` covering internal module paths | Go | HIGH |
 | Module present in `go.mod` but missing from `go.sum` | Go | MEDIUM |
 
@@ -285,36 +291,52 @@ Well-known public scopes (`@types`, `@prisma`, `@fastify`, `@nestjs`, `@aws-sdk`
 
 Detects dangerous commands in npm lifecycle hooks (`preinstall`, `postinstall`, `prepare`, etc.) and Python `setup.py` that execute automatically during package installation — a common vector for supply chain attacks.
 
+**Hook scripts are followed.** A hook command is often unremarkable on its own — the Shai-Hulud worm's is just `node bundle.js` — while the payload sits in the referenced file. When a hook runs a local script (`node x.js`, `python x.py`, `sh x.sh`), that file's contents are scanned too.
+
+**Obfuscation is the discriminator.** Downloading and executing at install time is how native-binary packages legitimately work: esbuild's `install.js` fetches a platform binary and runs it, performing the same operations an attacker would. What separates them is readability — esbuild's longest line is 125 characters, Shai-Hulud's bundle runs to several thousand on one line. Content matches inside a followed script are therefore capped at MEDIUM, while a minified script executed at install time is HIGH on its own, since obfuscation exists to defeat exactly this kind of inspection.
+
 | Check | Ecosystem | Severity |
 |---|---|---|
 | `curl`/`wget` output piped to shell (`\| sh`, `\| bash`) | npm / PyPI | CRITICAL |
 | Base64-decoded payload piped to shell | npm | CRITICAL |
 | `eval()` of network-fetched content | npm | CRITICAL |
-| `require('child_process')` loaded in install hook | npm | HIGH |
-| Outbound `curl`/`wget` request in lifecycle hook | npm | HIGH |
-| Inline execution via `node -e '...'` | npm | HIGH |
-| `os.system()` or `subprocess.*()` in `setup.py` | PyPI | HIGH |
+| `eval()` in `setup.py` | PyPI | CRITICAL |
+| Minified/obfuscated script executed by an install hook | npm | HIGH |
+| Executable `.pth` file (runs on every Python start, no import required) | PyPI | HIGH |
+| `require('child_process')` / `curl` / `node -e` in the hook command itself | npm | HIGH |
+| `exec(compile(...))` obfuscation in `setup.py` | PyPI | HIGH |
+| `os.system()` / `subprocess.*()` in `setup.py`, combined with a network fetch | PyPI | HIGH |
+| The above patterns found inside a *followed* hook script | npm | MEDIUM |
 | Base64 decoding (`Buffer.from(..., 'base64')`) in hook | npm | MEDIUM |
 | Outbound `fetch()` in install hook | npm | MEDIUM |
 | Outbound network request in `setup.py` | PyPI | MEDIUM |
+| `os.system()` / `subprocess.*()` in `setup.py`, on its own | PyPI | LOW |
 
-Scans `package.json` (including packages under `node_modules/`) and `setup.py`.
+Scans `package.json` (including packages under `node_modules/`), `setup.py`, and `*.pth`.
 
 ### CI/CD Pipeline Poisoning Detection
 
 Scans CI/CD configuration files for patterns used to hijack build pipelines or exfiltrate secrets.
+
+**Shell rules apply only inside `run:` blocks.** YAML indentation is tracked so that command patterns are matched where a shell actually receives them. This matters most for secrets: `env: TOKEN: ${{ secrets.X }}` and `with: token: ${{ secrets.X }}` are the documented way to use a secret, and reporting them was the single largest source of noise. Only a secret interpolated straight into a shell command — where it reaches the command line and the logs — is reported.
+
+**Action pinning is judged by owner.** GitHub's own documentation tells you to pin its first-party actions by major tag, so `actions/checkout@v4` is not reported. Third-party tags are reported at LOW: a tag can be force-pushed, which is how the tj-actions/changed-files compromise (CVE-2025-30066) reached its consumers, but the overwhelming majority of such pins are fine.
 
 | Check | System | Severity |
 |---|---|---|
 | `curl`/`wget` output piped to shell | All | CRITICAL |
 | Base64-decoded payload piped to shell | All | CRITICAL |
 | User-controlled GitHub event data interpolated into a `run:` step (script injection) | GitHub Actions | CRITICAL |
-| Outbound `curl`/`wget` download in pipeline step | All | HIGH |
-| GitHub secret (`${{ secrets.* }}`) used directly in step (log leak risk) | GitHub Actions | HIGH |
-| Action pinned to mutable branch ref (`@main`, `@master`) | GitHub Actions | HIGH |
+| `pull_request_target` workflow checking out the PR's own head | GitHub Actions | CRITICAL |
+| Outbound `curl`/`wget` download in a `run:` step | All | HIGH |
+| GitHub secret interpolated into a shell command inside `run:` | GitHub Actions | HIGH |
+| Action pinned to a mutable ref (`@main`, `@master`, `@latest`) | GitHub Actions | HIGH |
+| Self-hosted runner reachable from an untrusted trigger | GitHub Actions | HIGH |
 | Remote pipeline config loaded via `remote: https://` | GitLab CI | HIGH |
-| Inline execution via `node -e` / `python -c` | All | MEDIUM |
-| Action pinned to semver tag instead of full commit SHA | GitHub Actions | MEDIUM |
+| Inline execution via `node -e` / `python -c` in a `run:` step | All | MEDIUM |
+| Third-party action pinned to a tag rather than a commit SHA | GitHub Actions | LOW |
+
+`pull_request_target` runs with the base repository's secrets and a privileged token; checking out the pull request's own code then executes an outsider's changes with them — the entry point for the Nx s1ngularity compromise. Self-hosted runners hold cached credentials and internal network access, so they are reported only when an untrusted trigger (`pull_request_target`, `issue_comment`) can reach them; a self-hosted runner on trusted triggers alone is normal.
 
 Scans `.github/workflows/*.yml`, `Jenkinsfile`, `.gitlab-ci.yml`, `.circleci/config.yml`, `azure-pipelines.yml`, `bitbucket-pipelines.yml`.
 
