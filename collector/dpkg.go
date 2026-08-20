@@ -55,6 +55,7 @@ func (c *DPKGCollector) parseStatusFile(statusPath, scanPath string, verbose boo
 				RawVersion: currentVersion,
 				Ecosystem:  ecosystem,
 				Source:     "dpkg",
+				License:    parseDpkgCopyrightLicense(scanPath, currentPkg),
 			})
 		}
 		currentPkg, currentVersion, currentStatus = "", "", ""
@@ -133,6 +134,7 @@ func (c *DPKGCollector) collectViaDpkgQuery(verbose bool) ([]inventory.Package, 
 			RawVersion: rawVersion,
 			Ecosystem:  ecosystem,
 			Source:     "dpkg",
+			License:    parseDpkgCopyrightLicense("/", name),
 		})
 	}
 
@@ -152,6 +154,41 @@ func cleanDPKGVersion(raw string) string {
 		return raw[idx+1:]
 	}
 	return raw
+}
+
+// parseDpkgCopyrightLicense best-effort extracts license identifiers from a
+// Debian package's copyright file (<scanPath>/usr/share/doc/{pkgName}/copyright).
+// Most packages use the DEP-5 machine-readable format, which declares one or more
+// "License:" fields; free-form copyright files without that field yield "".
+// Duplicate values are collapsed and multiple distinct ones joined with " OR ",
+// matching composer.go's convention for multi-license packages.
+func parseDpkgCopyrightLicense(scanPath, pkgName string) string {
+	path := filepath.Join(scanPath, "usr", "share", "doc", pkgName, "copyright")
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	seen := make(map[string]bool)
+	var licenses []string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, "License:") {
+			continue
+		}
+		lic := strings.TrimSpace(strings.TrimPrefix(line, "License:"))
+		if lic == "" || seen[lic] {
+			continue
+		}
+		seen[lic] = true
+		licenses = append(licenses, lic)
+	}
+	if len(licenses) == 0 {
+		return ""
+	}
+	return strings.Join(licenses, " OR ")
 }
 
 // detectDPKGEcosystem reads <scanPath>/etc/os-release to determine the ecosystem name

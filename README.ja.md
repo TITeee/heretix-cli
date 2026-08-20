@@ -101,28 +101,31 @@ heretix-cli collect --image nginx:latest --format cyclonedx --output nginx-sbom.
 | `Pipfile.lock` | ✓ | ✓ | — | ✓ | △ ⁵ |
 | `poetry.lock` | ✓ | — ¹ | ✓ | — | △ ⁵ |
 | `uv.lock` | ✓ | ✓ | ✓ | ✓ | △ ⁵ |
-| `go.mod`（直接解析） | △ 宣言済みのみ | ✓ | — | — | — |
-| `go list`（フォールバック） | ✓ transitive 含む | — ² | — | — | — |
+| `go.mod`（直接解析） | △ 宣言済みのみ | ✓ | — | — | △ ¹¹ |
+| `go list`（フォールバック） | ✓ transitive 含む | — ² | — | — | △ ¹¹ |
 | `composer.lock` | ✓ | △ ³ | ✓ | — | ✓ |
 | `pom.xml`（mvn コマンド） | ✓ transitive 含む | ✓ | ✓ | — | △ ⁶ |
 | `pom.xml`（直接解析） | △ 宣言済みのみ | △ | — | — | △ ⁶ |
-| `gradle.lockfile` | ✓ transitive 含む | — ⁷ | ✓ | — | — |
-| `build.gradle(.kts)`（直接解析） | △ 宣言済みのみ | △ | — | — | — |
+| `gradle.lockfile` | ✓ transitive 含む | — ⁷ | ✓ | — | △ ¹² |
+| `build.gradle(.kts)`（直接解析） | △ 宣言済みのみ | △ | — | — | △ ¹² |
 | `*.jar` / `*.war` / `*.ear` | ✓ ⁸ | — ⁹ | — | ✓ SHA-256 | △ ¹⁰ |
 | RPM | ✓ | — | — | — | ✓ |
-| DPKG | ✓ | — | — | — | — |
+| DPKG | ✓ | — | — | — | △ ¹³ |
 | APK | ✓ | — | — | — | ✓ |
 
 ¹ poetry.lock の `direct` 判定は `pyproject.toml` の読み取りが必要なため未実装。  
 ² `go` コマンドが利用可能な場合は `go list` を優先するため transitive deps が取れるが、`direct` 情報は失われる。  
 ³ composer.lock の `direct` 判定は同ディレクトリに `composer.json` が必要。  
-⁴ npm の `license` は `node_modules/*/package.json` から取得（パッケージがインストール済みの場合のみ）。  
+⁴ npm の `license` は `node_modules/*/package.json` から取得（パッケージがインストール済みの場合のみ）。lockfile 解析、pnpm virtual store、`npm`/`pnpm` グローバルインストールのフォールバック（`npm root -g`/`pnpm root -g`）のすべてに対応。  
 ⁵ PyPI の `license` は `site-packages/*.dist-info/METADATA` から取得（パッケージがインストール済みの場合のみ）。  
 ⁶ Maven の `license` は `pom.xml` の `<licenses>` タグから取得（ルートプロジェクトのライセンスのみ、transitive 依存のライセンスは含まれない）。  
 ⁷ `gradle.lockfile` では `direct` 情報が利用不可（すべての依存がフラット化された形式）；`direct: null` で不明を示す。  
 ⁸ 座標は `META-INF/maven/{groupId}/{artifactId}/pom.properties` から取得し、無い場合は `MANIFEST.MF` の `Implementation-Vendor-Id`/`-Title`/`-Version` が揃っていればそれを使う。どちらも無いアーカイブはファイル名から推測せずスキップする（groupId を欠いた PURL はどの脆弱性情報にもマッチしないため）。ネストしたアーカイブは `app.war!/WEB-INF/lib/lib.jar` の形式で記録する。  
 ⁹ ビルド済みアーティファクトには直接依存か推移的依存かの記録が無い。同じパッケージが `pom.xml` からも検出された場合は1件にマージされ、ビルド定義側の `direct` が採用される。  
-¹⁰ `license` は `pom.properties` と同じディレクトリに埋め込まれた `pom.xml` から取得する（Maven でビルドされた JAR のみ）。
+¹⁰ `license` は `pom.properties` と同じディレクトリに埋め込まれた `pom.xml` から取得する（Maven でビルドされた JAR のみ）。  
+¹¹ Go の `license` は `GOMODCACHE` 内のモジュールの `LICENSE`/`LICENSE.md`/`LICENSE.txt`/`LICENCE`/`COPYING` ファイルから取得し、冒頭部分を既知のライセンス見出し（MIT, Apache-2.0, BSD-2/3-Clause, MPL-2.0, GPL/LGPL-3.0, ISC, Unlicense）と照合して判定する。事前にローカルビルドが必要 — モジュールキャッシュはコンテナイメージの外にあるため、ライブホストスキャンでのみ有効。  
+¹² Gradle の `license` はローカルの Gradle モジュールキャッシュ（デフォルト `~/.gradle/caches/modules-2/files-2.1`、または `$GRADLE_USER_HOME`）内の依存先 POM から取得する — Go と同じくライブホスト限定。  
+¹³ DPKG の `license` は `/usr/share/doc/{package}/copyright`（DEP-5 machine-readable format の `License:` フィールド）から取得する — 多くのパッケージで存在するが、自由形式の copyright ファイルを使う upstream もあるため保証はない。
 
 `deps` の PURL、`integrity` ハッシュ、および `license` 情報は、CycloneDX 出力の `bom.dependencies`、`components[].hashes`、`components[].licenses` にそれぞれ反映される。
 

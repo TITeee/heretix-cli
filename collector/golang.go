@@ -70,6 +70,8 @@ func (c *GoCollector) Collect(scanPath string, verbose bool) ([]inventory.Packag
 		}
 	}
 
+	enrichGoLicensesFromCache(pkgs, verbose)
+
 	if verbose {
 		log.Printf("[go] collected %d packages", len(pkgs))
 	}
@@ -314,6 +316,120 @@ func parseRequireLine(line, location string, isIndirect bool) *inventory.Package
 		Source:     "go.mod",
 		Location:   location,
 		Direct:     direct,
+	}
+}
+
+// goLicenseFileNames are the conventional names Go modules use for their license
+// file, tried in this order.
+var goLicenseFileNames = []string{"LICENSE", "LICENSE.md", "LICENSE.txt", "LICENCE", "COPYING", "COPYING.md"}
+
+// goModCache returns the module download cache directory via "go env GOMODCACHE".
+// Returns "" if the go binary is unavailable or the command fails.
+func goModCache() string {
+	if _, err := exec.LookPath("go"); err != nil {
+		return ""
+	}
+	out, err := exec.Command("go", "env", "GOMODCACHE").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// escapeGoModulePath applies Go's module cache escaping: each uppercase letter is
+// replaced with '!' followed by its lowercase form, so cache directory names stay
+// case-insensitive-filesystem-safe (mirrors golang.org/x/mod/module.EscapePath).
+// "github.com/BurntSushi/toml" -> "github.com/!burnt!sushi/toml"
+func escapeGoModulePath(path string) string {
+	var b strings.Builder
+	for _, r := range path {
+		if r >= 'A' && r <= 'Z' {
+			b.WriteByte('!')
+			b.WriteRune(r - 'A' + 'a')
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// findGoModuleLicenseFile locates a module's license file inside the module cache
+// ({modCache}/{escaped-path}@{version}/). Returns "" if the module isn't cached
+// locally or carries none of the conventional license filenames.
+func findGoModuleLicenseFile(modCache, modPath, version string) string {
+	dir := filepath.Join(modCache, escapeGoModulePath(modPath)+"@"+version)
+	for _, name := range goLicenseFileNames {
+		p := filepath.Join(dir, name)
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
+// classifyLicenseText applies a best-effort match against known license title
+// lines to derive an SPDX identifier. License files are free-form prose, not
+// structured metadata, so only the first few lines are checked against common
+// headers; anything else is left unclassified rather than guessed at.
+func classifyLicenseText(text string) string {
+	lines := strings.SplitN(text, "\n", 6)
+	head := strings.ToLower(strings.Join(lines, " "))
+
+	switch {
+	case strings.Contains(head, "mit license"):
+		return "MIT"
+	case strings.Contains(head, "apache license") && strings.Contains(head, "2.0"):
+		return "Apache-2.0"
+	case strings.Contains(head, "bsd 3-clause"):
+		return "BSD-3-Clause"
+	case strings.Contains(head, "bsd 2-clause"):
+		return "BSD-2-Clause"
+	case strings.Contains(head, "mozilla public license") && strings.Contains(head, "2.0"):
+		return "MPL-2.0"
+	case strings.Contains(head, "gnu lesser general public license") && strings.Contains(head, "3"):
+		return "LGPL-3.0"
+	case strings.Contains(head, "gnu general public license") && strings.Contains(head, "3"):
+		return "GPL-3.0"
+	case strings.Contains(head, "isc license"):
+		return "ISC"
+	case strings.Contains(head, "unlicense"):
+		return "Unlicense"
+	}
+	return ""
+}
+
+// enrichGoLicensesFromCache fills in License for packages whose module is present
+// in the local Go module cache (GOMODCACHE). This only helps on a live host that
+// has previously built against these modules — the cache isn't part of a
+// container image, so this is a no-op there. Best-effort: missing cache, missing
+// license file, or unrecognized license text all leave License as-is.
+func enrichGoLicensesFromCache(pkgs []inventory.Package, verbose bool) {
+	modCache := goModCache()
+	if modCache == "" {
+		return
+	}
+
+	found := 0
+	for i := range pkgs {
+		if pkgs[i].License != "" {
+			continue
+		}
+		licPath := findGoModuleLicenseFile(modCache, pkgs[i].Name, pkgs[i].Version)
+		if licPath == "" {
+			continue
+		}
+		data, err := os.ReadFile(licPath)
+		if err != nil {
+			continue
+		}
+		if lic := classifyLicenseText(string(data)); lic != "" {
+			pkgs[i].License = lic
+			found++
+		}
+	}
+
+	if verbose {
+		log.Printf("[go] enriched %d packages with license from module cache (%s)", found, modCache)
 	}
 }
 

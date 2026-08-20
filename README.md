@@ -101,28 +101,31 @@ The table below shows which metadata fields are populated for each lockfile sour
 | `Pipfile.lock` | ✓ | ✓ | — | ✓ | △ ⁵ |
 | `poetry.lock` | ✓ | — ¹ | ✓ | — | △ ⁵ |
 | `uv.lock` | ✓ | ✓ | ✓ | ✓ | △ ⁵ |
-| `go.mod` (parsed) | △ declared only | ✓ | — | — | — |
-| `go list` (fallback) | ✓ incl. transitive | — ² | — | — | — |
+| `go.mod` (parsed) | △ declared only | ✓ | — | — | △ ¹¹ |
+| `go list` (fallback) | ✓ incl. transitive | — ² | — | — | △ ¹¹ |
 | `composer.lock` | ✓ | △ ³ | ✓ | — | ✓ |
 | `pom.xml` (mvn command) | ✓ incl. transitive | ✓ | ✓ | — | △ ⁶ |
 | `pom.xml` (direct parse) | △ declared only | △ | — | — | △ ⁶ |
-| `gradle.lockfile` | ✓ incl. transitive | — ⁷ | ✓ | — | — |
-| `build.gradle(.kts)` (direct parse) | △ declared only | △ | — | — | — |
+| `gradle.lockfile` | ✓ incl. transitive | — ⁷ | ✓ | — | △ ¹² |
+| `build.gradle(.kts)` (direct parse) | △ declared only | △ | — | — | △ ¹² |
 | `*.jar` / `*.war` / `*.ear` | ✓ ⁸ | — ⁹ | — | ✓ SHA-256 | △ ¹⁰ |
 | RPM | ✓ | — | — | — | ✓ |
-| DPKG | ✓ | — | — | — | — |
+| DPKG | ✓ | — | — | — | △ ¹³ |
 | APK | ✓ | — | — | — | ✓ |
 
 ¹ `direct` for poetry.lock requires reading `pyproject.toml` — not implemented.  
 ² When the `go` binary is available `go list` is preferred, which provides transitive dependencies but loses `direct` information.  
 ³ `direct` for composer.lock requires `composer.json` in the same directory.  
-⁴ `license` for npm is read from `node_modules/*/package.json` — requires packages to be installed.  
+⁴ `license` for npm is read from `node_modules/*/package.json` — requires packages to be installed. Covers lockfile parsing, the pnpm virtual store, and the `npm`/`pnpm` global-install fallbacks (`npm root -g`/`pnpm root -g`).  
 ⁵ `license` for PyPI is read from `site-packages/*.dist-info/METADATA` — requires packages to be installed.  
 ⁶ `license` for Maven `pom.xml` is extracted from `<licenses>` tag — only root project license, not transitive dependency licenses.  
 ⁷ `direct` information is not available in gradle.lockfile (all deps appear flattened); use `direct: null` to indicate unknown.  
 ⁸ Coordinates come from `META-INF/maven/{groupId}/{artifactId}/pom.properties`, falling back to `MANIFEST.MF` when it supplies `Implementation-Vendor-Id`/`-Title`/`-Version`. Archives with neither are skipped rather than guessed at from the filename, since a missing groupId yields a PURL that matches no advisory. Nested archives are reported as `app.war!/WEB-INF/lib/lib.jar`.  
 ⁹ A compiled artifact carries no record of whether it was a declared or transitive dependency. When the same package is also found in a `pom.xml`, the two entries merge and the build file's `direct` value wins.  
-¹⁰ `license` is read from the `pom.xml` embedded alongside `pom.properties` — present only when the JAR was built by Maven.
+¹⁰ `license` is read from the `pom.xml` embedded alongside `pom.properties` — present only when the JAR was built by Maven.  
+¹¹ `license` for Go is read from the module's `LICENSE`/`LICENSE.md`/`LICENSE.txt`/`LICENCE`/`COPYING` file in `GOMODCACHE`, classified by matching its opening lines against known license headers (MIT, Apache-2.0, BSD-2/3-Clause, MPL-2.0, GPL/LGPL-3.0, ISC, Unlicense). Requires a prior local build — the module cache lives outside any container image, so this only helps on a live host scan.  
+¹² `license` for Gradle is read from the dependency's POM in the local Gradle module cache (`~/.gradle/caches/modules-2/files-2.1` by default, or `$GRADLE_USER_HOME`) — same live-host-only caveat as Go.  
+¹³ `license` for DPKG is read from `/usr/share/doc/{package}/copyright` (the DEP-5 machine-readable format's `License:` field) — present for most packages, but not guaranteed since some upstreams ship free-form copyright text instead.
 
 `deps` PURLs, `integrity` hashes, and `license` information are carried through to the CycloneDX `bom.dependencies`, `components[].hashes`, and `components[].licenses` fields respectively.
 

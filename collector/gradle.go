@@ -71,6 +71,8 @@ func (c *GradleCollector) Collect(scanPath string, verbose bool) ([]inventory.Pa
 		return nil, fmt.Errorf("walk %s: %w", scanPath, err)
 	}
 
+	enrichGradleLicensesFromCache(pkgs, verbose)
+
 	if verbose {
 		log.Printf("[gradle] collected %d packages", len(pkgs))
 	}
@@ -286,4 +288,84 @@ func gradleDependenciesJSON(buildDir string, verbose bool) ([]inventory.Package,
 	}
 
 	return pkgs, nil
+}
+
+// gradleUserHome returns $GRADLE_USER_HOME, falling back to ~/.gradle (Gradle's
+// own default). Returns "" if neither is resolvable.
+func gradleUserHome() string {
+	if home := os.Getenv("GRADLE_USER_HOME"); home != "" {
+		return home
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".gradle")
+}
+
+// findGradleCachedPOM locates a dependency's POM inside Gradle's module cache:
+//
+//	{GRADLE_USER_HOME}/caches/modules-2/files-2.1/{groupId}/{artifactId}/{version}/{sha1-hash}/{artifactId}-{version}.pom
+//
+// The hash directory name varies per download, so its parent is listed and each
+// entry checked for the expected POM filename. Returns "" if not cached locally.
+func findGradleCachedPOM(gradleHome, groupID, artifactID, version string) string {
+	dir := filepath.Join(gradleHome, "caches", "modules-2", "files-2.1", groupID, artifactID, version)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	pomName := artifactID + "-" + version + ".pom"
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		candidate := filepath.Join(dir, e.Name(), pomName)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return ""
+}
+
+// enrichGradleLicensesFromCache fills in License for packages whose POM is present
+// in the local Gradle module cache (~/.gradle by default). This only helps on a
+// live host that has previously run a Gradle build — the cache isn't part of a
+// container image, so this is a no-op there. Best-effort: missing cache directory
+// or POM leaves License as-is.
+func enrichGradleLicensesFromCache(pkgs []inventory.Package, verbose bool) {
+	home := gradleUserHome()
+	if home == "" {
+		return
+	}
+	if _, err := os.Stat(home); err != nil {
+		return
+	}
+
+	found := 0
+	for i := range pkgs {
+		if pkgs[i].License != "" {
+			continue
+		}
+		groupID, artifactID, ok := strings.Cut(pkgs[i].Name, ":")
+		if !ok {
+			continue
+		}
+		pomPath := findGradleCachedPOM(home, groupID, artifactID, pkgs[i].Version)
+		if pomPath == "" {
+			continue
+		}
+		data, err := os.ReadFile(pomPath)
+		if err != nil {
+			continue
+		}
+		if lic := parseEmbeddedPomLicense(data); lic != "" {
+			pkgs[i].License = lic
+			found++
+		}
+	}
+
+	if verbose {
+		log.Printf("[gradle] enriched %d packages with license from Gradle cache (%s)", found, home)
+	}
 }

@@ -597,14 +597,26 @@ func npmGlobalFallback(verbose bool) ([]inventory.Package, error) {
 		return nil, fmt.Errorf("parse npm output: %w", err)
 	}
 
+	// Best-effort: license lookup requires the global node_modules root, which
+	// "npm list" doesn't report. A failure here just means License stays empty.
+	globalRoot := ""
+	if out, err := exec.Command("npm", "root", "-g").Output(); err == nil {
+		globalRoot = strings.TrimSpace(string(out))
+	}
+
 	var pkgs []inventory.Package
 	for name, info := range result.Dependencies {
+		var license string
+		if globalRoot != "" {
+			license = parsePackageJSONLicense(filepath.Join(globalRoot, name, "package.json"))
+		}
 		pkgs = append(pkgs, inventory.Package{
 			Name:       name,
 			Version:    info.Version,
 			RawVersion: info.Version,
 			Ecosystem:  "npm",
 			Source:     "npm-global",
+			License:    license,
 		})
 	}
 
@@ -638,15 +650,27 @@ func pnpmGlobalFallback(verbose bool) ([]inventory.Package, error) {
 		return nil, fmt.Errorf("parse pnpm output: %w", err)
 	}
 
+	// Best-effort: license lookup requires the global node_modules root, which
+	// "pnpm list" doesn't report. A failure here just means License stays empty.
+	globalRoot := ""
+	if out, err := exec.Command("pnpm", "root", "-g").Output(); err == nil {
+		globalRoot = strings.TrimSpace(string(out))
+	}
+
 	var pkgs []inventory.Package
 	for _, result := range results {
 		for name, info := range result.Dependencies {
+			var license string
+			if globalRoot != "" {
+				license = parsePackageJSONLicense(filepath.Join(globalRoot, name, "package.json"))
+			}
 			pkgs = append(pkgs, inventory.Package{
 				Name:       name,
 				Version:    info.Version,
 				RawVersion: info.Version,
 				Ecosystem:  "npm",
 				Source:     "pnpm-global",
+				License:    license,
 			})
 		}
 	}
@@ -726,6 +750,7 @@ func parsePnpmVirtualStore(pnpmPath string, verbose bool) ([]inventory.Package, 
 			Ecosystem:  "npm",
 			Source:     "pnpm-virtual-store",
 			Location:   pnpmPath,
+			License:    parsePackageJSONLicense(pkgJSONPath),
 		})
 	}
 
@@ -756,8 +781,13 @@ func readPackageJSONVersion(path string) (string, error) {
 // readNodeModuleLicense reads the license from node_modules/{name}/package.json.
 // Returns "" when the file does not exist or has no license field.
 func readNodeModuleLicense(lockfileDir, pkgName string) string {
-	pkgJSON := filepath.Join(lockfileDir, "node_modules", pkgName, "package.json")
-	data, err := os.ReadFile(pkgJSON)
+	return parsePackageJSONLicense(filepath.Join(lockfileDir, "node_modules", pkgName, "package.json"))
+}
+
+// parsePackageJSONLicense reads the license field from a package.json at pkgJSONPath.
+// Returns "" when the file does not exist or has no license field.
+func parsePackageJSONLicense(pkgJSONPath string) string {
+	data, err := os.ReadFile(pkgJSONPath)
 	if err != nil {
 		return ""
 	}
