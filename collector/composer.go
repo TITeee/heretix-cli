@@ -108,6 +108,14 @@ func parseComposerLock(path string, verbose bool) ([]inventory.Package, error) {
 		return nil, fmt.Errorf("parse composer.lock: %w", err)
 	}
 
+	// composer.lock already separates runtime and dev-only packages into two
+	// arrays; record dev membership before merging so it isn't lost the way it
+	// used to be for npm/pnpm (see collector/npm.go).
+	devNames := make(map[string]bool, len(lockfile.PackagesDev))
+	for _, e := range lockfile.PackagesDev {
+		devNames[e.Name] = true
+	}
+
 	all := append(lockfile.Packages, lockfile.PackagesDev...)
 
 	// Pass 1: build name→version lookup (first occurrence wins)
@@ -144,6 +152,11 @@ func parseComposerLock(path string, verbose bool) ([]inventory.Package, error) {
 			direct = inventory.BoolPtr(directSet[entry.Name])
 		}
 
+		scope := ""
+		if devNames[entry.Name] {
+			scope = "excluded"
+		}
+
 		pkgs = append(pkgs, inventory.Package{
 			Name:       entry.Name,
 			Version:    entry.Version,
@@ -154,6 +167,7 @@ func parseComposerLock(path string, verbose bool) ([]inventory.Package, error) {
 			Direct:     direct,
 			Deps:       deps,
 			License:    strings.Join(entry.Licenses, " OR "),
+			Scope:      scope,
 		})
 	}
 

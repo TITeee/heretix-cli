@@ -111,8 +111,9 @@ func (c *NPMCollector) Collect(scanPath string, verbose bool) ([]inventory.Packa
 
 // parsePackageLock parses a package-lock.json (v2/v3 format with "packages" key).
 // It uses a two-pass approach to resolve dependency names to PURLs:
-//   Pass 1 – build a name→version map from all packages entries.
-//   Pass 2 – build Package structs with Direct and Deps populated.
+//
+//	Pass 1 – build a name→version map from all packages entries.
+//	Pass 2 – build Package structs with Direct and Deps populated.
 func parsePackageLock(path string, verbose bool) ([]inventory.Package, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
