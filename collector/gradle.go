@@ -80,7 +80,13 @@ func (c *GradleCollector) Collect(scanPath string, verbose bool) ([]inventory.Pa
 }
 
 // parseGradleLockfile parses gradle.lockfile (Primary source, highest priority).
-// Format: groupId:artifactId:version=resolved-version (one per line)
+// Format: groupId:artifactId:version=configuration1,configuration2,... — the
+// right-hand side lists every Gradle configuration that resolved this
+// dependency (e.g. "compileClasspath,runtimeClasspath"), which is also how a
+// test-only dependency is identified: gradleOnlyTestConfigurations reports
+// scope=excluded when every listed configuration is test-scoped
+// (testCompileClasspath, testRuntimeClasspath, ...) and none of the
+// production ones (compileClasspath, runtimeClasspath, api, ...) resolved it.
 func parseGradleLockfile(path string, verbose bool) ([]inventory.Package, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -96,7 +102,7 @@ func parseGradleLockfile(path string, verbose bool) ([]inventory.Package, error)
 			continue
 		}
 
-		// Parse: groupId:artifactId:version=resolved-version
+		// Parse: groupId:artifactId:version=configuration1,configuration2,...
 		parts := strings.SplitN(line, "=", 2)
 		if len(parts) != 2 {
 			continue
@@ -122,6 +128,7 @@ func parseGradleLockfile(path string, verbose bool) ([]inventory.Package, error)
 			Location:   path,
 			Direct:     nil, // Unknown from lockfile alone
 			Deps:       []string{},
+			Scope:      gradleLockfileScope(parts[1]),
 		})
 	}
 
@@ -129,6 +136,33 @@ func parseGradleLockfile(path string, verbose bool) ([]inventory.Package, error)
 		log.Printf("[gradle] gradle.lockfile extracted %d packages from %s", len(pkgs), path)
 	}
 	return pkgs, nil
+}
+
+// gradleLockfileScope classifies a gradle.lockfile dependency as dev-only
+// (scope=excluded) when every configuration that resolved it is test-scoped
+// (starts with "test", e.g. testCompileClasspath, testRuntimeClasspath). A
+// dependency resolved by any production configuration (compileClasspath,
+// runtimeClasspath, api, annotationProcessor, ...) — even alongside test
+// configurations — still ships, so it stays required. An empty or
+// unparseable configuration list leaves scope unknown rather than guessing.
+func gradleLockfileScope(configField string) string {
+	sawConfig := false
+	allTest := true
+	for _, cfg := range strings.Split(configField, ",") {
+		cfg = strings.TrimSpace(cfg)
+		if cfg == "" {
+			continue
+		}
+		sawConfig = true
+		if !strings.HasPrefix(cfg, "test") {
+			allTest = false
+			break
+		}
+	}
+	if sawConfig && allTest {
+		return "excluded"
+	}
+	return ""
 }
 
 // parseGradleBuild parses build.gradle (Groovy DSL) for direct dependencies.
