@@ -72,6 +72,7 @@ heretix-cli collect --image nginx:latest --format cyclonedx --output nginx-sbom.
 > - **`hashes`** per component from lockfile integrity fields (SHA-512 for npm/pnpm, SHA-256 for PyPI)
 > - **`licenses`** per component from lockfiles and installed packages (APK, RPM, Composer, npm node_modules, PyPI site-packages)
 > - **`properties[cdx:direct]`** marking direct vs. indirect dependencies
+> - **`scope: excluded`** marking dev/test-only packages that don't ship in a production build (see the `scope` column below)
 > - **`bom.dependencies`** section with full dependency graph (npm package-lock.json, pnpm-lock.yaml, uv.lock, poetry.lock, composer.lock)
 > - **`metadata.component`** with OCI PURL and image digest for container scans
 
@@ -90,28 +91,28 @@ heretix-cli collect --image nginx:latest --format cyclonedx --output nginx-sbom.
 The table below shows which metadata fields are populated for each lockfile source.
 `✓` = fully supported, `△` = partially supported (see note), `—` = not available in format.
 
-| Lockfile | Packages | `direct` | `deps` | `integrity` | `license` |
-|---|---|---|---|---|---|
-| `package-lock.json` v2/v3 | ✓ | ✓ | ✓ | ✓ | △ ⁴ |
-| `package-lock.json` v1 | ✓ | — | — | — | △ ⁴ |
-| `yarn.lock` | ✓ | — | — | — | △ ⁴ |
-| `pnpm-lock.yaml` v9 | ✓ | ✓ | ✓ | ✓ | △ ⁴ |
-| `pnpm-lock.yaml` v5/v6 | ✓ | ✓ | — | ✓ | △ ⁴ |
-| `requirements.txt` | △ `==` only | ✓ | — | △ with `--hash=` | △ ⁵ |
-| `Pipfile.lock` | ✓ | ✓ | — | ✓ | △ ⁵ |
-| `poetry.lock` | ✓ | — ¹ | ✓ | — | △ ⁵ |
-| `uv.lock` | ✓ | ✓ | ✓ | ✓ | △ ⁵ |
-| `go.mod` (parsed) | △ declared only | ✓ | — | — | △ ¹¹ |
-| `go list` (fallback) | ✓ incl. transitive | — ² | — | — | △ ¹¹ |
-| `composer.lock` | ✓ | △ ³ | ✓ | — | ✓ |
-| `pom.xml` (mvn command) | ✓ incl. transitive | ✓ | ✓ | — | △ ⁶ |
-| `pom.xml` (direct parse) | △ declared only | △ | — | — | △ ⁶ |
-| `gradle.lockfile` | ✓ incl. transitive | — ⁷ | ✓ | — | △ ¹² |
-| `build.gradle(.kts)` (direct parse) | △ declared only | △ | — | — | △ ¹² |
-| `*.jar` / `*.war` / `*.ear` | ✓ ⁸ | — ⁹ | — | ✓ SHA-256 | △ ¹⁰ |
-| RPM | ✓ | — | — | — | ✓ |
-| DPKG | ✓ | — | — | — | △ ¹³ |
-| APK | ✓ | — | — | — | ✓ |
+| Lockfile | Packages | `direct` | `deps` | `integrity` | `license` | `scope` |
+|---|---|---|---|---|---|---|
+| `package-lock.json` v2/v3 | ✓ | ✓ | ✓ | ✓ | △ ⁴ | ✓ ¹⁴ |
+| `package-lock.json` v1 | ✓ | — | — | — | △ ⁴ | — |
+| `yarn.lock` | ✓ | — | — | — | △ ⁴ | — |
+| `pnpm-lock.yaml` v9 | ✓ | ✓ | ✓ | ✓ | △ ⁴ | ✓ ¹⁴ |
+| `pnpm-lock.yaml` v5/v6 | ✓ | ✓ | — | ✓ | △ ⁴ | — |
+| `requirements.txt` | △ `==` only | ✓ | — | △ with `--hash=` | △ ⁵ | — |
+| `Pipfile.lock` | ✓ | ✓ | — | ✓ | △ ⁵ | ✓ ¹⁴ |
+| `poetry.lock` | ✓ | — ¹ | ✓ | — | △ ⁵ | — |
+| `uv.lock` | ✓ | ✓ | ✓ | ✓ | △ ⁵ | — |
+| `go.mod` (parsed) | △ declared only | ✓ | — | — | △ ¹¹ | — |
+| `go list` (fallback) | ✓ incl. transitive | — ² | — | — | △ ¹¹ | — |
+| `composer.lock` | ✓ | △ ³ | ✓ | — | ✓ | ✓ ¹⁴ |
+| `pom.xml` (mvn command) | ✓ incl. transitive | ✓ | ✓ | — | △ ⁶ | ✓ ¹⁵ |
+| `pom.xml` (direct parse) | △ declared only | △ | — | — | △ ⁶ | ✓ ¹⁵ |
+| `gradle.lockfile` | ✓ incl. transitive | — ⁷ | ✓ | — | △ ¹² | ✓ ¹⁴ |
+| `build.gradle(.kts)` (direct parse) | △ declared only | △ | — | — | △ ¹² | ✓ ¹⁵ |
+| `*.jar` / `*.war` / `*.ear` | ✓ ⁸ | — ⁹ | — | ✓ SHA-256 | △ ¹⁰ | — |
+| RPM | ✓ | — | — | — | ✓ | — |
+| DPKG | ✓ | — | — | — | △ ¹³ | — |
+| APK | ✓ | — | — | — | ✓ | — |
 
 ¹ `direct` for poetry.lock requires reading `pyproject.toml` — not implemented.  
 ² When the `go` binary is available `go list` is preferred, which provides transitive dependencies but loses `direct` information.  
@@ -125,7 +126,9 @@ The table below shows which metadata fields are populated for each lockfile sour
 ¹⁰ `license` is read from the `pom.xml` embedded alongside `pom.properties` — present only when the JAR was built by Maven.  
 ¹¹ `license` for Go is read from the module's `LICENSE`/`LICENSE.md`/`LICENSE.txt`/`LICENCE`/`COPYING` file in `GOMODCACHE`, classified by matching its opening lines against known license headers (MIT, Apache-2.0, BSD-2/3-Clause, MPL-2.0, GPL/LGPL-3.0, ISC, Unlicense). Requires a prior local build — the module cache lives outside any container image, so this only helps on a live host scan.  
 ¹² `license` for Gradle is read from the dependency's POM in the local Gradle module cache (`~/.gradle/caches/modules-2/files-2.1` by default, or `$GRADLE_USER_HOME`) — same live-host-only caveat as Go.  
-¹³ `license` for DPKG is read from `/usr/share/doc/{package}/copyright` (the DEP-5 machine-readable format's `License:` field) — present for most packages, but not guaranteed since some upstreams ship free-form copyright text instead.
+¹³ `license` for DPKG is read from `/usr/share/doc/{package}/copyright` (the DEP-5 machine-readable format's `License:` field) — present for most packages, but not guaranteed since some upstreams ship free-form copyright text instead.  
+¹⁴ `scope: excluded` marks a package resolved only via devDependencies / `packages-dev` / `develop` / test-only Gradle configurations — present in the lockfile's dependency graph but not shipped in a production build (e.g. `pnpm prune --prod`). Where marked `—`, dev/test-only packages are reported the same as production ones with no distinguishing tag.  
+¹⁵ Maven and Gradle's build-file parsing paths exclude `scope=test` (Maven) / test-only Gradle configurations outright rather than tagging them, so no dev-only package reaches the output at all — filtering instead of tagging, but the same practical result.
 
 `deps` PURLs, `integrity` hashes, and `license` information are carried through to the CycloneDX `bom.dependencies`, `components[].hashes`, and `components[].licenses` fields respectively.
 

@@ -72,6 +72,7 @@ heretix-cli collect --image nginx:latest --format cyclonedx --output nginx-sbom.
 > - lockfile の integrity ハッシュを **`hashes`** に格納（npm/pnpm は SHA-512、PyPI は SHA-256）
 > - **`licenses`** をコンポーネントに付与（APK, RPM, Composer, npm node_modules, PyPI site-packages から取得）
 > - direct/indirect を示す **`properties[cdx:direct]`** プロパティ
+> - 本番ビルドに含まれない dev/test 専用パッケージを示す **`scope: excluded`**（対応状況は下表の `scope` 列を参照）
 > - **`bom.dependencies`** セクションによる依存グラフ（npm package-lock.json, pnpm-lock.yaml, uv.lock, poetry.lock, composer.lock）
 > - コンテナスキャン時は **`metadata.component`** に OCI PURL とイメージ digest を記録
 
@@ -90,28 +91,28 @@ heretix-cli collect --image nginx:latest --format cyclonedx --output nginx-sbom.
 各 lockfile から取得できるメタデータフィールドの対応表。
 `✓`=完全対応、`△`=部分対応（注記参照）、`—`=フォーマット上取得不可。
 
-| lockfile | パッケージ収集 | `direct` | `deps` | `integrity` | `license` |
-|---|---|---|---|---|---|
-| `package-lock.json` v2/v3 | ✓ | ✓ | ✓ | ✓ | △ ⁴ |
-| `package-lock.json` v1 | ✓ | — | — | — | △ ⁴ |
-| `yarn.lock` | ✓ | — | — | — | △ ⁴ |
-| `pnpm-lock.yaml` v9 | ✓ | ✓ | ✓ | ✓ | △ ⁴ |
-| `pnpm-lock.yaml` v5/v6 | ✓ | ✓ | — | ✓ | △ ⁴ |
-| `requirements.txt` | △ `==` のみ | ✓ | — | △ `--hash=` 付きのみ | △ ⁵ |
-| `Pipfile.lock` | ✓ | ✓ | — | ✓ | △ ⁵ |
-| `poetry.lock` | ✓ | — ¹ | ✓ | — | △ ⁵ |
-| `uv.lock` | ✓ | ✓ | ✓ | ✓ | △ ⁵ |
-| `go.mod`（直接解析） | △ 宣言済みのみ | ✓ | — | — | △ ¹¹ |
-| `go list`（フォールバック） | ✓ transitive 含む | — ² | — | — | △ ¹¹ |
-| `composer.lock` | ✓ | △ ³ | ✓ | — | ✓ |
-| `pom.xml`（mvn コマンド） | ✓ transitive 含む | ✓ | ✓ | — | △ ⁶ |
-| `pom.xml`（直接解析） | △ 宣言済みのみ | △ | — | — | △ ⁶ |
-| `gradle.lockfile` | ✓ transitive 含む | — ⁷ | ✓ | — | △ ¹² |
-| `build.gradle(.kts)`（直接解析） | △ 宣言済みのみ | △ | — | — | △ ¹² |
-| `*.jar` / `*.war` / `*.ear` | ✓ ⁸ | — ⁹ | — | ✓ SHA-256 | △ ¹⁰ |
-| RPM | ✓ | — | — | — | ✓ |
-| DPKG | ✓ | — | — | — | △ ¹³ |
-| APK | ✓ | — | — | — | ✓ |
+| lockfile | パッケージ収集 | `direct` | `deps` | `integrity` | `license` | `scope` |
+|---|---|---|---|---|---|---|
+| `package-lock.json` v2/v3 | ✓ | ✓ | ✓ | ✓ | △ ⁴ | ✓ ¹⁴ |
+| `package-lock.json` v1 | ✓ | — | — | — | △ ⁴ | — |
+| `yarn.lock` | ✓ | — | — | — | △ ⁴ | — |
+| `pnpm-lock.yaml` v9 | ✓ | ✓ | ✓ | ✓ | △ ⁴ | ✓ ¹⁴ |
+| `pnpm-lock.yaml` v5/v6 | ✓ | ✓ | — | ✓ | △ ⁴ | — |
+| `requirements.txt` | △ `==` のみ | ✓ | — | △ `--hash=` 付きのみ | △ ⁵ | — |
+| `Pipfile.lock` | ✓ | ✓ | — | ✓ | △ ⁵ | ✓ ¹⁴ |
+| `poetry.lock` | ✓ | — ¹ | ✓ | — | △ ⁵ | — |
+| `uv.lock` | ✓ | ✓ | ✓ | ✓ | △ ⁵ | — |
+| `go.mod`（直接解析） | △ 宣言済みのみ | ✓ | — | — | △ ¹¹ | — |
+| `go list`（フォールバック） | ✓ transitive 含む | — ² | — | — | △ ¹¹ | — |
+| `composer.lock` | ✓ | △ ³ | ✓ | — | ✓ | ✓ ¹⁴ |
+| `pom.xml`（mvn コマンド） | ✓ transitive 含む | ✓ | ✓ | — | △ ⁶ | ✓ ¹⁵ |
+| `pom.xml`（直接解析） | △ 宣言済みのみ | △ | — | — | △ ⁶ | ✓ ¹⁵ |
+| `gradle.lockfile` | ✓ transitive 含む | — ⁷ | ✓ | — | △ ¹² | ✓ ¹⁴ |
+| `build.gradle(.kts)`（直接解析） | △ 宣言済みのみ | △ | — | — | △ ¹² | ✓ ¹⁵ |
+| `*.jar` / `*.war` / `*.ear` | ✓ ⁸ | — ⁹ | — | ✓ SHA-256 | △ ¹⁰ | — |
+| RPM | ✓ | — | — | — | ✓ | — |
+| DPKG | ✓ | — | — | — | △ ¹³ | — |
+| APK | ✓ | — | — | — | ✓ | — |
 
 ¹ poetry.lock の `direct` 判定は `pyproject.toml` の読み取りが必要なため未実装。  
 ² `go` コマンドが利用可能な場合は `go list` を優先するため transitive deps が取れるが、`direct` 情報は失われる。  
@@ -125,7 +126,9 @@ heretix-cli collect --image nginx:latest --format cyclonedx --output nginx-sbom.
 ¹⁰ `license` は `pom.properties` と同じディレクトリに埋め込まれた `pom.xml` から取得する（Maven でビルドされた JAR のみ）。  
 ¹¹ Go の `license` は `GOMODCACHE` 内のモジュールの `LICENSE`/`LICENSE.md`/`LICENSE.txt`/`LICENCE`/`COPYING` ファイルから取得し、冒頭部分を既知のライセンス見出し（MIT, Apache-2.0, BSD-2/3-Clause, MPL-2.0, GPL/LGPL-3.0, ISC, Unlicense）と照合して判定する。事前にローカルビルドが必要 — モジュールキャッシュはコンテナイメージの外にあるため、ライブホストスキャンでのみ有効。  
 ¹² Gradle の `license` はローカルの Gradle モジュールキャッシュ（デフォルト `~/.gradle/caches/modules-2/files-2.1`、または `$GRADLE_USER_HOME`）内の依存先 POM から取得する — Go と同じくライブホスト限定。  
-¹³ DPKG の `license` は `/usr/share/doc/{package}/copyright`（DEP-5 machine-readable format の `License:` フィールド）から取得する — 多くのパッケージで存在するが、自由形式の copyright ファイルを使う upstream もあるため保証はない。
+¹³ DPKG の `license` は `/usr/share/doc/{package}/copyright`（DEP-5 machine-readable format の `License:` フィールド）から取得する — 多くのパッケージで存在するが、自由形式の copyright ファイルを使う upstream もあるため保証はない。  
+¹⁴ `scope: excluded` は、devDependencies / `packages-dev` / `develop` / test専用の Gradle configuration からのみ解決されるパッケージ ― lockfile の依存グラフには存在するが、本番ビルド（`pnpm prune --prod` など）には含まれない ― を示す。`—` の場合は、dev/test専用パッケージも本番パッケージと同様、区別なく報告される。  
+¹⁵ Maven と Gradle のビルドファイル直接解析パスは、`scope=test`（Maven）/ test専用 configuration（Gradle）の依存をタグ付けせず、そもそも出力から除外する。タグ付けではなくフィルタリングによる対応だが、実質的な結果は同じ。
 
 `deps` の PURL、`integrity` ハッシュ、および `license` 情報は、CycloneDX 出力の `bom.dependencies`、`components[].hashes`、`components[].licenses` にそれぞれ反映される。
 
