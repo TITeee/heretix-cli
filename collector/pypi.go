@@ -258,6 +258,8 @@ func parsePipfileLock(path string, verbose bool) ([]inventory.Package, error) {
 			Integrity:  pipfileIntegrity(info),
 		})
 	}
+	// The "develop" section is Pipenv's devDependencies equivalent: packages
+	// installed by `pipenv install --dev` but not part of a production install.
 	for name, info := range lockfile.Develop {
 		version := strings.TrimPrefix(info.Version, "==")
 		pkgs = append(pkgs, inventory.Package{
@@ -269,6 +271,7 @@ func parsePipfileLock(path string, verbose bool) ([]inventory.Package, error) {
 			Location:   path,
 			Direct:     inventory.BoolPtr(true),
 			Integrity:  pipfileIntegrity(info),
+			Scope:      "excluded",
 		})
 	}
 
