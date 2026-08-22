@@ -175,6 +175,11 @@ func parsePackageLock(path string, verbose bool) ([]inventory.Package, error) {
 				}
 			}
 
+			scope := ""
+			if entry.Dev {
+				scope = "excluded"
+			}
+
 			pkgs = append(pkgs, inventory.Package{
 				Name:       name,
 				Version:    entry.Version,
@@ -186,6 +191,7 @@ func parsePackageLock(path string, verbose bool) ([]inventory.Package, error) {
 				Deps:       deps,
 				Integrity:  entry.Integrity,
 				License:    readNodeModuleLicense(lockfileDir, name),
+				Scope:      scope,
 			})
 		}
 	} else if len(lockfile.Dependencies) > 0 {
@@ -229,6 +235,7 @@ type packageLockEntry struct {
 	Requires        map[string]string `json:"requires"`
 	Dependencies    map[string]string `json:"dependencies"`
 	DevDependencies map[string]string `json:"devDependencies"`
+	Dev             bool              `json:"dev"` // true when only reachable via devDependencies (npm computes this itself)
 }
 
 type packageLockDep struct {
@@ -321,8 +328,14 @@ func parsePnpmLock(path string, verbose bool) ([]inventory.Package, error) {
 		return nil, err
 	}
 
-	directSet := parsePnpmImporters(string(data))
+	directSet, prodRootKeys := parsePnpmImporters(string(data))
 	snapshotDeps := parsePnpmSnapshots(string(data))
+
+	// Only trust the reachability computation when we actually found prod roots;
+	// an empty result means the lockfile predates "importers:" (v5/v6) or genuinely
+	// declares no prod deps, and we must not mark every package "excluded" in that case.
+	knowsProdScope := len(prodRootKeys) > 0
+	prodReachable := computeProdReachable(prodRootKeys, snapshotDeps)
 
 	// State machine: track current package entry to capture integrity alongside name/version.
 	type pnpmEntry struct {
@@ -337,8 +350,13 @@ func parsePnpmLock(path string, verbose bool) ([]inventory.Package, error) {
 	lockfileDir := filepath.Dir(path)
 	flushPnpm := func() {
 		if cur.name != "" && cur.version != "" {
+			key := cur.name + "@" + cur.version
 			isDirect := directSet[cur.name]
-			deps := snapshotDeps[cur.name+"@"+cur.version]
+			deps := snapshotDeps[key]
+			scope := ""
+			if knowsProdScope && !prodReachable[key] {
+				scope = "excluded"
+			}
 			pkgs = append(pkgs, inventory.Package{
 				Name:       cur.name,
 				Version:    cur.version,
@@ -350,6 +368,7 @@ func parsePnpmLock(path string, verbose bool) ([]inventory.Package, error) {
 				Integrity:  cur.integrity,
 				Deps:       deps,
 				License:    readNodeModuleLicense(lockfileDir, cur.name),
+				Scope:      scope,
 			})
 		}
 		cur = pnpmEntry{}
@@ -512,14 +531,23 @@ func parsePnpmSnapshots(content string) map[string][]string {
 	return depsMap
 }
 
-// parsePnpmImporters extracts direct dependency names from the "importers:" section
+// parsePnpmImporters extracts direct dependency info from the "importers:" section
 // of a pnpm-lock.yaml. Only the root importer (".") is considered.
-// Returns a set of package names that are direct dependencies.
-func parsePnpmImporters(content string) map[string]bool {
-	directSet := make(map[string]bool)
+//
+// Returns:
+//   - directSet: names of all direct dependencies (dependencies: and devDependencies:
+//     combined), used to populate Package.Direct.
+//   - prodRootKeys: "name@version" keys (peer-dep suffix stripped) for dependencies:
+//     entries only — the roots used to compute which packages are reachable from a
+//     production-only install (see computeProdReachable). Empty when the lockfile has
+//     no "importers:" section (older v5/v6 format) or declares no prod dependencies;
+//     callers must treat that as "unknown" rather than "everything is dev-only".
+func parsePnpmImporters(content string) (directSet map[string]bool, prodRootKeys []string) {
+	directSet = make(map[string]bool)
 	inImporters := false
 	inRootImporter := false
-	inDepSection := false // inside dependencies: or devDependencies:
+	section := ""     // "" | "dependencies" | "devDependencies"
+	pendingName := "" // name of the dependency whose "version:" line we're waiting for
 
 	scanner := bufio.NewScanner(strings.NewReader(content))
 	for scanner.Scan() {
@@ -530,7 +558,8 @@ func parsePnpmImporters(content string) map[string]bool {
 			if t := strings.TrimSpace(line); t != "" {
 				inImporters = t == "importers:"
 				inRootImporter = false
-				inDepSection = false
+				section = ""
+				pendingName = ""
 			}
 			continue
 		}
@@ -542,7 +571,8 @@ func parsePnpmImporters(content string) map[string]bool {
 		if strings.HasPrefix(line, "  ") && !strings.HasPrefix(line, "   ") {
 			t := strings.TrimSpace(line)
 			inRootImporter = t == ".:"
-			inDepSection = false
+			section = ""
+			pendingName = ""
 			continue
 		}
 		if !inRootImporter {
@@ -552,25 +582,78 @@ func parsePnpmImporters(content string) map[string]bool {
 		// 4-space indent: section inside root importer
 		if strings.HasPrefix(line, "    ") && !strings.HasPrefix(line, "     ") {
 			t := strings.TrimSpace(line)
-			inDepSection = t == "dependencies:" || t == "devDependencies:"
+			if t == "dependencies:" || t == "devDependencies:" {
+				section = strings.TrimSuffix(t, ":")
+			} else {
+				section = ""
+			}
+			pendingName = ""
 			continue
 		}
-		if !inDepSection {
+		if section == "" {
 			continue
 		}
 
-		// 6-space indent: individual dependency entry
+		// 6-space indent: individual dependency entry, e.g. "react:"
 		if strings.HasPrefix(line, "      ") && !strings.HasPrefix(line, "       ") {
 			t := strings.TrimSpace(line)
-			// Line looks like "react:" — the name is everything before the colon
 			name := strings.TrimSuffix(t, ":")
 			name = strings.Trim(name, "'\"")
+			pendingName = name
 			if name != "" {
 				directSet[name] = true
 			}
+			continue
+		}
+
+		// 8-space indent: "specifier:"/"version:" lines under a dependency entry
+		if pendingName != "" && strings.HasPrefix(line, "        ") && !strings.HasPrefix(line, "         ") {
+			t := strings.TrimSpace(line)
+			if version, ok := strings.CutPrefix(t, "version: "); ok && section == "dependencies" {
+				version = strings.Trim(version, "'\"")
+				// Strip peer-dep suffix: "4.1.10(@types/node@25.0.8)" → "4.1.10"
+				if idx := strings.Index(version, "("); idx > 0 {
+					version = version[:idx]
+				}
+				prodRootKeys = append(prodRootKeys, pendingName+"@"+version)
+			}
 		}
 	}
-	return directSet
+	return directSet, prodRootKeys
+}
+
+// purlToSnapshotKey converts a dependency PURL (as produced by npmDepPURL) back into
+// the "name@version" form used as keys in the snapshots dependency graph.
+// "pkg:npm/foo@1.2.3" → "foo@1.2.3"; "pkg:npm/%40scope/foo@1.2.3" → "@scope/foo@1.2.3"
+func purlToSnapshotKey(purl string) string {
+	s := strings.TrimPrefix(purl, "pkg:npm/")
+	return strings.ReplaceAll(s, "%40", "@")
+}
+
+// computeProdReachable performs a BFS over the snapshots dependency graph starting
+// from prodRootKeys, returning the full set of packages reachable from a
+// production-only (non-dev) install — i.e. what would survive `pnpm prune --prod`.
+func computeProdReachable(prodRootKeys []string, snapshotDeps map[string][]string) map[string]bool {
+	reachable := make(map[string]bool, len(prodRootKeys))
+	queue := make([]string, 0, len(prodRootKeys))
+	for _, k := range prodRootKeys {
+		if !reachable[k] {
+			reachable[k] = true
+			queue = append(queue, k)
+		}
+	}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, depPURL := range snapshotDeps[cur] {
+			depKey := purlToSnapshotKey(depPURL)
+			if !reachable[depKey] {
+				reachable[depKey] = true
+				queue = append(queue, depKey)
+			}
+		}
+	}
+	return reachable
 }
 
 // npmGlobalFallback uses npm list -g --json to collect global packages.

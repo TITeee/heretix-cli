@@ -26,6 +26,7 @@ type Package struct {
 	Deps       []string `json:"deps,omitempty"`      // PURLs of this package's direct dependencies
 	Integrity  string   `json:"integrity,omitempty"` // raw integrity string from lockfile (SRI or sha256:hex)
 	License    string   `json:"license,omitempty"`   // SPDX expression (e.g. "MIT", "Apache-2.0 OR MIT")
+	Scope      string   `json:"scope,omitempty"`     // ""=unknown/required, "excluded"=dev-only (unreachable in a prod build), mirrors CycloneDX component.scope
 }
 
 // BoolPtr returns a pointer to b, for use with Package.Direct.
@@ -116,6 +117,10 @@ func mergePkg(a, b Package) Package {
 	// Location: prefer non-empty
 	if a.Location == "" {
 		a.Location = b.Location
+	}
+	// Scope: prefer non-empty ("excluded" wins over unknown)
+	if a.Scope == "" {
+		a.Scope = b.Scope
 	}
 	return a
 }

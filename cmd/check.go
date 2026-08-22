@@ -8,10 +8,10 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/TITeee/heretix-cli/checker"
 	"github.com/TITeee/heretix-cli/inventory"
 	"github.com/TITeee/heretix-cli/report"
+	"github.com/spf13/cobra"
 )
 
 var checkCmd = &cobra.Command{

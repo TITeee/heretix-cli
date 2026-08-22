@@ -7,10 +7,10 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/spf13/cobra"
 	"github.com/TITeee/heretix-cli/container"
 	"github.com/TITeee/heretix-cli/detector"
 	"github.com/TITeee/heretix-cli/report"
+	"github.com/spf13/cobra"
 )
 
 var detectCmd = &cobra.Command{

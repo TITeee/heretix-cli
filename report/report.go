@@ -225,11 +225,11 @@ func PrintFindings(w io.Writer, findings []detector.Finding) {
 		strings.Repeat("─", 20))
 
 	typePrefixes := map[string]string{
-		"glassworm":        "G",
-		"dep-confusion":    "D",
-		"malicious-install": "M",
-		"cicd-poisoning":   "C",
-		"hardcoded-secrets": "S",
+		"glassworm":          "G",
+		"dep-confusion":      "D",
+		"malicious-install":  "M",
+		"cicd-poisoning":     "C",
+		"hardcoded-secrets":  "S",
 		"lockfile-integrity": "L",
 	}
 	typeCounts := make(map[string]int)

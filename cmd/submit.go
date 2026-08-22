@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/spf13/cobra"
 	"github.com/TITeee/heretix-cli/depgraph"
 	"github.com/TITeee/heretix-cli/inventory"
+	"github.com/spf13/cobra"
 )
 
 var submitCmd = &cobra.Command{
@@ -26,12 +26,12 @@ Environment variables (used when the corresponding flag is not set):
 }
 
 var (
-	submitToken       string
-	submitRepo        string
-	submitSHA         string
-	submitRef         string
-	submitCorrelator  string
-	submitJobID       string
+	submitToken      string
+	submitRepo       string
+	submitSHA        string
+	submitRef        string
+	submitCorrelator string
+	submitJobID      string
 )
 
 func init() {

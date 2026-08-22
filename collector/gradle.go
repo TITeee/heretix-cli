@@ -213,8 +213,8 @@ func gradleDependenciesJSON(buildDir string, verbose bool) ([]inventory.Package,
 	}
 
 	type GradleDep struct {
-		Name     string       `json:"name"`
-		Children []GradleDep  `json:"children,omitempty"`
+		Name     string      `json:"name"`
+		Children []GradleDep `json:"children,omitempty"`
 	}
 
 	type GradleConfig struct {

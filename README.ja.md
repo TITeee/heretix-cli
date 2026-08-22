@@ -2,7 +2,7 @@
 
 [English README](README.md)
 
-Linux/Windows サーバや Docker コンテナイメージの OS パッケージ（RPM, DPKG, APK）および OSS エコシステム（PyPI, npm/yarn/pnpm, Go modules, Composer, Maven, Gradle, JAR/WAR アーカイブ）をスキャンし、脆弱性 API に問い合わせて既知の脆弱性を検出する CLI ツール。API なしで動作するローカルセキュリティ検知として、**GlassWorm**（不可視文字によるマルウェア混入）、**Dependency Confusion（Shai-hulud）**、**Malicious Install Scripts**（悪意ある install スクリプト）、**CI/CD Pipeline Poisoning**（パイプライン汚染）、**Lock File Integrity**（ロックファイル整合性）の検出に対応。
+Linux/Windows サーバや Docker コンテナイメージの OS パッケージ（RPM, DPKG, APK）および OSS エコシステム（PyPI, npm/yarn/pnpm, Go modules, Composer, Maven, Gradle, JAR/WAR アーカイブ）をスキャンし、脆弱性 API に問い合わせて既知の脆弱性を検出する CLI ツール。API なしで動作するローカルセキュリティ検知として、**GlassWorm**（不可視文字によるマルウェア混入）、**Dependency Confusion**（パッケージ置換攻撃）、**Malicious Install Scripts**（悪意ある install スクリプト。Shai-Hulud ワームのシグネチャを含む）、**CI/CD Pipeline Poisoning**（パイプライン汚染）、**Lock File Integrity**（ロックファイル整合性）の検出に対応。
 
 ## 対応エコシステム
 
@@ -266,7 +266,7 @@ heretix-cli detect --image myapp:latest --dockerfile ./Dockerfile
 
 > `testdata` は全検知器でスキップします。Go ツールチェーンと同様の扱いで、中身はビルドも実行もされないフィクスチャであり、セキュリティツールでは意図的に悪意ある検体を配置するためです。
 
-### Dependency Confusion 検知（Shai-hulud）
+### Dependency Confusion 検知
 
 内部パッケージ名を公開レジストリに登録し、意図しない公開版がインストールされる攻撃（依存関係混乱攻撃）への脆弱な設定を検出します。
 
@@ -287,7 +287,7 @@ heretix-cli detect --image myapp:latest --dockerfile ./Dockerfile
 
 `--check-registry` は `https://registry.npmjs.org/-/v1/search?text=scope:<name>&size=1` で未知スコープを検索します。パッケージが1件以上あれば公開スコープとして除外します。1回のスキャン中はキャッシュされます。
 
-### Malicious Install Scripts 検知
+### Malicious Install Scripts 検知（Shai-Hulud）
 
 npm ライフサイクルフック（`preinstall`、`postinstall`、`prepare` 等）や Python `setup.py` 内の危険なコマンドを検出します。パッケージインストール時に自動実行されるため、サプライチェーン攻撃の主要な侵入経路です。
 

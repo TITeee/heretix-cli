@@ -168,25 +168,25 @@ var wellKnownPublicScopes = map[string]bool{
 	"@rushstack":         true, // Microsoft Rush Stack
 
 	// ── Frameworks ────────────────────────────────────────────────────────────
-	"@angular":      true,
-	"@vue":          true,
-	"@react":        true,
-	"@next":         true, // Next.js (Vercel)
-	"@nuxt":         true, // Nuxt.js
-	"@sveltejs":     true, // SvelteKit / Svelte official
-	"@solidjs":      true, // SolidJS
-	"@astrojs":      true, // Astro integrations
-	"@remix-run":    true, // Remix
-	"@preact":       true, // Preact
-	"@hono":         true, // Hono web framework
-	"@lit":          true, // Lit web components
-	"@open-wc":      true, // Open Web Components
-	"@fastify":      true,
-	"@nestjs":       true,
-	"@hapi":         true,
-	"@koa":          true,
-	"@adonisjs":     true, // AdonisJS
-	"@poppinss":     true, // AdonisJS utilities
+	"@angular":   true,
+	"@vue":       true,
+	"@react":     true,
+	"@next":      true, // Next.js (Vercel)
+	"@nuxt":      true, // Nuxt.js
+	"@sveltejs":  true, // SvelteKit / Svelte official
+	"@solidjs":   true, // SolidJS
+	"@astrojs":   true, // Astro integrations
+	"@remix-run": true, // Remix
+	"@preact":    true, // Preact
+	"@hono":      true, // Hono web framework
+	"@lit":       true, // Lit web components
+	"@open-wc":   true, // Open Web Components
+	"@fastify":   true,
+	"@nestjs":    true,
+	"@hapi":      true,
+	"@koa":       true,
+	"@adonisjs":  true, // AdonisJS
+	"@poppinss":  true, // AdonisJS utilities
 
 	// ── Mobile / cross-platform ───────────────────────────────────────────────
 	"@ionic":                  true, // Ionic Framework
@@ -196,34 +196,34 @@ var wellKnownPublicScopes = map[string]bool{
 	"@react-native-community": true, // React Native community packages
 
 	// ── UI component libraries ────────────────────────────────────────────────
-	"@mui":          true, // Material UI
-	"@base-ui":      true, // MUI Base UI
-	"@chakra-ui":    true,
-	"@radix-ui":     true,
-	"@headlessui":   true, // Headless UI (Tailwind Labs)
-	"@heroicons":    true, // Heroicons (Tailwind Labs)
-	"@tailwindcss":  true,
-	"@shadcn":       true, // shadcn/ui
-	"@ant-design":   true, // Ant Design
-	"@mantine":      true, // Mantine UI
-	"@fluentui":     true, // Microsoft Fluent UI
-	"@shopify":      true, // Shopify Polaris
-	"@carbon":       true, // IBM Carbon Design
-	"@patternfly":   true, // Red Hat PatternFly
-	"@ark-ui":       true, // Ark UI (headless)
-	"@zag-js":       true, // Zag.js state machines for UI
-	"@kobalte":      true, // Kobalte UI (Solid)
-	"@corvu":        true, // Corvu UI (Solid)
-	"@saas-ui":      true, // SaaS UI
-	"@dnd-kit":      true, // dnd kit drag-and-drop
-	"@floating-ui":  true,
-	"@emotion":      true,
+	"@mui":         true, // Material UI
+	"@base-ui":     true, // MUI Base UI
+	"@chakra-ui":   true,
+	"@radix-ui":    true,
+	"@headlessui":  true, // Headless UI (Tailwind Labs)
+	"@heroicons":   true, // Heroicons (Tailwind Labs)
+	"@tailwindcss": true,
+	"@shadcn":      true, // shadcn/ui
+	"@ant-design":  true, // Ant Design
+	"@mantine":     true, // Mantine UI
+	"@fluentui":    true, // Microsoft Fluent UI
+	"@shopify":     true, // Shopify Polaris
+	"@carbon":      true, // IBM Carbon Design
+	"@patternfly":  true, // Red Hat PatternFly
+	"@ark-ui":      true, // Ark UI (headless)
+	"@zag-js":      true, // Zag.js state machines for UI
+	"@kobalte":     true, // Kobalte UI (Solid)
+	"@corvu":       true, // Corvu UI (Solid)
+	"@saas-ui":     true, // SaaS UI
+	"@dnd-kit":     true, // dnd kit drag-and-drop
+	"@floating-ui": true,
+	"@emotion":     true,
 
 	// ── CSS / styling ─────────────────────────────────────────────────────────
-	"@unocss":           true, // UnoCSS
-	"@vanilla-extract":  true, // Vanilla Extract CSS
-	"@pandacss":         true, // Panda CSS
-	"@griffel":          true, // Griffel CSS-in-JS (Microsoft)
+	"@unocss":          true, // UnoCSS
+	"@vanilla-extract": true, // Vanilla Extract CSS
+	"@pandacss":        true, // Panda CSS
+	"@griffel":         true, // Griffel CSS-in-JS (Microsoft)
 
 	// ── Editors ───────────────────────────────────────────────────────────────
 	"@codemirror":    true, // CodeMirror 6
@@ -234,19 +234,19 @@ var wellKnownPublicScopes = map[string]bool{
 	"@uiw":           true, // CodeMirror React wrapper + UIW components
 
 	// ── State management ──────────────────────────────────────────────────────
-	"@reduxjs":    true, // Redux Toolkit
-	"@xstate":     true, // XState state machines
-	"@statelyai":  true, // Stately AI (XState ecosystem)
-	"@legendapp":  true, // Legend State
-	"@effect":     true, // Effect.ts
-	"@vueuse":     true, // VueUse utilities
-	"@pinia":      true, // Pinia (Vue store)
+	"@reduxjs":   true, // Redux Toolkit
+	"@xstate":    true, // XState state machines
+	"@statelyai": true, // Stately AI (XState ecosystem)
+	"@legendapp": true, // Legend State
+	"@effect":    true, // Effect.ts
+	"@vueuse":    true, // VueUse utilities
+	"@pinia":     true, // Pinia (Vue store)
 
 	// ── Data fetching / GraphQL ───────────────────────────────────────────────
-	"@apollo":         true,
-	"@graphql-tools":  true,
-	"@urql":           true, // urql GraphQL client
-	"@trpc":           true,
+	"@apollo":        true,
+	"@graphql-tools": true,
+	"@urql":          true, // urql GraphQL client
+	"@trpc":          true,
 
 	// ── Database / ORM ────────────────────────────────────────────────────────
 	"@prisma":     true,
@@ -259,38 +259,38 @@ var wellKnownPublicScopes = map[string]bool{
 	"@upstash":    true, // Upstash Redis / Kafka
 
 	// ── BaaS / cloud services ─────────────────────────────────────────────────
-	"@supabase":    true, // Supabase
-	"@firebase":    true, // Firebase modular SDK (Google)
-	"@aws-sdk":     true, // AWS SDK v3
-	"@smithy":      true, // AWS Smithy (AWS SDK v3 internals)
-	"@aws-amplify": true, // AWS Amplify
+	"@supabase":     true, // Supabase
+	"@firebase":     true, // Firebase modular SDK (Google)
+	"@aws-sdk":      true, // AWS SDK v3
+	"@smithy":       true, // AWS Smithy (AWS SDK v3 internals)
+	"@aws-amplify":  true, // AWS Amplify
 	"@google-cloud": true,
-	"@azure":       true,
-	"@cloudflare":  true, // Cloudflare Workers SDK
-	"@netlify":     true, // Netlify Edge Functions
-	"@vercel":      true, // Vercel platform packages
+	"@azure":        true,
+	"@cloudflare":   true, // Cloudflare Workers SDK
+	"@netlify":      true, // Netlify Edge Functions
+	"@vercel":       true, // Vercel platform packages
 
 	// ── Auth ──────────────────────────────────────────────────────────────────
-	"@auth":              true, // Auth.js
-	"@auth0":             true, // Auth0
-	"@clerk":             true, // Clerk authentication
-	"@ory":               true, // Ory (Kratos / Hydra)
-	"@panva":             true, // JOSE / openid-client
-	"@simplewebauthn":    true, // SimpleWebAuthn
+	"@auth":           true, // Auth.js
+	"@auth0":          true, // Auth0
+	"@clerk":          true, // Clerk authentication
+	"@ory":            true, // Ory (Kratos / Hydra)
+	"@panva":          true, // JOSE / openid-client
+	"@simplewebauthn": true, // SimpleWebAuthn
 
 	// ── Payments / commerce ───────────────────────────────────────────────────
 	"@stripe": true, // Stripe JS
 
 	// ── Search / analytics ────────────────────────────────────────────────────
-	"@algolia":        true, // Algolia search
-	"@sentry":         true,
-	"@opentelemetry":  true, // OpenTelemetry (CNCF)
-	"@datadog":        true, // Datadog
+	"@algolia":       true, // Algolia search
+	"@sentry":        true,
+	"@opentelemetry": true, // OpenTelemetry (CNCF)
+	"@datadog":       true, // Datadog
 
 	// ── Notifications / messaging ─────────────────────────────────────────────
-	"@novu":       true, // Novu notification infrastructure
-	"@resend":     true, // Resend email API
-	"@socket.io":  true, // Socket.io
+	"@novu":      true, // Novu notification infrastructure
+	"@resend":    true, // Resend email API
+	"@socket.io": true, // Socket.io
 
 	// ── API / protocol ────────────────────────────────────────────────────────
 	"@grpc":       true, // gRPC JS
@@ -300,19 +300,19 @@ var wellKnownPublicScopes = map[string]bool{
 	"@octokit":    true,
 
 	// ── Map / geospatial ──────────────────────────────────────────────────────
-	"@mapbox":      true, // Mapbox GL JS
-	"@maplibre":    true, // MapLibre GL JS
-	"@turf":        true, // Turf.js geospatial
-	"@googlemaps":  true, // Google Maps JS API
+	"@mapbox":     true, // Mapbox GL JS
+	"@maplibre":   true, // MapLibre GL JS
+	"@turf":       true, // Turf.js geospatial
+	"@googlemaps": true, // Google Maps JS API
 
 	// ── Charts / visualization / 3D ───────────────────────────────────────────
-	"@nivo":           true, // Nivo charts
-	"@react-three":    true, // React Three Fiber
-	"@pmndrs":         true, // Poimandres collective (R3F ecosystem)
-	"@observablehq":   true, // Observable Plot
-	"@xyflow":         true, // React Flow (node-based diagram editor)
-	"@dagrejs":        true, // dagre directed-graph layout
-	"@mermaid-js":     true,
+	"@nivo":         true, // Nivo charts
+	"@react-three":  true, // React Three Fiber
+	"@pmndrs":       true, // Poimandres collective (R3F ecosystem)
+	"@observablehq": true, // Observable Plot
+	"@xyflow":       true, // React Flow (node-based diagram editor)
+	"@dagrejs":      true, // dagre directed-graph layout
+	"@mermaid-js":   true,
 
 	// ── CLI tooling ───────────────────────────────────────────────────────────
 	"@clack":    true, // Clack CLI prompts
@@ -320,22 +320,22 @@ var wellKnownPublicScopes = map[string]bool{
 	"@oclif":    true, // oclif CLI framework
 
 	// ── Misc well-known OSS authors / infrastructure packages ─────────────────
-	"@img":              true, // sharp image processing
-	"@jridgewell":       true, // source map tooling
-	"@humanwhocodes":    true, // ESLint ecosystem
-	"@humanfs":          true,
-	"@nodelib":          true,
-	"@pinojs":           true,
-	"@pkgjs":            true, // npm-owned packages
-	"@isaacs":           true, // Isaac Schlueter (npm)
-	"@sindresorhus":     true, // Sindre Sorhus utilities
-	"@lukeed":           true, // Luke Edwards utilities
-	"@antfu":            true, // Anthony Fu utilities
-	"@nicolo-ribaudo":   true, // Babel team
-	"@rtsao":            true,
-	"@alloc":            true,
-	"@emnapi":           true, // Node-API runtime emulation
-	"@nolyfill":         true,
+	"@img":            true, // sharp image processing
+	"@jridgewell":     true, // source map tooling
+	"@humanwhocodes":  true, // ESLint ecosystem
+	"@humanfs":        true,
+	"@nodelib":        true,
+	"@pinojs":         true,
+	"@pkgjs":          true, // npm-owned packages
+	"@isaacs":         true, // Isaac Schlueter (npm)
+	"@sindresorhus":   true, // Sindre Sorhus utilities
+	"@lukeed":         true, // Luke Edwards utilities
+	"@antfu":          true, // Anthony Fu utilities
+	"@nicolo-ribaudo": true, // Babel team
+	"@rtsao":          true,
+	"@alloc":          true,
+	"@emnapi":         true, // Node-API runtime emulation
+	"@nolyfill":       true,
 }
 
 // checkPackageJSON checks for scoped packages without a corresponding .npmrc

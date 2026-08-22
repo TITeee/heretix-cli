@@ -180,10 +180,11 @@ func parseMavenDependencyJSON(jsonStr string, pomPath string, verbose bool) ([]i
 
 // parseMavenDependencyText parses the text output from "mvn dependency:tree"
 // which uses a tree format like:
-//   groupId:artifactId:type:version
-//   +- groupId:artifactId:type:version:scope
-//   |  +- groupId:artifactId:type:version:scope
-//   \- groupId:artifactId:type:version:scope
+//
+//	groupId:artifactId:type:version
+//	+- groupId:artifactId:type:version:scope
+//	|  +- groupId:artifactId:type:version:scope
+//	\- groupId:artifactId:type:version:scope
 func parseMavenDependencyText(output string, pomPath string, verbose bool) ([]inventory.Package, error) {
 	var pkgs []inventory.Package
 	visited := make(map[string]bool)

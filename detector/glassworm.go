@@ -66,18 +66,18 @@ var targetExtensions = map[string]bool{
 // particular keeps deliberately malicious samples there — this repository does
 // — and reporting a project's own detection corpus back to it is pure noise.
 var skipDirs = map[string]bool{
-	".git":         true,
-	"node_modules": true,
-	"testdata":     true,
-	".venv":        true,
-	"venv":         true,
-	"__pycache__":  true,
-	"vendor":       true,
-	".tox":         true,
-	"site-packages":  true, // installed Python packages (analogous to node_modules)
-	"dist-packages":  true, // Debian/Ubuntu system Python packages
-	"Trash":          true, // FreeDesktop trash (~/.local/share/Trash)
-	".Trash":         true, // macOS trash
+	".git":          true,
+	"node_modules":  true,
+	"testdata":      true,
+	".venv":         true,
+	"venv":          true,
+	"__pycache__":   true,
+	"vendor":        true,
+	".tox":          true,
+	"site-packages": true, // installed Python packages (analogous to node_modules)
+	"dist-packages": true, // Debian/Ubuntu system Python packages
+	"Trash":         true, // FreeDesktop trash (~/.local/share/Trash)
+	".Trash":        true, // macOS trash
 }
 
 // buildArtifactRe matches webpack/vite chunk filenames that contain a content hash,

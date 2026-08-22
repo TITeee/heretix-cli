@@ -10,11 +10,11 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/spf13/cobra"
 	"github.com/TITeee/heretix-cli/collector"
 	"github.com/TITeee/heretix-cli/container"
 	"github.com/TITeee/heretix-cli/inventory"
 	"github.com/TITeee/heretix-cli/sbom"
+	"github.com/spf13/cobra"
 )
 
 func defaultScanPath() string {

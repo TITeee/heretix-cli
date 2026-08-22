@@ -9,13 +9,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/TITeee/heretix-cli/checker"
 	"github.com/TITeee/heretix-cli/collector"
 	"github.com/TITeee/heretix-cli/container"
 	"github.com/TITeee/heretix-cli/detector"
 	"github.com/TITeee/heretix-cli/inventory"
 	"github.com/TITeee/heretix-cli/report"
+	"github.com/spf13/cobra"
 )
 
 var scanCmd = &cobra.Command{

@@ -59,6 +59,11 @@ func GenerateCycloneDX(inv *inventory.Inventory, version string) *cdx.BOM {
 			licenses = &l
 		}
 
+		var scope cdx.Scope
+		if p.Scope == "excluded" {
+			scope = cdx.ScopeExcluded
+		}
+
 		// Maven-family sources carry "groupId:artifactId" in Name; the component
 		// name should show only the artifactId.
 		displayName := p.Name
@@ -77,6 +82,7 @@ func GenerateCycloneDX(inv *inventory.Inventory, version string) *cdx.BOM {
 			Licenses:   licenses,
 			Hashes:     hashes,
 			Properties: props,
+			Scope:      scope,
 		})
 	}
 

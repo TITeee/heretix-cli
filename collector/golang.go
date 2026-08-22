@@ -432,4 +432,3 @@ func enrichGoLicensesFromCache(pkgs []inventory.Package, verbose bool) {
 		log.Printf("[go] enriched %d packages with license from module cache (%s)", found, modCache)
 	}
 }
-

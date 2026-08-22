@@ -2,7 +2,7 @@
 
 [日本語版 README](README.ja.md)
 
-A CLI tool that scans OS packages (RPM, DPKG, APK) and OSS ecosystems (PyPI, npm/yarn/pnpm, Go modules, Composer, Maven, Gradle, JAR/WAR archives) on Linux/Windows servers or Docker container images, then queries a vulnerability API to detect known vulnerabilities. Also performs local supply-chain security checks without any API access: **GlassWorm** (invisible character injection), **Dependency Confusion** (Shai-hulud), **Malicious Install Scripts**, **CI/CD Pipeline Poisoning**, and **Lock File Integrity** detection.
+A CLI tool that scans OS packages (RPM, DPKG, APK) and OSS ecosystems (PyPI, npm/yarn/pnpm, Go modules, Composer, Maven, Gradle, JAR/WAR archives) on Linux/Windows servers or Docker container images, then queries a vulnerability API to detect known vulnerabilities. Also performs local supply-chain security checks without any API access: **GlassWorm** (invisible character injection), **Dependency Confusion** (package substitution), **Malicious Install Scripts** (including the Shai-Hulud worm's signature), **CI/CD Pipeline Poisoning**, and **Lock File Integrity** detection.
 
 ## Supported Ecosystems
 
@@ -266,7 +266,7 @@ Skips `site-packages`, `dist-packages`, `Trash`, `.Trash`, `node_modules`, `vend
 
 > `testdata` is skipped by all detectors, following the Go toolchain's treatment of it: the contents are fixtures, never built or executed. Security tooling in particular keeps deliberately malicious samples there.
 
-### Dependency Confusion Detection (Shai-hulud)
+### Dependency Confusion Detection
 
 Detects configuration patterns that leave projects vulnerable to substitution attacks, where a privately-named package is overridden by a malicious public registry version.
 
@@ -287,7 +287,7 @@ Well-known public scopes (`@types`, `@prisma`, `@fastify`, `@nestjs`, `@aws-sdk`
 
 `--check-registry` queries `https://registry.npmjs.org/-/v1/search?text=scope:<name>&size=1` for each unknown scope. A scope with published packages is treated as public and excluded. Requires network access; scopes are cached within a single run.
 
-### Malicious Install Scripts Detection
+### Malicious Install Scripts Detection (Shai-Hulud)
 
 Detects dangerous commands in npm lifecycle hooks (`preinstall`, `postinstall`, `prepare`, etc.) and Python `setup.py` that execute automatically during package installation — a common vector for supply chain attacks.
 
