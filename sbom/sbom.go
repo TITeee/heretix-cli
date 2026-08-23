@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 
@@ -38,8 +39,10 @@ var ecosystemToPURLType = map[string]string{
 // GenerateCycloneDX converts an Inventory to a CycloneDX BOM.
 // version is the heretix-cli version string recorded in metadata.tools.
 func GenerateCycloneDX(inv *inventory.Inventory, version string) *cdx.BOM {
-	components := make([]cdx.Component, 0, len(inv.Packages))
-	for _, p := range inv.Packages {
+	pkgs := uniqueByPURL(inv)
+
+	components := make([]cdx.Component, 0, len(pkgs))
+	for _, p := range pkgs {
 		purl := PackagePURL(p, inv.OS.ID)
 		hashes := parseIntegrity(p.Integrity)
 
@@ -87,8 +90,8 @@ func GenerateCycloneDX(inv *inventory.Inventory, version string) *cdx.BOM {
 	}
 
 	// Build bom.Dependencies for all components (leaf nodes get an empty slice per CycloneDX spec).
-	depItems := make([]cdx.Dependency, 0, len(inv.Packages))
-	for _, p := range inv.Packages {
+	depItems := make([]cdx.Dependency, 0, len(pkgs))
+	for _, p := range pkgs {
 		purl := PackagePURL(p, inv.OS.ID)
 		deps := make([]string, len(p.Deps))
 		copy(deps, p.Deps)
@@ -106,6 +109,38 @@ func GenerateCycloneDX(inv *inventory.Inventory, version string) *cdx.BOM {
 	bom.Components = &components
 	bom.Dependencies = &depItems
 	return bom
+}
+
+// uniqueByPURL collapses packages that resolve to the same PURL into a single
+// entry, so that no two components can end up sharing a bom-ref.
+//
+// CycloneDX requires every bom-ref to be unique within the BOM, and this tool
+// follows the spec's own recommendation of deriving bom-ref from the PURL. That
+// only holds if PURLs are unique, which inventory.Deduplicate does not by
+// itself guarantee: it keys on name+version+ecosystem, while the PURL is built
+// from name+version+source (plus the distro qualifier for OS packages). Two
+// entries differing only in ecosystem therefore survive deduplication yet
+// produce one PURL. That is not hypothetical — the Gradle collector originally
+// tagged packages with ecosystem "Gradle" while Maven used "Maven", and both
+// map to the same `pkg:maven/...` PURL.
+//
+// Merging is the correct resolution rather than a workaround: a shared PURL
+// means the entries describe the same package, discovered by different routes.
+// The merge is confined to SBOM output — the inventory and the vulnerability
+// API path keep every entry, because ecosystem is what the API matches on.
+func uniqueByPURL(inv *inventory.Inventory) []inventory.Package {
+	pkgs, collapsed := inventory.DeduplicateBy(inv.Packages, func(p inventory.Package) string {
+		return PackagePURL(p, inv.OS.ID)
+	})
+
+	// A collision here means two collectors disagreed about a package's
+	// ecosystem, or a collector emitted a PURL it should not have. The BOM is
+	// still correct, but the operator should know a collector needs attention.
+	for _, purl := range collapsed {
+		log.Printf("Warning: multiple packages resolved to the same PURL %s — merged into one component "+
+			"(collectors may disagree on this package's ecosystem)", purl)
+	}
+	return pkgs
 }
 
 // PackagePURL returns the Package URL (PURL) for a single inventory package.

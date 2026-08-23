@@ -84,18 +84,41 @@ func ReadFromFile(path string) (*Inventory, error) {
 //   - Direct: true > false > nil  (direct knowledge wins over indirect or unknown)
 //   - Integrity, Location, Deps:  non-empty wins over empty
 func Deduplicate(pkgs []Package) []Package {
+	merged, _ := DeduplicateBy(pkgs, func(p Package) string {
+		return p.Name + "\t" + p.Version + "\t" + p.Ecosystem
+	})
+	return merged
+}
+
+// DeduplicateBy merges packages that share a key, using the same field-priority
+// rules as Deduplicate. It returns the merged list and the keys that actually
+// had more than one package collapsed into them.
+//
+// The key function is a parameter because identity is not the same question in
+// every context. Deduplicate answers "is this the same installed package?" and
+// keys on name+version+ecosystem. SBOM generation answers "is this the same
+// component?" and keys on the PURL — a stricter requirement, since CycloneDX
+// requires every bom-ref to be unique within the BOM and this tool derives
+// bom-ref from the PURL. Passing the key in keeps that PURL logic in the sbom
+// package, which would otherwise be an import cycle.
+func DeduplicateBy(pkgs []Package, key func(Package) string) (merged []Package, collapsed []string) {
 	index := make(map[string]int) // key → index in result
+	dupes := map[string]bool{}
 	result := []Package{}
 	for _, p := range pkgs {
-		key := p.Name + "\t" + p.Version + "\t" + p.Ecosystem
-		if i, exists := index[key]; exists {
+		k := key(p)
+		if i, exists := index[k]; exists {
 			result[i] = mergePkg(result[i], p)
+			if !dupes[k] {
+				dupes[k] = true
+				collapsed = append(collapsed, k)
+			}
 		} else {
-			index[key] = len(result)
+			index[k] = len(result)
 			result = append(result, p)
 		}
 	}
-	return result
+	return result, collapsed
 }
 
 // mergePkg merges metadata from b into a, preferring the richer value per field.
