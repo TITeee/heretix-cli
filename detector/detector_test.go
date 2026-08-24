@@ -155,6 +155,17 @@ func TestMaliciousCorpusIsDetected(t *testing.T) {
 			wantDetail:   "self-hosted",
 			wantFile:     "rogue-runner.yml",
 		},
+		// RedC2 (TrendAI Security, 2026): no lifecycle hook is declared at all —
+		// the payload is a top-level IIFE in the package's entry point, so
+		// --ignore-scripts and a hook-only check both miss it. It makes a
+		// bundled ELF binary executable, then spawns it detached from Node.
+		{
+			attack:       "RedC2: entry point spawns a detached child on import",
+			detector:     "malicious-install",
+			wantSeverity: "CRITICAL",
+			wantDetail:   "detached",
+			wantFile:     "redc2",
+		},
 	}
 
 	byName := map[string]Detector{}

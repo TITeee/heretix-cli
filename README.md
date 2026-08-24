@@ -290,13 +290,15 @@ Well-known public scopes (`@types`, `@prisma`, `@fastify`, `@nestjs`, `@aws-sdk`
 
 `--check-registry` queries `https://registry.npmjs.org/-/v1/search?text=scope:<name>&size=1` for each unknown scope. A scope with published packages is treated as public and excluded. Requires network access; scopes are cached within a single run.
 
-### Malicious Install Scripts Detection (Shai-Hulud)
+### Malicious Install Scripts Detection (Shai-Hulud, RedC2)
 
-Detects dangerous commands in npm lifecycle hooks (`preinstall`, `postinstall`, `prepare`, etc.) and Python `setup.py` that execute automatically during package installation — a common vector for supply chain attacks.
+Detects dangerous commands in npm lifecycle hooks (`preinstall`, `postinstall`, `prepare`, etc.), a package's entry point, and Python `setup.py` that execute automatically during or after package installation — a common vector for supply chain attacks.
 
 **Hook scripts are followed.** A hook command is often unremarkable on its own — the Shai-Hulud worm's is just `node bundle.js` — while the payload sits in the referenced file. When a hook runs a local script (`node x.js`, `python x.py`, `sh x.sh`), that file's contents are scanned too.
 
-**Obfuscation is the discriminator.** Downloading and executing at install time is how native-binary packages legitimately work: esbuild's `install.js` fetches a platform binary and runs it, performing the same operations an attacker would. What separates them is readability — esbuild's longest line is 125 characters, Shai-Hulud's bundle runs to several thousand on one line. Content matches inside a followed script are therefore capped at MEDIUM, while a minified script executed at install time is HIGH on its own, since obfuscation exists to defeat exactly this kind of inspection.
+**Obfuscation is the discriminator, for a hook script.** Downloading and executing at install time is how native-binary packages legitimately work: esbuild's `install.js` fetches a platform binary and runs it, performing the same operations an attacker would. What separates them is readability — esbuild's longest line is 125 characters, Shai-Hulud's bundle runs to several thousand on one line. Content matches inside a followed script are therefore capped at MEDIUM, while a minified script executed at install time is HIGH on its own, since obfuscation exists to defeat exactly this kind of inspection.
+
+**Entry points get a narrower check.** The RedC2 campaign used no lifecycle hook at all: the payload was a top-level IIFE in the package's entry point (`main`/`module`/`exports`), which runs on the first `import`/`require` anywhere in the dependency graph — `--ignore-scripts` gives no protection. But an entry point *is* the rest of the package, not a small script apart from it, so the hook-script checks above don't transfer: a minified `dist/index.cjs` is how bundlers ship almost everything, and `child_process`/base64 are ordinary in real functionality. Only a **detached spawn** is checked here — `spawn(...)`/`exec(...)` combined with `detached: true` — since a build-time helper has no legitimate reason to keep a child process running after Node exits, on any build. If the spawned target resolves to a local file, its first bytes are checked against ELF (Linux), PE (Windows, `MZ`), and Mach-O (macOS, including universal binaries) magic numbers regardless of extension, since a bundled binary is often named to look like data (`.bin`, `.dat`). RedC2 itself targeted Linux, but a detached spawn isn't a Linux-specific technique, so all three are checked rather than just ELF.
 
 | Check | Ecosystem | Severity |
 |---|---|---|
@@ -304,18 +306,19 @@ Detects dangerous commands in npm lifecycle hooks (`preinstall`, `postinstall`, 
 | Base64-decoded payload piped to shell | npm | CRITICAL |
 | `eval()` of network-fetched content | npm | CRITICAL |
 | `eval()` in `setup.py` | PyPI | CRITICAL |
+| Entry point spawns a child process with `detached: true` | npm | CRITICAL |
 | Minified/obfuscated script executed by an install hook | npm | HIGH |
 | Executable `.pth` file (runs on every Python start, no import required) | PyPI | HIGH |
 | `require('child_process')` / `curl` / `node -e` in the hook command itself | npm | HIGH |
 | `exec(compile(...))` obfuscation in `setup.py` | PyPI | HIGH |
 | `os.system()` / `subprocess.*()` in `setup.py`, combined with a network fetch | PyPI | HIGH |
-| The above patterns found inside a *followed* hook script | npm | MEDIUM |
+| The above hook-command patterns found inside a *followed* hook script | npm | MEDIUM |
 | Base64 decoding (`Buffer.from(..., 'base64')`) in hook | npm | MEDIUM |
 | Outbound `fetch()` in install hook | npm | MEDIUM |
 | Outbound network request in `setup.py` | PyPI | MEDIUM |
 | `os.system()` / `subprocess.*()` in `setup.py`, on its own | PyPI | LOW |
 
-Scans `package.json` (including packages under `node_modules/`), `setup.py`, and `*.pth`.
+Scans `package.json` (including packages under `node_modules/`), each package's resolved entry point, `setup.py`, and `*.pth`.
 
 ### CI/CD Pipeline Poisoning Detection
 

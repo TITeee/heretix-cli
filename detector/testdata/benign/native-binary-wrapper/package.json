@@ -1,0 +1,6 @@
+{
+  "name": "native-binary-wrapper",
+  "version": "1.0.0",
+  "comment": "Modeled on esbuild's real install.js: fetches/executes a native binary at install time — the same operations an attacker performs — but never detaches the child process, so it must not be flagged.",
+  "main": "index.js"
+}

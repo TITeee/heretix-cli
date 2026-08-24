@@ -1,0 +1,6 @@
+{
+  "name": "streak-metrics-math",
+  "version": "1.0.0",
+  "comment": "INERT TEST FIXTURE reproducing the RedC2 npm supply chain attack's structural signature (TrendAI Security, 2026). No install/postinstall script is declared at all — the payload runs from the entry point's top-level code on the first import, so --ignore-scripts and any hook-only detector miss it.",
+  "main": "dist/index.mjs"
+}

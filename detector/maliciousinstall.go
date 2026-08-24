@@ -2,6 +2,7 @@ package detector
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"io/fs"
 	"os"
@@ -122,6 +123,9 @@ func (d *MaliciousInstallDetector) Detect(scanPath string, verbose bool, progres
 type pkgJSON struct {
 	Name    string            `json:"name"`
 	Scripts map[string]string `json:"scripts"`
+	Main    string            `json:"main"`
+	Module  string            `json:"module"`
+	Exports json.RawMessage   `json:"exports"`
 }
 
 func checkInstallScripts(path string) ([]Finding, error) {
@@ -155,7 +159,64 @@ func checkInstallScripts(path string) ([]Finding, error) {
 		// "node bundle.js" — so follow it to whatever local file it runs.
 		findings = append(findings, checkHookScript(path, pkg.Name, hook, cmd)...)
 	}
+
+	// A lifecycle hook is not the only way code runs during install: RedC2
+	// (2026) used no hook at all — the payload was a top-level IIFE in the
+	// package's entry point, which runs on the first `import`/`require`
+	// anywhere in the dependency graph. --ignore-scripts gives no protection
+	// against this, since no script is ever declared.
+	if entry := resolveEntrypoint(pkg); entry != "" {
+		findings = append(findings, checkEntrypointScript(path, pkg.Name, entry)...)
+	}
+
 	return findings, nil
+}
+
+// resolveEntrypoint returns the package's main module, relative to the
+// package.json that declares it — the file that runs on import/require.
+//
+// Only the simple, single-target forms are resolved (a bare "main"/"module"
+// string, or "exports"."."'s "import"/"default" string). Multi-target or
+// conditional exports maps exist to select between platforms or environments,
+// not to hide code, so resolving every branch would add walk cost without
+// adding coverage against the attack this defends against.
+func resolveEntrypoint(pkg pkgJSON) string {
+	if pkg.Main != "" {
+		return pkg.Main
+	}
+	if pkg.Module != "" {
+		return pkg.Module
+	}
+	if len(pkg.Exports) == 0 {
+		return ""
+	}
+
+	var asString string
+	if json.Unmarshal(pkg.Exports, &asString) == nil {
+		return asString
+	}
+
+	var asObject map[string]json.RawMessage
+	if json.Unmarshal(pkg.Exports, &asObject) != nil {
+		return ""
+	}
+	target, ok := asObject["."]
+	if !ok {
+		return ""
+	}
+	if json.Unmarshal(target, &asString) == nil {
+		return asString
+	}
+	var nested map[string]string
+	if json.Unmarshal(target, &nested) == nil {
+		if v, ok := nested["import"]; ok {
+			return v
+		}
+		if v, ok := nested["default"]; ok {
+			return v
+		}
+	}
+	return ""
 }
 
 // ── Install hook script following ────────────────────────────────────────────
@@ -235,6 +296,139 @@ func checkHookScript(pkgPath, pkgName, hook, cmd string) []Finding {
 		})
 	}
 	return findings
+}
+
+// ── Entry-point scanning (no lifecycle hook involved) ────────────────────────
+
+// spawnCallRe matches a child_process call by method name, independent of
+// which identifier the module was imported as (cp.spawn, child_process.exec, a
+// destructured `spawn(...)`, etc.).
+var spawnCallRe = regexp.MustCompile(`\.(spawn|exec|execFile|fork)\s*\(|(?:^|[^.\w])(?:spawn|execFile)\s*\(`)
+
+// detachedTrueRe matches the child_process option that keeps a process running
+// after its parent exits.
+var detachedTrueRe = regexp.MustCompile(`detached\s*:\s*true`)
+
+// entrypointBinaryRe extracts a local file path passed as a spawn/exec target,
+// to check whether it is an ELF binary regardless of its extension. Mirrors
+// spawnCallRe's two call shapes (property access and a destructured import).
+// Go's RE2 engine has no backreferences, so the opening and closing quote are
+// matched independently rather than required to be the same character — in
+// practice a path string never contains a different quote character anyway.
+var entrypointBinaryRe = regexp.MustCompile(`(?:\.(?:spawn|exec|execFile)|(?:^|[^.\w])(?:spawn|execFile))\s*\(\s*['"` + "`" + `]((?:\.\/|\.\.\/)?[A-Za-z0-9_./-]+)['"` + "`" + `]`)
+
+// checkEntrypointScript scans a package's entry point — the file that runs on
+// import/require, resolved by resolveEntrypoint — for the one pattern that
+// distinguishes an install-time attack here: a detached spawn.
+//
+// This is where RedC2 was caught: its package declared no install/postinstall
+// script at all, so --ignore-scripts and any hook-only check missed it. The
+// payload ran because the entry point itself spawned a bundled ELF binary,
+// detached from the Node process, from a top-level IIFE evaluated at import.
+//
+// Deliberately narrower than checkHookScript. An install *hook* is a small
+// script with no reason to look like the rest of the package, so minification
+// or a stray child_process call there is already unusual. An entry point is
+// the opposite: it *is* the rest of the package. Measured against a real repo,
+// applying checkHookScript's obfuscation check and npmLifecycleRules here
+// flagged the ordinary minified dist/index.cjs bundlers produce, and packages
+// that use child_process/base64 as part of normal functionality — 38 findings
+// on one small project, nearly all noise. The one thing left is not: a
+// detached spawn is not something a bundler produces or a normal dependency
+// needs, on any build.
+func checkEntrypointScript(pkgPath, pkgName, entrypointRel string) []Finding {
+	if filepath.IsAbs(entrypointRel) || strings.Contains(entrypointRel, "..") {
+		return nil
+	}
+	scriptPath := filepath.Join(filepath.Dir(pkgPath), filepath.FromSlash(entrypointRel))
+	info, err := os.Stat(scriptPath)
+	if err != nil || info.IsDir() || info.Size() > maxHookScriptSize {
+		return nil
+	}
+	data, err := os.ReadFile(scriptPath)
+	if err != nil {
+		return nil
+	}
+	content := string(data)
+
+	if !spawnCallRe.MatchString(content) || !detachedTrueRe.MatchString(content) {
+		return nil
+	}
+
+	detail := "entry point " + entrypointRel + " spawns a child process detached from Node — " +
+		"it keeps running after the process exits, which a build-time helper has no reason to do"
+	if rel, format := findSpawnedBinary(scriptPath, content); format != "" {
+		detail += " (spawned target " + rel + " is a " + format + " binary despite its extension)"
+	}
+	return []Finding{{
+		Type:      "malicious-install",
+		Severity:  "CRITICAL",
+		File:      scriptPath,
+		Package:   pkgName,
+		Ecosystem: "npm",
+		Detail:    detail,
+	}}
+}
+
+// findSpawnedELF looks for a local file referenced in a spawn/exec call and
+// reports its path if it is an ELF binary. Used only to enrich a finding
+// already raised by checkEntrypointScript — ELF binaries are routinely bundled
+// by legitimate native-addon packages, so their presence alone is not a signal.
+//
+// Checked across platforms rather than just ELF: RedC2 itself targeted Linux,
+// but a detached-spawn payload is not a Linux-specific technique, and the
+// spawned target's extension proves nothing regardless of platform.
+func findSpawnedBinary(scriptPath, content string) (rel, format string) {
+	m := entrypointBinaryRe.FindStringSubmatch(content)
+	if m == nil {
+		return "", ""
+	}
+	rel = m[1]
+	if filepath.IsAbs(rel) || strings.Contains(rel, "..") {
+		return "", ""
+	}
+	binPath := filepath.Join(filepath.Dir(scriptPath), filepath.FromSlash(rel))
+	format = detectExecutableFormat(binPath)
+	if format == "" {
+		return "", ""
+	}
+	return rel, format
+}
+
+// executableMagic maps a file's leading bytes to the executable format they
+// identify. Longer magics are listed first so a shorter one (PE's 2-byte "MZ")
+// can't shadow a match a more specific check would have made.
+var executableMagic = []struct {
+	format string
+	magic  []byte
+}{
+	{"ELF", []byte{0x7f, 'E', 'L', 'F'}},                 // Linux
+	{"Mach-O", []byte{0xFE, 0xED, 0xFA, 0xCE}},           // macOS, 32-bit
+	{"Mach-O", []byte{0xFE, 0xED, 0xFA, 0xCF}},           // macOS, 64-bit
+	{"Mach-O universal", []byte{0xCA, 0xFE, 0xBA, 0xBE}}, // macOS, fat binary
+	{"PE", []byte{'M', 'Z'}},                             // Windows
+}
+
+// detectExecutableFormat reports the executable format path begins with, or
+// "" if it matches none of them — independent of its extension, since a
+// bundled binary is often named to look like data (.bin, .dat).
+func detectExecutableFormat(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	var header [4]byte
+	n, err := f.Read(header[:])
+	if err != nil {
+		return ""
+	}
+	for _, m := range executableMagic {
+		if n >= len(m.magic) && bytes.Equal(header[:len(m.magic)], m.magic) {
+			return m.format
+		}
+	}
+	return ""
 }
 
 // followedScriptSeverity adjusts a rule's severity for a match inside a script

@@ -290,13 +290,15 @@ heretix-cli detect --image myapp:latest --dockerfile ./Dockerfile
 
 `--check-registry` は `https://registry.npmjs.org/-/v1/search?text=scope:<name>&size=1` で未知スコープを検索します。パッケージが1件以上あれば公開スコープとして除外します。1回のスキャン中はキャッシュされます。
 
-### Malicious Install Scripts 検知（Shai-Hulud）
+### Malicious Install Scripts 検知（Shai-Hulud、RedC2）
 
-npm ライフサイクルフック（`preinstall`、`postinstall`、`prepare` 等）や Python `setup.py` 内の危険なコマンドを検出します。パッケージインストール時に自動実行されるため、サプライチェーン攻撃の主要な侵入経路です。
+npm ライフサイクルフック（`preinstall`、`postinstall`、`prepare` 等）、パッケージのエントリポイント、Python `setup.py` 内の危険なコマンドを検出します。インストール時またはインストール後に自動実行されるため、サプライチェーン攻撃の主要な侵入経路です。
 
 **フックスクリプトの追跡**: フックのコマンド文字列自体は無害な場合が多く、Shai-Hulud ワームでは `node bundle.js` であり、ペイロードは参照先ファイルに存在します。フックがローカルスクリプト（`node x.js`、`python x.py`、`sh x.sh`）を実行する場合、そのファイルの内容も検査対象とします。
 
-**難読化による判別**: インストール時のダウンロードと実行は、ネイティブバイナリを持つパッケージの正当な動作でもあります。esbuild の `install.js` はプラットフォーム別バイナリを取得して実行しており、操作内容は攻撃と同一です。両者の差は可読性にあり、esbuild の最長行は125文字、Shai-Hulud のバンドルは1行が数千文字に達します。このため追跡先スクリプト内でのパターン一致は MEDIUM を上限とし、難読化されたスクリプトの実行自体を HIGH とします。難読化はこの種の検査を回避する目的で行われるためです。
+**難読化による判別（フックスクリプトのみ）**: インストール時のダウンロードと実行は、ネイティブバイナリを持つパッケージの正当な動作でもあります。esbuild の `install.js` はプラットフォーム別バイナリを取得して実行しており、操作内容は攻撃と同一です。両者の差は可読性にあり、esbuild の最長行は125文字、Shai-Hulud のバンドルは1行が数千文字に達します。このため追跡先スクリプト内でのパターン一致は MEDIUM を上限とし、難読化されたスクリプトの実行自体を HIGH とします。難読化はこの種の検査を回避する目的で行われるためです。
+
+**エントリポイントは判定基準が異なります**: RedC2 キャンペーンは lifecycle フックを一切使いませんでした。ペイロードはパッケージのエントリポイント（`main`/`module`/`exports`）内のトップレベル IIFE で、依存グラフ内のどこかで最初に `import`/`require` された時点で実行されます。`--ignore-scripts` は無力です。ただし、エントリポイントはフックのような「独立した小さなスクリプト」ではなく「パッケージ本体そのもの」なので、上記のフックスクリプト向けの判定基準はそのまま持ち込めません。minify された `dist/index.cjs` はバンドラーがほぼ全てのパッケージで生成する通常の形式であり、`child_process`/Base64 も実際の機能として普通に使われます。ここで検査するのは**detached な spawn** のみです — `spawn(...)`/`exec(...)` と `detached: true` の組み合わせで、ビルド時のヘルパーが Node 終了後もプロセスを生かし続ける正当な理由はどんなビルドでもありません。spawn 対象がローカルファイルに解決できる場合、拡張子に関わらず先頭バイトを ELF（Linux）、PE（Windows、`MZ`）、Mach-O（macOS、universal binary 含む）のマジックナンバーと照合します。同梱バイナリはデータファイルに見える名前（`.bin`、`.dat`）が付けられることが多いためです。RedC2 自体は Linux を標的にしていましたが、detached spawn は Linux 固有の手口ではないため、ELF だけでなく3形式すべてを照合します。
 
 | チェック内容 | エコシステム | Severity |
 |---|---|---|
@@ -304,18 +306,19 @@ npm ライフサイクルフック（`preinstall`、`postinstall`、`prepare` �
 | Base64 デコードしたペイロードをシェルに実行 | npm | CRITICAL |
 | ネットワーク fetch した内容を `eval()` | npm | CRITICAL |
 | `setup.py` 内の `eval()` | PyPI | CRITICAL |
+| エントリポイントが `detached: true` で子プロセスを spawn | npm | CRITICAL |
 | install フックが難読化されたスクリプトを実行 | npm | HIGH |
 | 実行可能な `.pth` ファイル（import 不要で Python 起動のたびに実行される） | PyPI | HIGH |
 | フックコマンド自体に `require('child_process')` / `curl` / `node -e` | npm | HIGH |
 | `setup.py` 内の `exec(compile(...))` 難読化 | PyPI | HIGH |
 | `setup.py` 内の `os.system()` / `subprocess.*()` かつ同一ファイルにネットワーク取得あり | PyPI | HIGH |
-| 上記パターンが**追跡先**フックスクリプト内で見つかった場合 | npm | MEDIUM |
+| 上記のフックコマンド系パターンが**追跡先**フックスクリプト内で見つかった場合 | npm | MEDIUM |
 | フック内の Base64 デコード（`Buffer.from(..., 'base64')`） | npm | MEDIUM |
 | install フック内の `fetch()` アウトバウンド呼び出し | npm | MEDIUM |
 | `setup.py` 内のネットワークリクエスト | PyPI | MEDIUM |
 | `setup.py` 内の `os.system()` / `subprocess.*()` 単独 | PyPI | LOW |
 
-`package.json`（`node_modules/` 配下を含む）、`setup.py`、`*.pth` を対象にスキャン。
+`package.json`（`node_modules/` 配下を含む）、各パッケージの解決済みエントリポイント、`setup.py`、`*.pth` を対象にスキャン。
 
 ### CI/CD Pipeline Poisoning 検知
 
