@@ -43,7 +43,7 @@ go mod tidy
 
 ### パッケージ収集 (`collect`)
 
-システムをスキャンし、インストール済みパッケージを JSON または CycloneDX SBOM に出力する。オフラインで実行可能。
+システムをスキャンし、インストール済みパッケージを CycloneDX SBOM として出力する。オフラインで実行可能。
 
 ```bash
 heretix-cli collect
@@ -51,16 +51,14 @@ heretix-cli collect --output packages.json --scan-path /srv
 heretix-cli collect --skip npm,pypi --verbose
 
 # Docker イメージをスキャン
-heretix-cli collect --image nginx:latest --output nginx-inventory.json
-heretix-cli collect --image registry.example.com/myapp:v1.2 --output myapp-inventory.json
+heretix-cli collect --image nginx:latest --output nginx-sbom.json
+heretix-cli collect --image registry.example.com/myapp:v1.2 --output myapp-sbom.json
 
 # Dockerfile の FROM ベースイメージも含めてスキャン
-heretix-cli collect --image myapp:latest --dockerfile ./Dockerfile --output full-inventory.json
-
-# CycloneDX SBOM (JSON) として出力
-heretix-cli collect --format cyclonedx --output sbom.json
-heretix-cli collect --image nginx:latest --format cyclonedx --output nginx-sbom.json
+heretix-cli collect --image myapp:latest --dockerfile ./Dockerfile --output full-sbom.json
 ```
+
+> **非推奨:** `--format json`（heretix 独自インベントリ形式）は引き続き動作し `check`/`submit` からも読めるが、将来のリリースで削除予定。新規スクリプトでは `--format json` を使わないこと。
 
 > **CycloneDX SBOM 出力には以下が含まれる:**
 > - OS パッケージ（apk/rpm/deb）の **PURL に `?distro=` qualifier** を付与:
@@ -78,8 +76,8 @@ heretix-cli collect --image nginx:latest --format cyclonedx --output nginx-sbom.
 
 | フラグ | デフォルト | 説明 |
 |---|---|---|
-| `--output` | `inventory.json` | 出力ファイルパス |
-| `--format` | `json` | 出力形式: `json`（heretix インベントリ）/ `cyclonedx`（CycloneDX BOM） |
+| `--output` | `sbom.json` | 出力ファイルパス |
+| `--format` | `cyclonedx` | 出力形式: `cyclonedx`（CycloneDX BOM）/ `json`（heretix インベントリ、非推奨） |
 | `--scan-path` | `/`（Linux）/ `%SystemDrive%\`（Windows） | ファイルシステムの探索ルートパス |
 | `--skip` | (なし) | スキップするソース (例: `--skip npm`) |
 | `--verbose` | `false` | 詳細ログ出力 |
@@ -134,12 +132,12 @@ heretix-cli collect --image nginx:latest --format cyclonedx --output nginx-sbom.
 
 ### 脆弱性チェック (`check`)
 
-collect で出力した JSON を読み込み、脆弱性 API に問い合わせる。
+collect で出力した SBOM（CycloneDX、または非推奨の heretix インベントリ JSON）を読み込み、脆弱性 API に問い合わせる。
 
 ```bash
-heretix-cli check inventory.json
-heretix-cli check inventory.json --api-url http://heretix-api:5000 --api-key your-secret-key --severity 7.0
-heretix-cli check inventory.json --format json > results.json
+heretix-cli check sbom.json
+heretix-cli check sbom.json --api-url http://heretix-api:5000 --api-key your-secret-key --severity 7.0
+heretix-cli check sbom.json --format json > results.json
 ```
 
 | フラグ | デフォルト | 説明 |
@@ -174,7 +172,7 @@ HERETIX_API_KEY=your-secret-key heretix-cli scan --api-url http://heretix-api:50
 
 `--image` フラグ指定時は Docker デーモンをまず参照し、見つからない場合はレジストリから直接 pull します。レジストリ認証は `~/.docker/config.json` から自動読み込みされます（ECR, GCR, Docker Hub 対応）。
 
-`--image` 指定時、生成される inventory.json の `hostname` はマシンのホスト名ではなく**イメージ参照**（例: `nginx:latest`）に設定されます。これにより、複数のイメージを heretix-management にインポートした際に各イメージが独立したアセットとして管理されます。
+`--image` 指定時、生成される SBOM の `hostname` はマシンのホスト名ではなく**イメージ参照**（例: `nginx:latest`）に設定されます。これにより、複数のイメージを heretix-management にインポートした際に各イメージが独立したアセットとして管理されます。
 
 上記コマンドは `collect` と `check` の全フラグを継承する。
 
@@ -187,15 +185,15 @@ HERETIX_API_KEY=your-secret-key heretix-cli scan --api-url http://heretix-api:50
 
 ### GitHub Dependency Submission (`submit`)
 
-インベントリ JSON を読み込み、[GitHub Dependency Submission API](https://docs.github.com/en/rest/dependency-graph/dependency-submission) に送信する。送信後、Dependabot が検出パッケージの既知の脆弱性に対してアラートを生成する。
+SBOM(CycloneDX、または非推奨の heretix インベントリ JSON)を読み込み、[GitHub Dependency Submission API](https://docs.github.com/en/rest/dependency-graph/dependency-submission) に送信する。送信後、Dependabot が検出パッケージの既知の脆弱性に対してアラートを生成する。
 
 ```bash
 # GitHub Actions での典型的な使い方（環境変数は Actions が自動設定）
-heretix-cli collect --output inventory.json
-heretix-cli submit inventory.json
+heretix-cli collect --output sbom.json
+heretix-cli submit sbom.json
 
 # 手動実行
-heretix-cli submit inventory.json \
+heretix-cli submit sbom.json \
   --token ghp_xxx \
   --repo owner/repo \
   --sha $(git rev-parse HEAD) \
@@ -481,10 +479,10 @@ heretix-cli scan --image myapp:latest --dockerfile ./Dockerfile \
 
 ```yaml
 - name: パッケージ収集
-  run: heretix-cli collect --output inventory.json
+  run: heretix-cli collect --output sbom.json
 
 - name: GitHub Dependency Graph に送信
-  run: heretix-cli submit inventory.json
+  run: heretix-cli submit sbom.json
   env:
     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     # GITHUB_REPOSITORY / GITHUB_SHA / GITHUB_REF / GITHUB_RUN_ID は Actions が自動設定

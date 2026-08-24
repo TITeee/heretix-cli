@@ -29,8 +29,8 @@ func defaultScanPath() string {
 
 var collectCmd = &cobra.Command{
 	Use:   "collect",
-	Short: "Scan and collect installed packages to JSON",
-	Long:  `Scans the system for installed RPM, PyPI, and npm packages and writes the detection list to a JSON file.`,
+	Short: "Scan and collect installed packages to a CycloneDX SBOM",
+	Long:  `Scans the system for installed packages and writes them as a CycloneDX SBOM (default) or the deprecated heretix inventory JSON format.`,
 	RunE:  runCollect,
 }
 
@@ -46,13 +46,13 @@ var (
 )
 
 func init() {
-	collectCmd.Flags().StringVar(&collectOutput, "output", "", "Output file path (default: {name}.json, {scan-path-basename}.json, or inventory.json)")
+	collectCmd.Flags().StringVar(&collectOutput, "output", "", "Output file path (default: {name}.json, {scan-path-basename}.json, or sbom.json/inventory.json depending on --format)")
 	collectCmd.Flags().StringVar(&collectScanPath, "scan-path", defaultScanPath(), "Filesystem root path to scan")
 	collectCmd.Flags().StringSliceVar(&collectSkip, "skip", nil, "Sources to skip (e.g. --skip npm,pypi)")
 	collectCmd.Flags().BoolVar(&collectVerbose, "verbose", false, "Enable verbose logging")
 	collectCmd.Flags().StringVar(&collectImage, "image", "", "Docker image to scan (e.g. nginx:latest, registry.example.com/app:v1)")
 	collectCmd.Flags().StringVar(&collectDockerfile, "dockerfile", "", "Dockerfile path: also scan the base image from its FROM instruction")
-	collectCmd.Flags().StringVar(&collectFormat, "format", "json", "Output format: json or cyclonedx")
+	collectCmd.Flags().StringVar(&collectFormat, "format", "cyclonedx", "Output format: cyclonedx (default) or json (deprecated, will be removed in a future release)")
 	collectCmd.Flags().StringVar(&collectName, "name", "", "Override hostname in output (useful to distinguish multiple projects on the same host)")
 	rootCmd.AddCommand(collectCmd)
 }
@@ -60,6 +60,10 @@ func init() {
 func runCollect(cmd *cobra.Command, args []string) error {
 	if collectVerbose {
 		log.SetFlags(log.Ltime | log.Lshortfile)
+	}
+
+	if cmd.Flags().Changed("format") && collectFormat == "json" {
+		fmt.Fprintln(os.Stderr, "Warning: --format json is deprecated and will be removed in a future release; use --format cyclonedx (the default).")
 	}
 
 	if collectImage != "" {
@@ -80,7 +84,7 @@ func runCollect(cmd *cobra.Command, args []string) error {
 		inv.Hostname = collectName
 	}
 
-	out := resolveOutputPath()
+	out := resolveOutputPath(collectFormat)
 	if err := writeCollectOutput(inv, out, collectFormat); err != nil {
 		return err
 	}
@@ -140,7 +144,7 @@ func runCollectWithImage() error {
 		combinedInv.Hostname = collectImage
 	}
 
-	out := resolveOutputPath()
+	out := resolveOutputPath(collectFormat)
 	if err := writeCollectOutput(combinedInv, out, collectFormat); err != nil {
 		return err
 	}
@@ -153,8 +157,8 @@ func runCollectWithImage() error {
 //  1. --output (explicitly set)
 //  2. --name + ".json"
 //  3. basename of --scan-path + ".json" (skipped for root paths like "/" or "C:\")
-//  4. "inventory.json"
-func resolveOutputPath() string {
+//  4. "sbom.json" (cyclonedx format) or "inventory.json" (deprecated json format)
+func resolveOutputPath(format string) string {
 	if collectOutput != "" {
 		return collectOutput
 	}
@@ -166,7 +170,10 @@ func resolveOutputPath() string {
 	if base != "" && base != "." && base != "/" && base != "\\" && !strings.HasSuffix(base, ":\\") {
 		return base + ".json"
 	}
-	return "inventory.json"
+	if format == "json" {
+		return "inventory.json"
+	}
+	return "sbom.json"
 }
 
 func writeCollectOutput(inv *inventory.Inventory, path string, format string) error {

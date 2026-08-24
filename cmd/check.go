@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/TITeee/heretix-cli/checker"
-	"github.com/TITeee/heretix-cli/inventory"
 	"github.com/TITeee/heretix-cli/report"
 	"github.com/spf13/cobra"
 )
@@ -49,7 +48,7 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	}
 
 	filePath := args[0]
-	inv, err := inventory.ReadFromFile(filePath)
+	inv, err := loadInventoryFile(filePath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: cannot read %s: %v\n", filePath, err)
 		os.Exit(2)

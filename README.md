@@ -43,7 +43,7 @@ go mod tidy
 
 ### Package Collection (`collect`)
 
-Scans the system and outputs installed packages to JSON or CycloneDX SBOM. Can run offline.
+Scans the system and outputs installed packages as a CycloneDX SBOM. Can run offline.
 
 ```bash
 heretix-cli collect
@@ -51,16 +51,14 @@ heretix-cli collect --output packages.json --scan-path /srv
 heretix-cli collect --skip npm,pypi --verbose
 
 # Scan a Docker image
-heretix-cli collect --image nginx:latest --output nginx-inventory.json
-heretix-cli collect --image registry.example.com/myapp:v1.2 --output myapp-inventory.json
+heretix-cli collect --image nginx:latest --output nginx-sbom.json
+heretix-cli collect --image registry.example.com/myapp:v1.2 --output myapp-sbom.json
 
 # Include the FROM base image from a Dockerfile
-heretix-cli collect --image myapp:latest --dockerfile ./Dockerfile --output full-inventory.json
-
-# Output as CycloneDX SBOM (JSON)
-heretix-cli collect --format cyclonedx --output sbom.json
-heretix-cli collect --image nginx:latest --format cyclonedx --output nginx-sbom.json
+heretix-cli collect --image myapp:latest --dockerfile ./Dockerfile --output full-sbom.json
 ```
+
+> **Deprecated:** `--format json` (the heretix-native inventory format) still works and is read by `check`/`submit`, but it will be removed in a future release. New scripts should not pass `--format json`.
 
 > **CycloneDX SBOM output includes:**
 > - **PURL with `?distro=` qualifier** for OS packages (apk/rpm/deb):
@@ -78,8 +76,8 @@ heretix-cli collect --image nginx:latest --format cyclonedx --output nginx-sbom.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--output` | `inventory.json` | Output file path |
-| `--format` | `json` | Output format: `json` (heretix inventory) / `cyclonedx` (CycloneDX BOM) |
+| `--output` | `sbom.json` | Output file path |
+| `--format` | `cyclonedx` | Output format: `cyclonedx` (CycloneDX BOM) / `json` (heretix inventory, deprecated) |
 | `--scan-path` | `/` (Linux) / `%SystemDrive%\` (Windows) | Root path for filesystem traversal |
 | `--skip` | (none) | Sources to skip (e.g. `--skip npm`) |
 | `--verbose` | `false` | Enable verbose logging |
@@ -134,12 +132,12 @@ The table below shows which metadata fields are populated for each lockfile sour
 
 ### Vulnerability Check (`check`)
 
-Reads the JSON produced by `collect` and queries the vulnerability API.
+Reads the SBOM produced by `collect` (CycloneDX or the deprecated heretix inventory JSON) and queries the vulnerability API.
 
 ```bash
-heretix-cli check inventory.json
-heretix-cli check inventory.json --api-url http://heretix-api:5000 --api-key your-secret-key --severity 7.0
-heretix-cli check inventory.json --format json > results.json
+heretix-cli check sbom.json
+heretix-cli check sbom.json --api-url http://heretix-api:5000 --api-key your-secret-key --severity 7.0
+heretix-cli check sbom.json --format json > results.json
 ```
 
 | Flag | Default | Description |
@@ -174,7 +172,7 @@ HERETIX_API_KEY=your-secret-key heretix-cli scan --api-url http://heretix-api:50
 
 When `--image` is specified, the Docker daemon is checked first; if the image is not found locally it is pulled directly from the registry. Registry authentication is loaded automatically from `~/.docker/config.json` (supports ECR, GCR, and Docker Hub).
 
-When `--image` is specified, the `hostname` field in the generated `inventory.json` is set to the **image reference** (e.g. `nginx:latest`) instead of the machine hostname. This allows each image to be managed as an independent asset when imported into heretix-management.
+When `--image` is specified, the `hostname` field in the generated SBOM is set to the **image reference** (e.g. `nginx:latest`) instead of the machine hostname. This allows each image to be managed as an independent asset when imported into heretix-management.
 
 This command inherits all flags from both `collect` and `check`.
 
@@ -187,15 +185,15 @@ This command inherits all flags from both `collect` and `check`.
 
 ### GitHub Dependency Submission (`submit`)
 
-Reads an inventory JSON and submits it to the [GitHub Dependency Submission API](https://docs.github.com/en/rest/dependency-graph/dependency-submission) so that Dependabot can generate vulnerability alerts for the detected packages.
+Reads an SBOM (CycloneDX or the deprecated heretix inventory JSON) and submits it to the [GitHub Dependency Submission API](https://docs.github.com/en/rest/dependency-graph/dependency-submission) so that Dependabot can generate vulnerability alerts for the detected packages.
 
 ```bash
 # Typical CI/CD usage — env vars are set automatically by GitHub Actions
-heretix-cli collect --output inventory.json
-heretix-cli submit inventory.json
+heretix-cli collect --output sbom.json
+heretix-cli submit sbom.json
 
 # Manual usage
-heretix-cli submit inventory.json \
+heretix-cli submit sbom.json \
   --token ghp_xxx \
   --repo owner/repo \
   --sha $(git rev-parse HEAD) \
@@ -481,10 +479,10 @@ heretix-cli scan --image myapp:latest --dockerfile ./Dockerfile \
 
 ```yaml
 - name: Collect packages
-  run: heretix-cli collect --output inventory.json
+  run: heretix-cli collect --output sbom.json
 
 - name: Submit to GitHub Dependency Graph
-  run: heretix-cli submit inventory.json
+  run: heretix-cli submit sbom.json
   env:
     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     # GITHUB_REPOSITORY, GITHUB_SHA, GITHUB_REF, GITHUB_RUN_ID are set automatically

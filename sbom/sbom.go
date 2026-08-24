@@ -46,14 +46,28 @@ func GenerateCycloneDX(inv *inventory.Inventory, version string) *cdx.BOM {
 		purl := PackagePURL(p, inv.OS.ID)
 		hashes := parseIntegrity(p.Integrity)
 
-		var props *[]cdx.Property
+		// heretix:ecosystem and heretix:source preserve the exact strings
+		// checker.Check and depgraph.BuildSnapshot key on. They are round-tripped
+		// verbatim rather than reconstructed from the PURL because that
+		// reconstruction is lossy for OS packages (the distro qualifier drops
+		// information, e.g. "Ubuntu:22.04:LTS" -> "ubuntu-22.04" loses "LTS").
+		props := []cdx.Property{
+			{Name: "heretix:ecosystem", Value: p.Ecosystem},
+			{Name: "heretix:source", Value: p.Source},
+		}
 		if p.Direct != nil {
 			val := "false"
 			if *p.Direct {
 				val = "true"
 			}
-			pp := []cdx.Property{{Name: "cdx:direct", Value: val}}
-			props = &pp
+			props = append(props, cdx.Property{Name: "cdx:direct", Value: val})
+		}
+
+		var evidence *cdx.Evidence
+		if p.Location != "" {
+			evidence = &cdx.Evidence{
+				Occurrences: &[]cdx.EvidenceOccurrence{{Location: p.Location}},
+			}
 		}
 
 		var licenses *cdx.Licenses
@@ -84,7 +98,8 @@ func GenerateCycloneDX(inv *inventory.Inventory, version string) *cdx.BOM {
 			PackageURL: purl,
 			Licenses:   licenses,
 			Hashes:     hashes,
-			Properties: props,
+			Properties: &props,
+			Evidence:   evidence,
 			Scope:      scope,
 		})
 	}
@@ -189,6 +204,13 @@ func metadataComponent(inv *inventory.Inventory) *cdx.Component {
 	comp := &cdx.Component{
 		Name:    inv.Hostname,
 		Version: inv.OS.Name,
+		// heretix:os-id and heretix:os-version-id preserve inv.OS.ID/VersionID,
+		// which depgraph.BuildSnapshot needs (via sbom.PackagePURL) to rebuild
+		// OS package PURLs but which CycloneDX has no native field for.
+		Properties: &[]cdx.Property{
+			{Name: "heretix:os-id", Value: inv.OS.ID},
+			{Name: "heretix:os-version-id", Value: inv.OS.VersionID},
+		},
 	}
 	if inv.Type == "docker_image" {
 		comp.Type = cdx.ComponentTypeContainer

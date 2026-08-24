@@ -223,3 +223,96 @@ func TestGenerateCycloneDXLeavesInventoryUnchanged(t *testing.T) {
 			"the merge must not reach the inventory or the vulnerability API path", got, want)
 	}
 }
+
+// TestRoundTripThroughCycloneDX guards `check`/`submit`'s ability to read a
+// heretix-generated CycloneDX file in place of inventory.json. It checks only
+// the fields those two commands actually consume (see checker.Check and
+// depgraph.BuildSnapshot) — not every Package field is expected to survive.
+func TestRoundTripThroughCycloneDX(t *testing.T) {
+	inv := &inventory.Inventory{
+		Hostname:  "build-host",
+		ScannedAt: "2026-01-01T00:00:00Z",
+		OS:        inventory.OSInfo{ID: "ubuntu", VersionID: "22.04", Name: "Ubuntu 22.04"},
+		Packages: []inventory.Package{
+			{
+				Name: "lodash", Version: "4.17.21",
+				Ecosystem: "npm", Source: "package-lock.json",
+				Direct: inventory.BoolPtr(true), Location: "package-lock.json",
+				Deps: []string{"pkg:npm/other@1.0.0"},
+			},
+			{
+				Name: "requests", Version: "2.31.0",
+				Ecosystem: "PyPI", Source: "requirements.txt",
+				Direct: inventory.BoolPtr(false), Location: "requirements.txt",
+			},
+			{
+				Name: "org.slf4j:slf4j-api", Version: "1.7.36",
+				Ecosystem: "Maven", Source: "pom.xml",
+				Location: "pom.xml",
+			},
+			{
+				Name: "openssl", Version: "3.0.2-0ubuntu1.15",
+				Ecosystem: "Ubuntu:22.04:LTS", Source: "dpkg",
+			},
+		},
+	}
+
+	bom := GenerateCycloneDX(inv, "test")
+	got := FromCycloneDX(bom)
+
+	if got.Hostname != inv.Hostname {
+		t.Errorf("Hostname = %q, want %q", got.Hostname, inv.Hostname)
+	}
+	if got.OS.ID != inv.OS.ID {
+		t.Errorf("OS.ID = %q, want %q (depgraph.BuildSnapshot needs this to rebuild OS package PURLs)", got.OS.ID, inv.OS.ID)
+	}
+
+	if len(got.Packages) != len(inv.Packages) {
+		t.Fatalf("got %d packages, want %d", len(got.Packages), len(inv.Packages))
+	}
+	for i, want := range inv.Packages {
+		p := got.Packages[i]
+		if p.Name != want.Name {
+			t.Errorf("package %d: Name = %q, want %q", i, p.Name, want.Name)
+		}
+		if p.Version != want.Version {
+			t.Errorf("package %d: Version = %q, want %q", i, p.Version, want.Version)
+		}
+		if p.Ecosystem != want.Ecosystem {
+			t.Errorf("package %d: Ecosystem = %q, want %q", i, p.Ecosystem, want.Ecosystem)
+		}
+		if p.Source != want.Source {
+			t.Errorf("package %d: Source = %q, want %q", i, p.Source, want.Source)
+		}
+		if p.Location != want.Location {
+			t.Errorf("package %d: Location = %q, want %q", i, p.Location, want.Location)
+		}
+		gotDirect := "nil"
+		if p.Direct != nil {
+			gotDirect = fmtBool(*p.Direct)
+		}
+		wantDirect := "nil"
+		if want.Direct != nil {
+			wantDirect = fmtBool(*want.Direct)
+		}
+		if gotDirect != wantDirect {
+			t.Errorf("package %d: Direct = %s, want %s", i, gotDirect, wantDirect)
+		}
+		if len(p.Deps) != len(want.Deps) {
+			t.Errorf("package %d: Deps = %v, want %v", i, p.Deps, want.Deps)
+		} else {
+			for j := range want.Deps {
+				if p.Deps[j] != want.Deps[j] {
+					t.Errorf("package %d: Deps[%d] = %q, want %q", i, j, p.Deps[j], want.Deps[j])
+				}
+			}
+		}
+	}
+}
+
+func fmtBool(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
+}

@@ -5,7 +5,6 @@ import (
 	"os"
 
 	"github.com/TITeee/heretix-cli/depgraph"
-	"github.com/TITeee/heretix-cli/inventory"
 	"github.com/spf13/cobra"
 )
 
@@ -63,7 +62,7 @@ func runSubmit(cmd *cobra.Command, args []string) error {
 	ref := firstNonEmpty(submitRef, os.Getenv("GITHUB_REF"), "refs/heads/main")
 	jobID := firstNonEmpty(submitJobID, os.Getenv("GITHUB_RUN_ID"), submitCorrelator)
 
-	inv, err := inventory.ReadFromFile(args[0])
+	inv, err := loadInventoryFile(args[0])
 	if err != nil {
 		return fmt.Errorf("read inventory: %w", err)
 	}
