@@ -18,7 +18,7 @@ type MavenCollector struct{}
 
 func (c *MavenCollector) Name() string { return "maven" }
 
-func (c *MavenCollector) Collect(scanPath string, verbose bool) ([]inventory.Package, error) {
+func (c *MavenCollector) Collect(scanPath string, verbose bool, isContainer bool) ([]inventory.Package, error) {
 	var pkgs []inventory.Package
 
 	err := filepath.WalkDir(scanPath, func(path string, d fs.DirEntry, err error) error {

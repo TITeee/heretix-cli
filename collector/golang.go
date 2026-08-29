@@ -26,7 +26,7 @@ type GoCollector struct{}
 
 func (c *GoCollector) Name() string { return "go" }
 
-func (c *GoCollector) Collect(scanPath string, verbose bool) ([]inventory.Package, error) {
+func (c *GoCollector) Collect(scanPath string, verbose bool, isContainer bool) ([]inventory.Package, error) {
 	var pkgs []inventory.Package
 	found := false
 

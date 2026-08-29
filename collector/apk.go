@@ -16,7 +16,7 @@ type APKCollector struct{}
 
 func (c *APKCollector) Name() string { return "apk" }
 
-func (c *APKCollector) Collect(scanPath string, verbose bool) ([]inventory.Package, error) {
+func (c *APKCollector) Collect(scanPath string, verbose bool, isContainer bool) ([]inventory.Package, error) {
 	dbPath := filepath.Join(scanPath, "lib", "apk", "db", "installed")
 
 	if _, err := os.Stat(dbPath); err != nil {

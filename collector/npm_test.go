@@ -79,6 +79,23 @@ func writeLockfile(t *testing.T, content string) string {
 	return path
 }
 
+// TestCollect_ContainerScanSkipsHostGlobalFallback guards against reporting this
+// process's own host npm/pnpm global packages as belonging to a scanned
+// container image. When no lockfile is found under scanPath and isContainer is
+// true, Collect must return no packages rather than falling back to "npm list
+// -g"/"pnpm list -g", which run against the host, not the extracted rootfs.
+func TestNPMCollect_ContainerScanSkipsHostGlobalFallback(t *testing.T) {
+	dir := t.TempDir() // no lockfiles, no node_modules — global fallback would otherwise trigger
+
+	pkgs, err := (&NPMCollector{}).Collect(dir, false, true)
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(pkgs) != 0 {
+		t.Errorf("Collect with isContainer=true returned %d packages, want 0 (host global fallback must not run for a container scan): %+v", len(pkgs), pkgs)
+	}
+}
+
 func TestParsePnpmLock_ScopeReflectsProdReachability(t *testing.T) {
 	path := writeLockfile(t, pnpmLockFixture)
 	pkgs, err := parsePnpmLock(path, false)

@@ -26,7 +26,7 @@ type PyPICollector struct{}
 
 func (c *PyPICollector) Name() string { return "pypi" }
 
-func (c *PyPICollector) Collect(scanPath string, verbose bool) ([]inventory.Package, error) {
+func (c *PyPICollector) Collect(scanPath string, verbose bool, isContainer bool) ([]inventory.Package, error) {
 	var pkgs []inventory.Package
 	found := false
 
@@ -97,8 +97,11 @@ func (c *PyPICollector) Collect(scanPath string, verbose bool) ([]inventory.Pack
 		return nil, fmt.Errorf("walk %s: %w", scanPath, err)
 	}
 
-	// Fallback to pip list if no lock files found
-	if !found {
+	// Fallback to pip list if no lock files found. Skipped for container image
+	// scans: "pip" here would run against this process's own host environment,
+	// not the extracted image, so a hit would misattribute the host's globally
+	// installed packages to the image being scanned.
+	if !found && !isContainer {
 		p, err := pipListFallback(verbose)
 		if err != nil {
 			if verbose {

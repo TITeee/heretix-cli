@@ -11,13 +11,15 @@ Linux/Windows サーバや Docker コンテナイメージの OS パッケージ
 | RHEL / AlmaLinux / Rocky Linux / Oracle Linux / CentOS (RPM) | `rpm -qa` / コンテナは `rpm --root <rootfs>` | Linux のみ |
 | Debian / Ubuntu 系 (DPKG) | `var/lib/dpkg/status` を直接解析 | Linux のみ |
 | Alpine (APK) | `/lib/apk/db/installed` を直接解析 | Linux のみ |
-| PyPI | `requirements.txt`, `Pipfile.lock`, `poetry.lock`, `uv.lock` / フォールバック: `pip list` | Linux / Windows |
-| npm / yarn / pnpm | `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` / フォールバック: `npm list -g`, `pnpm list -g` | Linux / Windows |
+| PyPI | `requirements.txt`, `Pipfile.lock`, `poetry.lock`, `uv.lock` / フォールバック: `pip list`* | Linux / Windows |
+| npm / yarn / pnpm | `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` / フォールバック: `npm list -g`, `pnpm list -g`* | Linux / Windows |
 | Go (go modules) | `go.mod` / フォールバック: `go list -m -json all` | Linux / Windows |
 | Composer (PHP) | `composer.lock` | Linux / Windows |
 | Maven (Java) | `pom.xml` / フォールバック: `mvn dependency:tree` | Linux / Windows |
 | Gradle (Java/Kotlin) | `gradle.lockfile` / `build.gradle` / `build.gradle.kts` | Linux / Windows |
 | Java アーティファクト | `*.jar`, `*.war`, `*.ear` — `META-INF/maven/*/pom.properties` を読み、`WEB-INF/lib` / `BOOT-INF/lib` を再帰的に解析 | Linux / Windows |
+
+\* 稼働中のホストに対してのみ実行され、`--image`/`--dockerfile` スキャンでは完全にスキップされる。この時点の `pip`/`npm`/`pnpm` はこのプロセス自身の環境を見てしまい、展開したイメージを見るわけではないため。
 
 ## インストール
 

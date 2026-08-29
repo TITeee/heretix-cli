@@ -17,7 +17,7 @@ type ComposerCollector struct{}
 
 func (c *ComposerCollector) Name() string { return "composer" }
 
-func (c *ComposerCollector) Collect(scanPath string, verbose bool) ([]inventory.Package, error) {
+func (c *ComposerCollector) Collect(scanPath string, verbose bool, isContainer bool) ([]inventory.Package, error) {
 	var pkgs []inventory.Package
 
 	err := filepath.WalkDir(scanPath, func(path string, d fs.DirEntry, err error) error {

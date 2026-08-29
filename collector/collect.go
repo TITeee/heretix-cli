@@ -45,7 +45,7 @@ func CollectAll(scanPath string, skip []string, verbose bool, isContainer bool) 
 		}
 		activeCollectors++
 
-		pkgs, err := c.Collect(scanPath, verbose)
+		pkgs, err := c.Collect(scanPath, verbose, isContainer)
 		if err != nil {
 			log.Printf("Warning: %s collector failed: %v", c.Name(), err)
 			collectorErrors++

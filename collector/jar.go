@@ -50,7 +50,7 @@ type JARCollector struct{}
 
 func (c *JARCollector) Name() string { return "jar" }
 
-func (c *JARCollector) Collect(scanPath string, verbose bool) ([]inventory.Package, error) {
+func (c *JARCollector) Collect(scanPath string, verbose bool, isContainer bool) ([]inventory.Package, error) {
 	var pkgs []inventory.Package
 
 	err := filepath.WalkDir(scanPath, func(p string, d fs.DirEntry, err error) error {

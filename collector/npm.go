@@ -19,7 +19,7 @@ type NPMCollector struct{}
 
 func (c *NPMCollector) Name() string { return "npm" }
 
-func (c *NPMCollector) Collect(scanPath string, verbose bool) ([]inventory.Package, error) {
+func (c *NPMCollector) Collect(scanPath string, verbose bool, isContainer bool) ([]inventory.Package, error) {
 	var pkgs []inventory.Package
 	found := false
 
@@ -82,8 +82,11 @@ func (c *NPMCollector) Collect(scanPath string, verbose bool) ([]inventory.Packa
 		found = true
 	}
 
-	// Fallback to global package managers
-	if !found {
+	// Fallback to global package managers. Skipped for container image scans:
+	// "npm"/"pnpm" here would run against this process's own host environment,
+	// not the extracted image, so a hit would misattribute the host's globally
+	// installed packages to the image being scanned.
+	if !found && !isContainer {
 		p, err := npmGlobalFallback(verbose)
 		if err != nil {
 			if verbose {

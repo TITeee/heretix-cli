@@ -17,7 +17,7 @@ type DPKGCollector struct{}
 
 func (c *DPKGCollector) Name() string { return "dpkg" }
 
-func (c *DPKGCollector) Collect(scanPath string, verbose bool) ([]inventory.Package, error) {
+func (c *DPKGCollector) Collect(scanPath string, verbose bool, isContainer bool) ([]inventory.Package, error) {
 	statusPath := filepath.Join(scanPath, "var", "lib", "dpkg", "status")
 
 	if _, err := os.Stat(statusPath); err != nil {

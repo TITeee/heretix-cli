@@ -20,7 +20,7 @@ type GradleCollector struct{}
 
 func (c *GradleCollector) Name() string { return "gradle" }
 
-func (c *GradleCollector) Collect(scanPath string, verbose bool) ([]inventory.Package, error) {
+func (c *GradleCollector) Collect(scanPath string, verbose bool, isContainer bool) ([]inventory.Package, error) {
 	var pkgs []inventory.Package
 
 	err := filepath.WalkDir(scanPath, func(path string, d fs.DirEntry, err error) error {

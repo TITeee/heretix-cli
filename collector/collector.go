@@ -11,5 +11,9 @@ type Collector interface {
 	// Collect scans the system and returns discovered packages.
 	// scanPath is the filesystem root to search under.
 	// verbose enables detailed logging.
-	Collect(scanPath string, verbose bool) ([]inventory.Package, error)
+	// isContainer is true when scanPath is an extracted container rootfs rather
+	// than the live host filesystem — collectors must not fall back to querying
+	// the host's own package managers in that case, since the result would
+	// describe the host, not the image being scanned.
+	Collect(scanPath string, verbose bool, isContainer bool) ([]inventory.Package, error)
 }

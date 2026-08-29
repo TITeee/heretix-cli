@@ -17,7 +17,7 @@ type RPMCollector struct{}
 
 func (c *RPMCollector) Name() string { return "rpm" }
 
-func (c *RPMCollector) Collect(scanPath string, verbose bool) ([]inventory.Package, error) {
+func (c *RPMCollector) Collect(scanPath string, verbose bool, isContainer bool) ([]inventory.Package, error) {
 	if _, err := exec.LookPath("rpm"); err != nil {
 		return nil, nil
 	}

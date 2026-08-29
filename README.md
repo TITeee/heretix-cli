@@ -11,13 +11,15 @@ A CLI tool that scans OS packages (RPM, DPKG, APK) and OSS ecosystems (PyPI, npm
 | RHEL / AlmaLinux / Rocky Linux / Oracle Linux / CentOS (RPM) | `rpm -qa` / containers use `rpm --root <rootfs>` | Linux only |
 | Debian / Ubuntu-based (DPKG) | Parses `var/lib/dpkg/status` directly | Linux only |
 | Alpine (APK) | Parses `/lib/apk/db/installed` directly | Linux only |
-| PyPI | `requirements.txt`, `Pipfile.lock`, `poetry.lock`, `uv.lock` / fallback: `pip list` | Linux / Windows |
-| npm / yarn / pnpm | `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` / fallback: `npm list -g`, `pnpm list -g` | Linux / Windows |
+| PyPI | `requirements.txt`, `Pipfile.lock`, `poetry.lock`, `uv.lock` / fallback: `pip list`* | Linux / Windows |
+| npm / yarn / pnpm | `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` / fallback: `npm list -g`, `pnpm list -g`* | Linux / Windows |
 | Go (go modules) | `go.mod` / fallback: `go list -m -json all` | Linux / Windows |
 | Composer (PHP) | `composer.lock` | Linux / Windows |
 | Maven (Java) | `pom.xml` / fallback: `mvn dependency:tree` | Linux / Windows |
 | Gradle (Java/Kotlin) | `gradle.lockfile` / `build.gradle` / `build.gradle.kts` | Linux / Windows |
 | Java artifacts | `*.jar`, `*.war`, `*.ear` — reads `META-INF/maven/*/pom.properties`, recurses into `WEB-INF/lib` and `BOOT-INF/lib` | Linux / Windows |
+
+\* Only runs against the live host: skipped entirely for `--image`/`--dockerfile` scans, since `pip`/`npm`/`pnpm` here would query this process's own environment, not the extracted image.
 
 ## Installation
 

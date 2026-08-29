@@ -15,6 +15,23 @@ const pipfileLockFixture = `{
   }
 }`
 
+// TestCollect_ContainerScanSkipsHostGlobalFallback guards against reporting this
+// process's own host pip global packages as belonging to a scanned container
+// image. When no lock/requirements file is found under scanPath and
+// isContainer is true, Collect must return no packages rather than falling
+// back to "pip list", which runs against the host, not the extracted rootfs.
+func TestPyPICollect_ContainerScanSkipsHostGlobalFallback(t *testing.T) {
+	dir := t.TempDir() // no requirements files — global fallback would otherwise trigger
+
+	pkgs, err := (&PyPICollector{}).Collect(dir, false, true)
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(pkgs) != 0 {
+		t.Errorf("Collect with isContainer=true returned %d packages, want 0 (host global fallback must not run for a container scan): %+v", len(pkgs), pkgs)
+	}
+}
+
 func TestParsePipfileLock_ScopeReflectsDevelopSection(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "Pipfile.lock")
