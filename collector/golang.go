@@ -98,6 +98,19 @@ func goModulePackages(goModPath string, verbose bool) ([]inventory.Package, erro
 // goListAllInDir runs "go list -m -json all" in dir and returns all modules
 // in the resolved dependency graph (direct + indirect + transitive).
 // It also calls goModGraph to populate Deps and Direct on each package.
+//
+// The result is filtered against goModDeclaredModules: "go list -m all" (and
+// "go mod graph", used below) walk the full historical module graph, which
+// includes modules needed only by some *other* dependency's own test suite —
+// never something this module's build or its own tests can reach. go.mod
+// itself (Go 1.17+ module graph pruning) is already the authoritative
+// "actually needed" list, so anything outside it is dropped. See the
+// 2026-08-30 false-positive investigation: heretix-cli's own module graph
+// reported google.golang.org/grpc and golang.org/x/mod even though `go mod
+// why -m` shows this module doesn't need them at all, and reported
+// gopkg.in/yaml.v3/go.opentelemetry.io/otel/sdk even though both are reachable
+// only through a dependency's ".test" edge (e.g. cyclonedx-go's own test
+// suite), not through any code heretix-cli actually imports.
 func goListAllInDir(dir string, verbose bool) ([]inventory.Package, error) {
 	if _, err := exec.LookPath("go"); err != nil {
 		return nil, fmt.Errorf("go not found in PATH")
@@ -109,6 +122,8 @@ func goListAllInDir(dir string, verbose bool) ([]inventory.Package, error) {
 	if err != nil {
 		return nil, fmt.Errorf("go list in %s: %w", dir, err)
 	}
+
+	allowed, allowedOK := goModDeclaredModules(filepath.Join(dir, "go.mod"), verbose)
 
 	var pkgs []inventory.Package
 	decoder := json.NewDecoder(strings.NewReader(string(out)))
@@ -124,6 +139,9 @@ func goListAllInDir(dir string, verbose bool) ([]inventory.Package, error) {
 		if mod.Main || mod.Path == "" || mod.Version == "" {
 			continue
 		}
+		if allowedOK && !allowed[mod.Path] {
+			continue
+		}
 		pkgs = append(pkgs, inventory.Package{
 			Name:       mod.Path,
 			Version:    mod.Version,
@@ -135,7 +153,7 @@ func goListAllInDir(dir string, verbose bool) ([]inventory.Package, error) {
 	}
 
 	// Populate Deps and Direct from go mod graph (best-effort; skipped on failure)
-	depsByKey, directKeys := goModGraph(dir, verbose)
+	depsByKey, directKeys := goModGraph(dir, verbose, allowed, allowedOK)
 	for i := range pkgs {
 		key := pkgs[i].Name + "@" + pkgs[i].Version
 		if deps, ok := depsByKey[key]; ok {
@@ -152,13 +170,38 @@ func goListAllInDir(dir string, verbose bool) ([]inventory.Package, error) {
 	return pkgs, nil
 }
 
+// goModDeclaredModules returns the set of module paths go.mod itself declares
+// (direct and indirect combined), by reusing parseGoMod's require-block
+// parsing. ok is false when go.mod couldn't be read/parsed, so callers can
+// tell "legitimately no dependencies" (empty set, ok=true) apart from
+// "unknown, don't filter" (ok=false).
+func goModDeclaredModules(goModPath string, verbose bool) (allowed map[string]bool, ok bool) {
+	pkgs, err := parseGoMod(goModPath, verbose)
+	if err != nil {
+		return nil, false
+	}
+	allowed = make(map[string]bool, len(pkgs))
+	for _, p := range pkgs {
+		allowed[p.Name] = true
+	}
+	return allowed, true
+}
+
 // goModGraph runs "go mod graph" in dir and returns:
 //   - depsByKey: map of "module@version" → []PURL of its direct dependencies
 //   - directKeys: set of "module@version" strings that are direct deps of the main module
 //
+// allowed/allowedOK mirror goModDeclaredModules: when allowedOK is true, an
+// edge is dropped whenever its target module isn't in allowed. "go mod graph"
+// walks the same full historical module graph as "go list -m all" (see
+// goListAllInDir), so without this filter a package that did survive that
+// filter could still end up with a Deps entry pointing at a PURL for a module
+// this build doesn't actually include — a dangling reference once that module
+// itself is filtered out of the package list.
+//
 // Returns empty maps on any failure (go binary missing, network unavailable, etc.)
 // so callers can treat it as best-effort enrichment.
-func goModGraph(dir string, verbose bool) (depsByKey map[string][]string, directKeys map[string]bool) {
+func goModGraph(dir string, verbose bool, allowed map[string]bool, allowedOK bool) (depsByKey map[string][]string, directKeys map[string]bool) {
 	depsByKey = make(map[string][]string)
 	directKeys = make(map[string]bool)
 
@@ -198,6 +241,9 @@ func goModGraph(dir string, verbose bool) (depsByKey map[string][]string, direct
 	for _, line := range lines {
 		parts := strings.Fields(line)
 		left, right := parts[0], parts[1]
+		if allowedOK && !allowed[modulePathOf(right)] {
+			continue
+		}
 		depsByKey[left] = append(depsByKey[left], goModuleToPURL(right))
 		if mainModule != "" && left == mainModule {
 			directKeys[right] = true
@@ -208,6 +254,15 @@ func goModGraph(dir string, verbose bool) (depsByKey map[string][]string, direct
 		log.Printf("[go] go mod graph: %d module edges from %s", len(lines), dir)
 	}
 	return
+}
+
+// modulePathOf strips the "@version" suffix from a "go mod graph" token,
+// leaving just the module path.
+func modulePathOf(moduleAtVersion string) string {
+	if at := strings.LastIndex(moduleAtVersion, "@"); at >= 0 {
+		return moduleAtVersion[:at]
+	}
+	return moduleAtVersion
 }
 
 // goModuleToPURL converts a "module@version" token from go mod graph output
