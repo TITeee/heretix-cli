@@ -74,14 +74,25 @@ func (c *RPMCollector) Collect(scanPath string, verbose bool, isContainer bool) 
 	return pkgs, nil
 }
 
-// cleanRPMVersion removes only the epoch from an RPM version string,
-// preserving the release suffix required for distro exact-match in vuln-api.
-// "1:7.88.1-4.el9" → "7.88.1-4.el9"
-// "0:2.36.1-8.el9" → "2.36.1-8.el9"
-// "7.88.1-4.el9"   → "7.88.1-4.el9"  (no epoch, unchanged)
+// cleanRPMVersion drops an epoch of "(none)" or "0" from an RPM version
+// string — both mean "no epoch", and heretix-api's version comparison
+// already treats an omitted epoch as 0. Any other epoch is preserved: it is
+// the highest-precedence field in RPM version comparison, so dropping a real
+// one (e.g. "2:") makes an already-patched package with an epoch bump look
+// older than an advisory's fixed version, which is exactly what happened
+// before this handled "(none)"/"0" as special cases instead of stripping
+// every epoch unconditionally.
+//
+// "(none):7.88.1-4.el9" → "7.88.1-4.el9"  (rpm's placeholder for an unset %{EPOCH} tag)
+// "0:2.36.1-8.el9"      → "2.36.1-8.el9"  (explicit zero epoch, same meaning)
+// "2:4.9-6.el9"         → "2:4.9-6.el9"   (real epoch — preserved)
+// "7.88.1-4.el9"        → "7.88.1-4.el9"  (no colon at all, unchanged)
 func cleanRPMVersion(raw string) string {
-	if idx := strings.Index(raw, ":"); idx != -1 {
-		return raw[idx+1:]
+	if rest, ok := strings.CutPrefix(raw, "(none):"); ok {
+		return rest
+	}
+	if rest, ok := strings.CutPrefix(raw, "0:"); ok {
+		return rest
 	}
 	return raw
 }

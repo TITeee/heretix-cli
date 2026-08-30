@@ -48,10 +48,9 @@ func (c *DPKGCollector) parseStatusFile(statusPath, scanPath string, verbose boo
 
 	flush := func() {
 		if currentPkg != "" && currentVersion != "" && strings.Contains(currentStatus, "install ok installed") {
-			version := cleanDPKGVersion(currentVersion)
 			pkgs = append(pkgs, inventory.Package{
 				Name:       currentPkg,
-				Version:    version,
+				Version:    currentVersion,
 				RawVersion: currentVersion,
 				Ecosystem:  ecosystem,
 				Source:     "dpkg",
@@ -127,10 +126,9 @@ func (c *DPKGCollector) collectViaDpkgQuery(verbose bool) ([]inventory.Package, 
 		if rawVersion == "" {
 			continue
 		}
-		version := cleanDPKGVersion(rawVersion)
 		pkgs = append(pkgs, inventory.Package{
 			Name:       name,
-			Version:    version,
+			Version:    rawVersion,
 			RawVersion: rawVersion,
 			Ecosystem:  ecosystem,
 			Source:     "dpkg",
@@ -142,18 +140,6 @@ func (c *DPKGCollector) collectViaDpkgQuery(verbose bool) ([]inventory.Package, 
 		log.Printf("[dpkg] collected %d packages via dpkg-query", len(pkgs))
 	}
 	return pkgs, nil
-}
-
-// cleanDPKGVersion removes the epoch prefix from a Debian version string.
-// Unlike RPM, Debian versions retain the release suffix for OSV matching.
-// "1:7.88.1-1"       → "7.88.1-1"
-// "5.1-2+deb11u1"    → "5.1-2+deb11u1"  (no epoch, unchanged)
-// "2:1.0.0-1ubuntu1" → "1.0.0-1ubuntu1"
-func cleanDPKGVersion(raw string) string {
-	if idx := strings.Index(raw, ":"); idx != -1 {
-		return raw[idx+1:]
-	}
-	return raw
 }
 
 // parseDpkgCopyrightLicense best-effort extracts license identifiers from a
