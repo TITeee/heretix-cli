@@ -19,7 +19,7 @@ A CLI tool that scans OS packages (RPM, DPKG, APK) and OSS ecosystems (PyPI, npm
 | Gradle (Java/Kotlin) | `gradle.lockfile` / `build.gradle` / `build.gradle.kts` | Linux / Windows |
 | Java artifacts | `*.jar`, `*.war`, `*.ear` — reads `META-INF/maven/*/pom.properties`, recurses into `WEB-INF/lib` and `BOOT-INF/lib` | Linux / Windows |
 
-\* Only runs against the live host: skipped entirely for `--image`/`--dockerfile` scans, since `pip`/`npm`/`pnpm` here would query this process's own environment, not the extracted image.
+\* Only runs for a whole-system scan (`--scan-path` at the filesystem root, the default with no `--image`): skipped for `--image`/`--dockerfile` scans and for any `--scan-path` narrower than the root, since `pip`/`npm`/`pnpm` here always query this process's own host environment regardless of `--scan-path` — never the extracted image or the scanned subdirectory.
 
 ## Installation
 

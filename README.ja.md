@@ -19,7 +19,7 @@ Linux/Windows サーバや Docker コンテナイメージの OS パッケージ
 | Gradle (Java/Kotlin) | `gradle.lockfile` / `build.gradle` / `build.gradle.kts` | Linux / Windows |
 | Java アーティファクト | `*.jar`, `*.war`, `*.ear` — `META-INF/maven/*/pom.properties` を読み、`WEB-INF/lib` / `BOOT-INF/lib` を再帰的に解析 | Linux / Windows |
 
-\* 稼働中のホストに対してのみ実行され、`--image`/`--dockerfile` スキャンでは完全にスキップされる。この時点の `pip`/`npm`/`pnpm` はこのプロセス自身の環境を見てしまい、展開したイメージを見るわけではないため。
+\* システム全体をスキャンする場合（`--scan-path` がファイルシステムのルート — `--image` 未指定時のデフォルト）にのみ実行される。`--image`/`--dockerfile` スキャン時、および `--scan-path` がルートより狭い場合はスキップされる。`pip`/`npm`/`pnpm` は `--scan-path` の値に関係なく常にこのプロセス自身のホスト環境を見てしまい、展開したイメージやスキャン対象のサブディレクトリを見るわけではないため。
 
 ## インストール
 

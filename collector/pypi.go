@@ -98,10 +98,12 @@ func (c *PyPICollector) Collect(scanPath string, verbose bool, isContainer bool)
 	}
 
 	// Fallback to pip list if no lock files found. Skipped for container image
-	// scans: "pip" here would run against this process's own host environment,
-	// not the extracted image, so a hit would misattribute the host's globally
-	// installed packages to the image being scanned.
-	if !found && !isContainer {
+	// scans (isContainer) and for any scan not rooted at the live filesystem's
+	// root: "pip" always queries this host's own global environment regardless
+	// of scanPath, so a hit outside a whole-system scan would misattribute the
+	// host's globally installed packages to whatever narrower path was
+	// actually being scanned.
+	if !found && !isContainer && isFilesystemRoot(scanPath) {
 		p, err := pipListFallback(verbose)
 		if err != nil {
 			if verbose {

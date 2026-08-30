@@ -13,6 +13,29 @@ import (
 	"github.com/TITeee/heretix-cli/inventory"
 )
 
+// isFilesystemRoot reports whether scanPath resolves to the root of its
+// filesystem — "/" on Unix, or a drive root like "C:\" on Windows — as
+// opposed to any subdirectory, including ".".
+//
+// Collectors that fall back to querying this host's own global package
+// manager state (npm/pnpm's "npm list -g", pip's "pip list") should only do
+// so when the scan is actually meant to audit the whole live system.
+// Otherwise a scan scoped to one project directory (e.g. "collect --scan-path
+// .") can report whatever happens to be globally installed on the scanning
+// machine as if it belonged to that project — see the 2026-08-30
+// false-positive investigation, where scanning heretix-cli's own source tree
+// (a Go project with no npm dependencies at all) picked up an unrelated
+// globally-installed pnpm and its CVEs. This mirrors the existing convention
+// in dpkg.go, which only falls back to the live "dpkg-query" command when
+// scanPath == "/".
+func isFilesystemRoot(scanPath string) bool {
+	abs, err := filepath.Abs(scanPath)
+	if err != nil {
+		return false
+	}
+	return filepath.Dir(abs) == abs
+}
+
 // CollectAll runs all collectors (except those in skip) and returns a deduplicated inventory.
 // isContainer should be true when scanning an extracted container rootfs — on Windows this
 // re-enables the Linux OS package collectors (RPM, DPKG, APK) which are otherwise skipped.

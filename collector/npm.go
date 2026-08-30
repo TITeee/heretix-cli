@@ -82,11 +82,13 @@ func (c *NPMCollector) Collect(scanPath string, verbose bool, isContainer bool) 
 		found = true
 	}
 
-	// Fallback to global package managers. Skipped for container image scans:
-	// "npm"/"pnpm" here would run against this process's own host environment,
-	// not the extracted image, so a hit would misattribute the host's globally
-	// installed packages to the image being scanned.
-	if !found && !isContainer {
+	// Fallback to global package managers. Skipped for container image scans
+	// (isContainer) and for any scan not rooted at the live filesystem's root:
+	// "npm"/"pnpm" here always query this host's own global environment,
+	// regardless of scanPath, so a hit outside a whole-system scan would
+	// misattribute the host's globally installed packages to whatever
+	// narrower path was actually being scanned.
+	if !found && !isContainer && isFilesystemRoot(scanPath) {
 		p, err := npmGlobalFallback(verbose)
 		if err != nil {
 			if verbose {

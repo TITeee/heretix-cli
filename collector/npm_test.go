@@ -96,6 +96,25 @@ func TestNPMCollect_ContainerScanSkipsHostGlobalFallback(t *testing.T) {
 	}
 }
 
+// TestNPMCollect_NonRootScanSkipsHostGlobalFallback guards against reporting
+// this host's own globally-installed npm/pnpm packages as belonging to a
+// project scan that isn't scoped to the whole live filesystem (e.g. `collect
+// --scan-path .`). See the 2026-08-30 investigation: scanning heretix-cli's
+// own source tree — a Go project with no npm dependencies — picked up an
+// unrelated globally-installed pnpm and its CVEs, because isContainer alone
+// doesn't distinguish "scan this one directory" from "scan the whole host".
+func TestNPMCollect_NonRootScanSkipsHostGlobalFallback(t *testing.T) {
+	dir := t.TempDir() // absolute but not a filesystem root — global fallback would otherwise trigger
+
+	pkgs, err := (&NPMCollector{}).Collect(dir, false, false)
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(pkgs) != 0 {
+		t.Errorf("Collect on a non-root scanPath returned %d packages, want 0 (host global fallback must not run outside a whole-system scan): %+v", len(pkgs), pkgs)
+	}
+}
+
 func TestParsePnpmLock_ScopeReflectsProdReachability(t *testing.T) {
 	path := writeLockfile(t, pnpmLockFixture)
 	pkgs, err := parsePnpmLock(path, false)

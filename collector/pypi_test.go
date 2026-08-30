@@ -32,6 +32,23 @@ func TestPyPICollect_ContainerScanSkipsHostGlobalFallback(t *testing.T) {
 	}
 }
 
+// TestPyPICollect_NonRootScanSkipsHostGlobalFallback guards against reporting
+// this host's own globally-installed pip packages as belonging to a project
+// scan that isn't scoped to the whole live filesystem (e.g. `collect
+// --scan-path .`). See the 2026-08-30 investigation: isContainer alone
+// doesn't distinguish "scan this one directory" from "scan the whole host".
+func TestPyPICollect_NonRootScanSkipsHostGlobalFallback(t *testing.T) {
+	dir := t.TempDir() // absolute but not a filesystem root — global fallback would otherwise trigger
+
+	pkgs, err := (&PyPICollector{}).Collect(dir, false, false)
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(pkgs) != 0 {
+		t.Errorf("Collect on a non-root scanPath returned %d packages, want 0 (host global fallback must not run outside a whole-system scan): %+v", len(pkgs), pkgs)
+	}
+}
+
 func TestParsePipfileLock_ScopeReflectsDevelopSection(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "Pipfile.lock")
