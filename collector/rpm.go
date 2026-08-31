@@ -1,13 +1,18 @@
 package collector
 
 import (
-	"bufio"
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+
+	// go-rpmdb's sqlite backend opens databases through database/sql by
+	// driver name ("sqlite") without importing a driver itself — the caller
+	// is expected to register one. glebarez/go-sqlite is pure Go (no cgo),
+	// which keeps heretix-cli's CGO_ENABLED=0 cross-compilation working.
+	_ "github.com/glebarez/go-sqlite"
+	rpmdb "github.com/knqyf263/go-rpmdb/pkg"
 
 	"github.com/TITeee/heretix-cli/inventory"
 )
@@ -17,84 +22,91 @@ type RPMCollector struct{}
 
 func (c *RPMCollector) Name() string { return "rpm" }
 
+// rpmDBDirs lists the directories, relative to a root, that hold the RPM
+// database — checked in this order since a distro uses exactly one. Most use
+// "var/lib/rpm"; some newer ones (e.g. openSUSE/SLE) moved it under
+// "usr/lib/sysimage/rpm" to make /var read-only-friendly.
+var rpmDBDirs = []string{
+	filepath.Join("usr", "lib", "sysimage", "rpm"),
+	filepath.Join("var", "lib", "rpm"),
+}
+
+// rpmDBFileNames are the filenames a database directory may hold, one per
+// on-disk format: SQLite (RHEL/Fedora 9+ generation), NDB, and the legacy
+// Berkeley DB. go-rpmdb identifies the actual format from each file's
+// contents, not its name, so this list only needs to match filenames real RPM
+// installations actually use.
+var rpmDBFileNames = []string{"rpmdb.sqlite", "Packages.db", "Packages"}
+
 func (c *RPMCollector) Collect(scanPath string, verbose bool, isContainer bool) ([]inventory.Package, error) {
-	if _, err := exec.LookPath("rpm"); err != nil {
+	dbPath := findRPMDatabase(scanPath)
+	if dbPath == "" {
 		return nil, nil
 	}
 
-	args := []string{"-qa", "--queryformat", `%{NAME}\t%{EPOCH}:%{VERSION}-%{RELEASE}\t%{LICENSE}\n`}
-	if scanPath != "/" {
-		// Use alternate root for container/image scanning
-		args = append([]string{"--root", scanPath}, args...)
-	}
-
-	cmd := exec.Command("rpm", args...)
-	out, err := cmd.Output()
+	db, err := rpmdb.Open(dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("rpm -qa failed: %w", err)
+		return nil, fmt.Errorf("open rpm database %s: %w", dbPath, err)
+	}
+	defer db.Close()
+
+	entries, err := db.ListPackages()
+	if err != nil {
+		return nil, fmt.Errorf("list packages from %s: %w", dbPath, err)
 	}
 
 	ecosystem := detectRPMEcosystem(scanPath)
 
 	var pkgs []inventory.Package
-	scanner := bufio.NewScanner(strings.NewReader(string(out)))
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
+	for _, e := range entries {
+		// gpg-pubkey entries record an imported signing key, not an installed
+		// package — they have no real version/release and never appear in any
+		// vulnerability advisory.
+		if e.Name == "gpg-pubkey" {
 			continue
 		}
-		parts := strings.SplitN(line, "\t", 3)
-		if len(parts) < 2 {
-			if verbose {
-				log.Printf("[rpm] skipping malformed line: %s", line)
-			}
-			continue
-		}
-		name := parts[0]
-		rawVersion := parts[1]
-		version := cleanRPMVersion(rawVersion)
-		var license string
-		if len(parts) == 3 && parts[2] != "(none)" {
-			license = parts[2]
-		}
-
+		version := rpmEvr(e.Epoch, e.Version, e.Release)
 		pkgs = append(pkgs, inventory.Package{
-			Name:       name,
+			Name:       e.Name,
 			Version:    version,
-			RawVersion: rawVersion,
+			RawVersion: version,
 			Ecosystem:  ecosystem,
 			Source:     "rpm",
-			License:    license,
+			License:    e.License,
 		})
 	}
 
 	if verbose {
-		log.Printf("[rpm] collected %d packages", len(pkgs))
+		log.Printf("[rpm] collected %d packages from %s", len(pkgs), dbPath)
 	}
 	return pkgs, nil
 }
 
-// cleanRPMVersion drops an epoch of "(none)" or "0" from an RPM version
-// string — both mean "no epoch", and heretix-api's version comparison
-// already treats an omitted epoch as 0. Any other epoch is preserved: it is
-// the highest-precedence field in RPM version comparison, so dropping a real
-// one (e.g. "2:") makes an already-patched package with an epoch bump look
-// older than an advisory's fixed version, which is exactly what happened
-// before this handled "(none)"/"0" as special cases instead of stripping
-// every epoch unconditionally.
-//
-// "(none):7.88.1-4.el9" → "7.88.1-4.el9"  (rpm's placeholder for an unset %{EPOCH} tag)
-// "0:2.36.1-8.el9"      → "2.36.1-8.el9"  (explicit zero epoch, same meaning)
-// "2:4.9-6.el9"         → "2:4.9-6.el9"   (real epoch — preserved)
-// "7.88.1-4.el9"        → "7.88.1-4.el9"  (no colon at all, unchanged)
-func cleanRPMVersion(raw string) string {
-	if rest, ok := strings.CutPrefix(raw, "(none):"); ok {
-		return rest
+// findRPMDatabase locates the RPM database under root, trying each
+// (directory, filename) combination in priority order, and returns the first
+// path that exists as a regular file. Returns "" when none exist — the normal
+// outcome for a non-RPM-based image or host.
+func findRPMDatabase(root string) string {
+	for _, dir := range rpmDBDirs {
+		for _, name := range rpmDBFileNames {
+			path := filepath.Join(root, dir, name)
+			if info, err := os.Stat(path); err == nil && !info.IsDir() {
+				return path
+			}
+		}
 	}
-	if rest, ok := strings.CutPrefix(raw, "0:"); ok {
-		return rest
+	return ""
+}
+
+// rpmEvr formats a package's epoch/version/release the way rpm itself
+// displays it: the epoch prefix is present only when non-zero, since that is
+// the one piece of an RPM version string every comparison — rpm's own, and
+// heretix-api's — treats as equivalent to no epoch at all.
+func rpmEvr(epoch *int, version, release string) string {
+	if epoch != nil && *epoch != 0 {
+		return fmt.Sprintf("%d:%s-%s", *epoch, version, release)
 	}
-	return raw
+	return fmt.Sprintf("%s-%s", version, release)
 }
 
 // detectRPMEcosystem reads <scanPath>/etc/os-release to determine the ecosystem name

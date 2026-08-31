@@ -8,7 +8,7 @@ A CLI tool that scans OS packages (RPM, DPKG, APK) and OSS ecosystems (PyPI, npm
 
 | Ecosystem | Scan Target | Platform |
 |---|---|---|
-| RHEL / AlmaLinux / Rocky Linux / Oracle Linux / CentOS (RPM) | `rpm -qa` / containers use `rpm --root <rootfs>` | Linux only |
+| RHEL / AlmaLinux / Rocky Linux / Oracle Linux / CentOS (RPM) | Parses `var/lib/rpm` / `usr/lib/sysimage/rpm` directly (BDB, NDB, or SQLite) | Linux only |
 | Debian / Ubuntu-based (DPKG) | Parses `var/lib/dpkg/status` directly | Linux only |
 | Alpine (APK) | Parses `/lib/apk/db/installed` directly | Linux only |
 | PyPI | `requirements.txt`, `Pipfile.lock`, `poetry.lock`, `uv.lock` / fallback: `pip list`* | Linux / Windows |
