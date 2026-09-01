@@ -117,12 +117,18 @@ func rpmEvr(epoch *int, version, release string) string {
 // "Rocky:" prefix never matches any row there (found 2026-09-01 investigating why
 // heretix-cli returned zero results for Rocky Linux packages).
 //
-// Oracle Linux is the one exception: heretix-api's AdvisoryAffectedProduct rows for
-// Oracle Linux aren't split by major version, so its search routing matches the bare
-// value "oracle-linux" with no version suffix (see heretix-api's rpmAdvisoryVendor()).
-// This used to be "Oracle Linux:" + major, changed in 750b4ee under the mistaken
-// assumption that all RPM distros shared one prefix+version convention — heretix-api
-// has carried an alias for that form since, but keep this the canonical value.
+// Oracle Linux is "Oracle Linux:" + major again, not the bare "oracle-linux" this
+// returned from 750b4ee (2026) until 2026-09-01: heretix-api's AdvisoryAffectedProduct
+// rows are looked up by (product, vendor) with vendor carrying no version at all
+// ("red-hat", "oracle-linux"), so a query against one major release's data was
+// silently compared against every other release's fix versions too — an unrelated
+// EL10 fix numerically higher than the installed EL9 version reads as "not yet
+// fixed" even when the correct EL9 advisory is long satisfied. heretix-api is
+// being changed to key vendor by version (matching how OSV's own ecosystem strings
+// already carry version for AlmaLinux/Rocky Linux/Ubuntu/Debian/Alpine); this value
+// must carry the major version for that fix to actually take effect. Confirmed via
+// heretix-api's own historical alias for this exact form (RPM_ECOSYSTEM_VENDOR's
+// "Oracle Linux" entry) that reverting it here is safe against the pre-fix API too.
 func detectRPMEcosystem(scanPath string) string {
 	id, versionID := parseOSRelease(scanPath)
 	major := strings.SplitN(versionID, ".", 2)[0]
@@ -137,7 +143,7 @@ func detectRPMEcosystem(scanPath string) string {
 	case "centos":
 		return "CentOS:" + major
 	case "ol":
-		return "oracle-linux"
+		return "Oracle Linux:" + major
 	default:
 		return "AlmaLinux:" + major
 	}

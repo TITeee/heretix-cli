@@ -101,7 +101,7 @@ func TestSourcesSharingPURLTypeShareEcosystem(t *testing.T) {
 func TestOSEcosystemsProduceDistinctPURLs(t *testing.T) {
 	ecosystems := []string{
 		// detectRPMEcosystem
-		"AlmaLinux:9", "Rocky Linux:9", "Red Hat:9", "CentOS:9", "oracle-linux",
+		"AlmaLinux:9", "Rocky Linux:9", "Red Hat:9", "CentOS:9", "Oracle Linux:9",
 		// detectDPKGEcosystem
 		"Ubuntu:22.04", "Ubuntu:24.04", "Debian:12",
 		// detectAlpineEcosystem — including the version-less fallback

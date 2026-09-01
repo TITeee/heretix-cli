@@ -25,6 +25,26 @@ func TestDetectRPMEcosystem_RockyUsesFullName(t *testing.T) {
 	}
 }
 
+// TestDetectRPMEcosystem_OracleLinuxUsesVersionedForm guards against Oracle
+// Linux's ecosystem string reverting to the bare, version-less "oracle-linux"
+// form it used from 2026 until 2026-09-01. That form made heretix-api's
+// AdvisoryAffectedProduct lookup (keyed by product+vendor, with vendor
+// carrying no OS major version) compare an installed package against every
+// major release's fix versions at once — an EL10 fix numerically higher than
+// the installed EL9 version read as "not yet fixed" even when the correct
+// EL9 advisory was long satisfied. The version suffix is what lets
+// heretix-api's fix (keying vendor by version) take effect.
+func TestDetectRPMEcosystem_OracleLinuxUsesVersionedForm(t *testing.T) {
+	root := t.TempDir()
+	mustMkdirAll(t, filepath.Join(root, "etc"))
+	mustWriteFile(t, filepath.Join(root, "etc", "os-release"), "ID=ol\nVERSION_ID=9.3\n")
+
+	want := "Oracle Linux:9"
+	if got := detectRPMEcosystem(root); got != want {
+		t.Errorf("detectRPMEcosystem = %q, want %q", got, want)
+	}
+}
+
 // TestRpmEvr guards against a real epoch being dropped: it is the
 // highest-precedence field in RPM version comparison, so a query missing it
 // makes an already-patched package with a nonzero epoch look older than a
