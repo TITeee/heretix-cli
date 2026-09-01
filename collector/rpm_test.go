@@ -8,6 +8,23 @@ import (
 	"github.com/TITeee/heretix-cli/inventory"
 )
 
+// TestDetectRPMEcosystem_RockyUsesFullName guards against sending an
+// ecosystem string that never matches anything: heretix-api's OSV data
+// stores Rocky Linux advisories under the ecosystem name OSV itself
+// publishes, "Rocky Linux:N", not a bare "Rocky:N" prefix. Found 2026-09-01
+// investigating why heretix-cli returned zero results for every Rocky Linux
+// package despite matching advisory data existing.
+func TestDetectRPMEcosystem_RockyUsesFullName(t *testing.T) {
+	root := t.TempDir()
+	mustMkdirAll(t, filepath.Join(root, "etc"))
+	mustWriteFile(t, filepath.Join(root, "etc", "os-release"), "ID=rocky\nVERSION_ID=9.3\n")
+
+	want := "Rocky Linux:9"
+	if got := detectRPMEcosystem(root); got != want {
+		t.Errorf("detectRPMEcosystem = %q, want %q", got, want)
+	}
+}
+
 // TestRpmEvr guards against a real epoch being dropped: it is the
 // highest-precedence field in RPM version comparison, so a query missing it
 // makes an already-patched package with a nonzero epoch look older than a

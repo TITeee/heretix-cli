@@ -112,6 +112,11 @@ func rpmEvr(epoch *int, version, release string) string {
 // detectRPMEcosystem reads <scanPath>/etc/os-release to determine the ecosystem name
 // in the format required by vuln-api: "<Distro>:<MajorVersion>" (e.g., "AlmaLinux:9").
 //
+// Rocky Linux is "Rocky Linux:" + major, not "Rocky:" + major: heretix-api's OSV data
+// stores it under the ecosystem name OSV itself publishes, "Rocky Linux:N" — a bare
+// "Rocky:" prefix never matches any row there (found 2026-09-01 investigating why
+// heretix-cli returned zero results for Rocky Linux packages).
+//
 // Oracle Linux is the one exception: heretix-api's AdvisoryAffectedProduct rows for
 // Oracle Linux aren't split by major version, so its search routing matches the bare
 // value "oracle-linux" with no version suffix (see heretix-api's rpmAdvisoryVendor()).
@@ -126,7 +131,7 @@ func detectRPMEcosystem(scanPath string) string {
 	case "almalinux":
 		return "AlmaLinux:" + major
 	case "rocky":
-		return "Rocky:" + major
+		return "Rocky Linux:" + major
 	case "rhel":
 		return "Red Hat:" + major
 	case "centos":
