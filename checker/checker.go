@@ -18,18 +18,30 @@ import (
 
 // Vulnerability represents a single vulnerability from the API response.
 type Vulnerability struct {
-	ID               string  `json:"id"`
-	ExternalID       string  `json:"externalId"`
-	Source           string  `json:"source"`
-	Severity         string  `json:"severity"`
-	CvssScore        float64 `json:"cvssScore"`
-	CvssVector       string  `json:"cvssVector"`
-	Summary          string  `json:"summary"`
-	PublishedAt      string  `json:"publishedAt"`
-	ApproximateMatch bool    `json:"approximateMatch"`
-	IsKev            bool    `json:"isKev"`
-	EpssScore        float64 `json:"epssScore"`
-	EpssPercentile   float64 `json:"epssPercentile"`
+	ID          string `json:"id"`
+	ExternalID  string `json:"externalId"`
+	// Source is a display-preference label (cveId > osvId > advisoryId), not
+	// an indicator of which search path actually matched -- Sources (plural)
+	// is the authoritative record of that; a CVE with NVD metadata always
+	// shows Source "nvd" here even when the hit itself came from a vendor
+	// advisory. Kept for backward compatibility with existing JSON consumers.
+	Source           string   `json:"source"`
+	Sources          []string `json:"sources"`
+	Severity         string   `json:"severity"`
+	CvssScore        float64  `json:"cvssScore"`
+	CvssVector       string   `json:"cvssVector"`
+	Summary          string   `json:"summary"`
+	PublishedAt      string   `json:"publishedAt"`
+	ApproximateMatch bool     `json:"approximateMatch"`
+	IsKev            bool     `json:"isKev"`
+	EpssScore        float64  `json:"epssScore"`
+	EpssPercentile   float64  `json:"epssPercentile"`
+	// FixedVersion is the version that resolves this finding, when the
+	// server knows one. Empty (not just unset) also means "no fix known" for
+	// a confirmed-unfixed vendor-advisory finding -- see heretix-api's
+	// RedHatVexFetcher.
+	FixedVersion string   `json:"fixedVersion"`
+	Aliases      []string `json:"aliases"`
 }
 
 // PackageResult holds the vulnerability check result for one package.

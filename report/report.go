@@ -124,7 +124,14 @@ func PrintTable(w io.Writer, inv *inventory.Inventory, result *checker.CheckResu
 			if vulnID == "" {
 				vulnID = v.ID
 			}
-			dbSource := v.Source
+			// Sources (plural) is the authoritative record of which search
+			// path actually matched; Source (singular) is only a display
+			// preference (e.g. always "nvd" when the CVE has NVD metadata,
+			// even when a vendor advisory is what matched) -- see checker.go.
+			dbSource := strings.Join(v.Sources, ",")
+			if dbSource == "" {
+				dbSource = v.Source
+			}
 			if dbSource == "" {
 				dbSource = "osv"
 			}
