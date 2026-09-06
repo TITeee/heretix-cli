@@ -18,8 +18,8 @@ import (
 
 // Vulnerability represents a single vulnerability from the API response.
 type Vulnerability struct {
-	ID          string `json:"id"`
-	ExternalID  string `json:"externalId"`
+	ID         string `json:"id"`
+	ExternalID string `json:"externalId"`
 	// Source is a display-preference label (cveId > osvId > advisoryId), not
 	// an indicator of which search path actually matched -- Sources (plural)
 	// is the authoritative record of that; a CVE with NVD metadata always
