@@ -86,8 +86,16 @@ func loadImage(ctx context.Context, ref name.Reference, verbose bool) (v1.Image,
 func extractLayers(img v1.Image, destDir string) error {
 	rc := mutate.Extract(img)
 	defer rc.Close()
+	return extractTar(rc, destDir)
+}
 
-	tr := tar.NewReader(rc)
+// extractTar walks a tar stream and writes its entries into destDir, guarding
+// against path traversal (a "../" entry escaping destDir) and hard links
+// whose target resolves outside destDir. Split out from extractLayers so
+// this security-relevant logic can be exercised with a synthetic tar stream
+// in tests, without needing a real v1.Image.
+func extractTar(r io.Reader, destDir string) error {
+	tr := tar.NewReader(r)
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {

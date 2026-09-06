@@ -125,6 +125,11 @@ func manifestFor(p inventory.Package) (key string, file *ManifestFile) {
 	return p.Source, nil
 }
 
+// apiBaseURL is the GitHub API's base URL. A package-level var (rather than
+// a Submit parameter) so the real call site (cmd/submit.go) doesn't need to
+// know about it; tests override it to point at an httptest.Server instead.
+var apiBaseURL = "https://api.github.com"
+
 // Submit posts the snapshot to the GitHub Dependency Submission API.
 // repo must be in "owner/repo" format.
 // token must have the "contents: write" permission (or the classic "repo" scope).
@@ -139,8 +144,8 @@ func Submit(snapshot *Snapshot, token, repo string) error {
 		return fmt.Errorf("marshal snapshot: %w", err)
 	}
 
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/dependency-graph/snapshots",
-		parts[0], parts[1])
+	url := fmt.Sprintf("%s/repos/%s/%s/dependency-graph/snapshots",
+		apiBaseURL, parts[0], parts[1])
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return err
