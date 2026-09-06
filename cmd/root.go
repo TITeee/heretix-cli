@@ -8,9 +8,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// version is set via -ldflags "-X github.com/TITeee/heretix-cli/cmd.version=..."
+// at build time (see .goreleaser.yaml); a local `go build`/`go run` leaves it
+// at "dev" since no linker flag is passed.
+var version = "dev"
+
 var rootCmd = &cobra.Command{
 	Use:     "heretix-cli",
-	Version: "0.2.0",
+	Version: version,
 	Short:   "CLI vulnerability scanner for OS and OSS packages",
 	Long: `heretix-cli scans installed software (RPM, PyPI, npm) on Linux servers,
 exports a detection list as JSON, and queries a vulnerability API
