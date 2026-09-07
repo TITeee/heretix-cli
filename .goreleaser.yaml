@@ -34,6 +34,26 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
+# Signs checksums.txt (which itself hashes every other artifact, so signing
+# it covers all of them) with cosign's keyless mode -- identity comes from
+# the CI job's own OIDC token (see release.yml's id-token: write permission),
+# so there's no private key to generate or store. Verify with:
+#   cosign verify-blob checksums.txt --signature checksums.txt.sig \
+#     --certificate checksums.txt.pem \
+#     --certificate-identity-regexp 'https://github.com/TITeee/heretix-cli/.*' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+
 changelog:
   disable: true
 

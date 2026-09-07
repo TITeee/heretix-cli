@@ -4,9 +4,15 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re-)build and publish, e.g. v0.2.0 -- lets the pipeline itself be verified without cutting a new release"
+        required: true
 
 permissions:
   contents: write
+  id-token: write # for cosign's keyless (Sigstore OIDC) signing
 
 jobs:
   goreleaser:
@@ -15,10 +21,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ inputs.tag || github.ref }}
 
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25.7"
+
+      - uses: sigstore/cosign-installer@v3
 
       - uses: goreleaser/goreleaser-action@v6
         with:
