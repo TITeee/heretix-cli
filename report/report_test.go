@@ -399,11 +399,109 @@ func TestPrintTable_CollapsesFindingsSharingASourcePackage(t *testing.T) {
 	if n := countRowsContaining(out, "CVE-2026-1"); n != 1 {
 		t.Errorf("CVE-2026-1 appears on %d rows, want 1 (binutils and libbinutils share a source package)", n)
 	}
-	if !strings.Contains(out, "binutils(+1)") {
-		t.Errorf("expected the collapsed row to note the extra binary package, got:\n%s", out)
+	if !strings.Contains(out, "binutils(2 pkgs)") {
+		t.Errorf("expected the collapsed row to name the source package with a count, got:\n%s", out)
 	}
 	if !strings.Contains(out, "Summary: 3 packages with 3 findings") {
 		t.Errorf("expected the summary to count collapsed findings once, got:\n%s", out)
+	}
+}
+
+// TestPrintTable_CollapsedRowNamesSourceEvenWithoutASameNamedBinary guards
+// against picking an arbitrary one of the binary packages to stand in for the
+// group: most multi-binary sources have no binary package sharing the
+// source's own name at all (glibc produces libc6/libc6-dev/..., never a
+// package literally named "glibc"), so whichever binary happened to be
+// checked first is not a meaningful choice.
+func TestPrintTable_CollapsedRowNamesSourceEvenWithoutASameNamedBinary(t *testing.T) {
+	inv := &inventory.Inventory{Packages: []inventory.Package{
+		{Name: "libc6", Version: "2.41-12", Ecosystem: "Debian:13", Source: "dpkg", SourcePackage: "glibc"},
+		{Name: "libc6-dev", Version: "2.41-12", Ecosystem: "Debian:13", Source: "dpkg", SourcePackage: "glibc",
+			Category: "build", Scope: "excluded"},
+	}}
+	result := &checker.CheckResult{Results: []checker.PackageResult{
+		{Package: "libc6", Version: "2.41-12", Ecosystem: "Debian:13",
+			Vulnerabilities: []checker.Vulnerability{{ExternalID: "CVE-2026-1", CvssScore: 5.0}}},
+		{Package: "libc6-dev", Version: "2.41-12", Ecosystem: "Debian:13",
+			Vulnerabilities: []checker.Vulnerability{{ExternalID: "CVE-2026-1", CvssScore: 5.0}}},
+	}}
+
+	var buf bytes.Buffer
+	PrintTable(&buf, inv, result, "sbom.json")
+	out := buf.String()
+
+	if !strings.Contains(out, "glibc(2 pkgs)") {
+		t.Errorf("expected the collapsed row to name the source package \"glibc\", got:\n%s", out)
+	}
+	if strings.Contains(out, "libc6-dev(") || strings.Contains(out, "libc6(") {
+		t.Errorf("expected no binary package name to stand in for the group, got:\n%s", out)
+	}
+}
+
+// TestPrintTable_MixedCategoryGroupIsNotTaggedNonRuntime guards against the
+// same collapsed row hiding a runtime impact behind a non-runtime tag. glibc
+// ships libc6/libc-bin (runtime) and libc6-dev/libc-dev-bin (build) from one
+// source package, and a CVE affecting glibc is commonly reported against all
+// of them -- if the row's tag came from whichever binary happened to be
+// checked first, a build-classified binary landing first would tag the whole
+// row "B" and make --runtime-only silently drop a CVE that does affect the
+// runtime libc6.
+func TestPrintTable_MixedCategoryGroupIsNotTaggedNonRuntime(t *testing.T) {
+	inv := &inventory.Inventory{Packages: []inventory.Package{
+		// Build-classified member first, so a first-wins implementation would
+		// tag the row "B".
+		{Name: "libc6-dev", Version: "2.41-12", Ecosystem: "Debian:13", Source: "dpkg",
+			SourcePackage: "glibc", Category: "build", Scope: "excluded"},
+		{Name: "libc6", Version: "2.41-12", Ecosystem: "Debian:13", Source: "dpkg", SourcePackage: "glibc"},
+	}}
+	result := &checker.CheckResult{Results: []checker.PackageResult{
+		{Package: "libc6-dev", Version: "2.41-12", Ecosystem: "Debian:13",
+			Vulnerabilities: []checker.Vulnerability{{ExternalID: "CVE-2026-1", CvssScore: 5.0}}},
+		{Package: "libc6", Version: "2.41-12", Ecosystem: "Debian:13",
+			Vulnerabilities: []checker.Vulnerability{{ExternalID: "CVE-2026-1", CvssScore: 5.0}}},
+	}}
+
+	var buf bytes.Buffer
+	PrintTable(&buf, inv, result, "sbom.json")
+	out := buf.String()
+
+	if hasRowWithPrefix(out, "CVE-2026-1", " B") {
+		t.Errorf("expected the row to carry no non-runtime tag since a runtime member is affected, got:\n%s", out)
+	}
+	if strings.Contains(out, "Non-runtime:") {
+		t.Errorf("expected the mixed-category finding not to be counted as non-runtime, got:\n%s", out)
+	}
+
+	var bufRuntimeOnly bytes.Buffer
+	PrintTableWithOptions(&bufRuntimeOnly, inv, result, "sbom.json", Options{RuntimeOnly: true})
+	if !strings.Contains(bufRuntimeOnly.String(), "CVE-2026-1") {
+		t.Errorf("expected --runtime-only to still show the finding, since it affects the runtime libc6, got:\n%s", bufRuntimeOnly.String())
+	}
+}
+
+// TestPrintTable_MixedVersionGroupShowsMultiple guards against silently
+// picking one binary package's version to represent the whole group when the
+// group's members do not actually share a version -- observed for real on
+// util-linux, whose binary packages carry different version strings across a
+// Debian "epoch trick" source rename.
+func TestPrintTable_MixedVersionGroupShowsMultiple(t *testing.T) {
+	inv := &inventory.Inventory{Packages: []inventory.Package{
+		{Name: "util-linux", Version: "2.41.5-0+deb13u1", Ecosystem: "Debian:13", Source: "dpkg", SourcePackage: "util-linux"},
+		{Name: "bsdutils", Version: "1:4.16.0-2+really2.41.5-0+deb13u1", Ecosystem: "Debian:13", Source: "dpkg", SourcePackage: "util-linux"},
+	}}
+	result := &checker.CheckResult{Results: []checker.PackageResult{
+		{Package: "util-linux", Version: "2.41.5-0+deb13u1", Ecosystem: "Debian:13",
+			Vulnerabilities: []checker.Vulnerability{{ExternalID: "CVE-2026-1", CvssScore: 5.0}}},
+		{Package: "bsdutils", Version: "1:4.16.0-2+really2.41.5-0+deb13u1", Ecosystem: "Debian:13",
+			Vulnerabilities: []checker.Vulnerability{{ExternalID: "CVE-2026-1", CvssScore: 5.0}}},
+	}}
+
+	var buf bytes.Buffer
+	PrintTable(&buf, inv, result, "sbom.json")
+	out := buf.String()
+
+	if !strings.Contains(out, "multiple") {
+		t.Errorf("expected the version column to show \"multiple\" rather than one binary's version, got:\n%s", out)
 	}
 }
 
@@ -451,6 +549,41 @@ func TestPrintTable_RuntimeOnlyDropsNonRuntimeFindings(t *testing.T) {
 	}
 	if strings.Contains(out, "Non-runtime:") {
 		t.Error("expected no non-runtime breakdown when non-runtime findings are excluded")
+	}
+}
+
+// TestPrintTable_NeverCollapsesDifferentVersionsOfANonOSPackage guards
+// against source-package aggregation reaching outside OS packages. It exists
+// for dpkg/rpm/apk, where "Source:"/"SourceRpm"/"o:" is a real signal that
+// several binary packages come from one upstream project. For npm and other
+// language ecosystems SourcePackage is never set, and the earlier fallback
+// (defaulting the grouping key to the package's own name) accidentally
+// collapsed two different installed versions of the same npm package name
+// into one row -- observed for real: wordpress:php8.5-fpm installs
+// picomatch@4.0.3 and picomatch@2.3.1 from the same package-lock.json, both
+// vulnerable to the same CVEs, which must stay two separate findings since
+// each needs its own fix.
+func TestPrintTable_NeverCollapsesDifferentVersionsOfANonOSPackage(t *testing.T) {
+	inv := &inventory.Inventory{Packages: []inventory.Package{
+		{Name: "picomatch", Version: "4.0.3", Ecosystem: "npm", Source: "package-lock.json"},
+		{Name: "picomatch", Version: "2.3.1", Ecosystem: "npm", Source: "package-lock.json"},
+	}}
+	result := &checker.CheckResult{Results: []checker.PackageResult{
+		{Package: "picomatch", Version: "4.0.3", Ecosystem: "npm", Source: "package-lock.json",
+			Vulnerabilities: []checker.Vulnerability{{ExternalID: "CVE-2026-1", CvssScore: 5.0}}},
+		{Package: "picomatch", Version: "2.3.1", Ecosystem: "npm", Source: "package-lock.json",
+			Vulnerabilities: []checker.Vulnerability{{ExternalID: "CVE-2026-1", CvssScore: 5.0}}},
+	}}
+
+	var buf bytes.Buffer
+	PrintTable(&buf, inv, result, "sbom.json")
+	out := buf.String()
+
+	if n := countRowsContaining(out, "CVE-2026-1"); n != 2 {
+		t.Errorf("CVE-2026-1 appears on %d rows, want 2 (different picomatch versions must not collapse)", n)
+	}
+	if strings.Contains(out, "pkgs)") || strings.Contains(out, "multiple") {
+		t.Errorf("expected no aggregation markers for a non-OS package, got:\n%s", out)
 	}
 }
 

@@ -157,16 +157,16 @@ heretix-cli check sbom.json --format json > results.json
 
 #### Non-runtime packages
 
-A container image usually carries packages that are installed but never run: **kernel headers** (the host kernel is what executes, not `linux-libc-dev`) and **build toolchain** left behind by a build stage (compilers, linkers, `-dev`/`-devel` header packages). On `wordpress:php8.5-fpm` these account for 454 of 719 findings, `linux-libc-dev` alone contributing 388.
+A container image usually carries packages that are installed but never run: **kernel headers** (the host kernel is what executes, not `linux-libc-dev`) and **build toolchain** left behind by a build stage (compilers, linkers, `-dev`/`-devel` header packages). On `wordpress:php8.5-fpm` these account for 454 of 721 findings, `linux-libc-dev` alone contributing 388.
 
 `collect` classifies them from the **source package** each binary package was built from — `Source:` in the dpkg status file, `SourceRpm` in the RPM database, `o:` in the APK database. The source package is used rather than the package name because one upstream project is split into many binary packages whose names give nothing away: `libbinutils`, `libctf0`, `libsframe1` and `libgprofng0` are all `Section: libs`, and only their shared `binutils` source identifies them as build tooling.
 
 Two things follow from that same source-package information:
 
-- **Findings are counted per source package, not per binary package.** One `binutils` CVE affects all eight of its binary packages; it is now one row marked `(+7)` rather than eight rows.
-- **Non-runtime findings are tagged, not hidden.** They are marked `K` (kernel) or `B` (build) in the report and summarised under `Non-runtime:`, so nothing silently disappears. Pass `--runtime-only` to leave them out.
+- **Findings are counted per source package, not per binary package.** One `binutils` CVE affects all eight of its binary packages; it is now one row naming the source package, `binutils(8 pkgs)`, rather than eight rows. The source package is shown rather than picking one binary package's name, because most multi-binary sources have no binary package sharing the source's own name at all (`glibc` produces `libc6`/`libc6-dev`/..., never a package literally named `glibc`). If the group's binary packages do not all share one version, the VERSION column shows `multiple` rather than picking one of them.
+- **Non-runtime findings are tagged, not hidden.** They are marked `K` (kernel) or `B` (build) in the report and summarised under `Non-runtime:`, so nothing silently disappears. Pass `--runtime-only` to leave them out. A source package can produce both runtime and non-runtime binary packages (`glibc` ships both `libc6` and `libc6-dev`); when the same CVE affects both, the row is never tagged non-runtime, so `--runtime-only` cannot silently drop a finding that does affect something that runs.
 
-Measured on `wordpress:php8.5-fpm`: 1485 findings before, **719** after collapsing per source package, **265** with `--runtime-only`.
+Measured on `wordpress:php8.5-fpm`: 1485 findings before, **721** after collapsing per source package, **267** with `--runtime-only`.
 
 The SBOM is unaffected by all of this: every package stays a component (CycloneDX `scope: excluded` plus a `heretix:category` property), because dropping components would break the coverage a complete SBOM is supposed to provide.
 
@@ -415,23 +415,24 @@ Source:     inventory.json
 Host:       server01
 Packages:   1523 checked (rpm: 1200, dpkg: 320, pip: 280, npm: 43)
 
-   ECOSYSTEM   PACKAGE          VERSION    SOURCE                DB    VULN ID               CVSS   EPSS  SUMMARY
-   ──────────  ───────────────  ─────────  ────────────────────  ───   ───────────────────   ────   ─────  ──────────────
-!  AlmaLinux   curl             7.88.1     rpm                   nvd   CVE-2024-1234          9.8   0.950  Remote code exec
-   AlmaLinux   openssl          3.0.11     rpm                   osv   ALSA-2024:5678         7.5   0.123  Buffer overflow
-   Debian      libssl3          3.0.11     dpkg                  nvd   CVE-2024-5678          7.5   0.098  Buffer overflow
-   PyPI        requests         2.31.0     /srv/myapp/req...     osv   GHSA-xxxx-yyyy         6.1   0.045  SSRF via proxy
- K Debian      linux-libc-dev   6.12.43-1  dpkg                  osv   CVE-2024-4321          7.8   0.010  Kernel use-after-free
- B Debian      binutils(+7)     2.44-3     dpkg                  osv   CVE-2024-9999          5.5   0.002  Heap overflow in BFD
-~  PyPI        somepkg          v2024.1    pip                   osv   GHSA-zzzz-zzzz         6.0       -  Some vulnerability
-#  npm         malicious-pkg    1.0.0      pnpm-lock.yaml        osv   MAL-2024-1234            -       -  Malicious package
+   ECOSYSTEM   PACKAGE               VERSION    SOURCE               DB    VULN ID               CVSS   EPSS  SUMMARY
+   ──────────  ────────────────────  ─────────  ──────────────────── ───   ───────────────────   ────   ────  ──────────────
+!  AlmaLinux   curl                  7.88.1     rpm                  nvd   CVE-2024-1234          9.8  0.950  Remote code exec
+   AlmaLinux   openssl               3.0.11     rpm                  osv   ALSA-2024:5678         7.5  0.123  Buffer overflow
+   Debian      libssl3               3.0.11     dpkg                 nvd   CVE-2024-5678          7.5  0.098  Buffer overflow
+   PyPI        requests              2.31.0     /srv/myapp/requir... osv   GHSA-xxxx-yyyy         6.1  0.045  SSRF via proxy
+ K Debian      linux-libc-dev        6.12.43-1  dpkg                 osv   CVE-2024-4321          7.8  0.010  Kernel use-after-free
+ B Debian      binutils(2 pkgs)      2.44-3     dpkg                 osv   CVE-2024-9999          5.5  0.002  Heap overflow in BFD
+~  PyPI        somepkg               v2024.1    pip                  osv   GHSA-zzzz-zzzz         6.0      -  Some vulnerability
+#  npm         malicious-pkg         1.0.0      pnpm-lock.yaml       osv   MAL-2024-1234            -      -  Malicious package
 
 # = malicious package (OSSF Malicious Packages)
 ! = in CISA Known Exploited Vulnerabilities (KEV) catalog
 ~ = approximate match (version could not be normalized, showing all vulnerabilities for this package)
 K = kernel headers (the host kernel runs, not this package's code)
 B = build toolchain (compiler, linker or development headers left from a build stage)
-(+N) = the same vulnerability in N more binary packages built from the same source package
+(N pkgs) = the same vulnerability in N binary packages built from this source package (PACKAGE names the source package)
+multiple = the binary packages in this row do not share one version
 DB = data source (osv = Open Source Vulnerabilities, nvd = NIST NVD, advisory = Vendor Advisory)
 EPSS = Exploit Prediction Scoring System probability (0.000–1.000)
 

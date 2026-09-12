@@ -15,6 +15,15 @@ func isMalwareID(externalID string) bool {
 	return strings.HasPrefix(externalID, "MAL-")
 }
 
+// osPackageSources are inventory.Package.Source values written by an OS
+// package collector (collector/dpkg.go, rpm.go, apk.go) -- the only place
+// SourcePackage carries a real "one upstream project split into many binary
+// packages" relationship. Everywhere else (npm, pip, ...) the same package
+// name can legitimately appear at different versions from different
+// locations in a single scan, and those must never be folded together just
+// because they share a name.
+var osPackageSources = map[string]bool{"dpkg": true, "rpm": true, "apk-db": true}
+
 // Options configures PrintTable.
 type Options struct {
 	// RuntimeOnly drops findings on packages classified as non-runtime
@@ -27,22 +36,23 @@ type Options struct {
 // package. Findings that several binary packages of one source package share
 // collapse into one row, with extraPkgs counting the ones folded in.
 type reportRow struct {
-	ecosystem   string
-	pkg         string
-	sourcePkg   string
-	version     string
-	sourceDisp  string
-	dbSource    string
-	vulnID      string
-	summary     string
-	cvss        float64
-	epss        float64
-	severity    string
-	approximate bool
-	kev         bool
-	malware     bool
-	category    string
-	extraPkgs   int
+	ecosystem    string
+	pkg          string
+	sourcePkg    string
+	version      string
+	versionMixed bool
+	sourceDisp   string
+	dbSource     string
+	vulnID       string
+	summary      string
+	cvss         float64
+	epss         float64
+	severity     string
+	approximate  bool
+	kev          bool
+	malware      bool
+	category     string
+	extraPkgs    int
 }
 
 // buildRows flattens the per-package check results into printable rows,
@@ -84,11 +94,32 @@ func buildRows(inv *inventory.Inventory, result *checker.CheckResult, opts Optio
 			if vulnID == "" {
 				vulnID = v.ID
 			}
-			key := r.Ecosystem + "\t" + sourcePkg + "\t" + vulnID
+			// Only collapse across a real OS source-package relationship.
+			// Elsewhere, group by this exact installed package so that two
+			// different versions of, say, npm's picomatch never fold together
+			// just because SourcePackage falls back to the package's own name.
+			groupKey := sourcePkg
+			if !osPackageSources[m.Source] {
+				groupKey = r.Package + "\x00" + r.Version + "\x00" + r.Location
+			}
+			key := r.Ecosystem + "\t" + groupKey + "\t" + vulnID
 			if i, ok := index[key]; ok {
 				rows[i].extraPkgs++
 				rows[i].kev = rows[i].kev || v.IsKev
 				rows[i].approximate = rows[i].approximate || r.ApproximateMatch
+				// A source package can produce both runtime and non-runtime
+				// binary packages (glibc: libc6 is runtime, libc6-dev is
+				// build), and the same CVE is often reported against all of
+				// them. If any member affected by this CVE is a runtime
+				// package, the row must not carry a non-runtime tag -- doing
+				// so would let --runtime-only silently drop a finding that
+				// does affect something that runs.
+				if m.Category == "" {
+					rows[i].category = ""
+				}
+				if r.Version != rows[i].version {
+					rows[i].versionMixed = true
+				}
 				continue
 			}
 
@@ -202,12 +233,14 @@ func PrintTableWithOptions(w io.Writer, inv *inventory.Inventory, result *checke
 		return
 	}
 
-	// Print header
-	fmt.Fprintf(w, "   %-11s %-16s %-10s %-20s %-4s  %-20s %5s  %5s  %s\n",
+	// Print header. PACKAGE is wider than a bare package name needs (20, not
+	// 15) because a collapsed row's "sourcepkg(N pkgs)" display runs longer
+	// than any single binary package name it replaces.
+	fmt.Fprintf(w, "   %-11s %-21s %-10s %-20s %-4s  %-20s %5s  %5s  %s\n",
 		"ECOSYSTEM", "PACKAGE", "VERSION", "SOURCE", "DB", "VULN ID", "CVSS", "EPSS", "SUMMARY")
-	fmt.Fprintf(w, "   %-11s %-16s %-10s %-20s %-4s  %-20s %5s  %5s  %s\n",
+	fmt.Fprintf(w, "   %-11s %-21s %-10s %-20s %-4s  %-20s %5s  %5s  %s\n",
 		strings.Repeat("─", 10),
-		strings.Repeat("─", 15),
+		strings.Repeat("─", 20),
 		strings.Repeat("─", 9),
 		strings.Repeat("─", 20),
 		strings.Repeat("─", 3),
@@ -220,6 +253,7 @@ func PrintTableWithOptions(w io.Writer, inv *inventory.Inventory, result *checke
 	hasKev := false
 	hasMalware := false
 	hasCollapsed := false
+	hasMixedVersion := false
 	for _, r := range rows {
 		// Column 1 is what makes a finding urgent, column 2 is what makes it
 		// (ir)relevant to this image; they are independent, so each gets its
@@ -244,9 +278,16 @@ func PrintTableWithOptions(w io.Writer, inv *inventory.Inventory, result *checke
 			categoryMark = 'B'
 		}
 
+		// A collapsed row names the source package, not an arbitrary one of its
+		// binary packages: most multi-binary sources have no binary package
+		// sharing the source's own name (glibc -> libc6/libc6-dev/..., no
+		// package literally named "glibc"), so there is no principled way to
+		// pick one binary name to stand for the group. The source package name
+		// is always meaningful and always available, since it is the key this
+		// row was collapsed on.
 		pkgDisplay := r.pkg
 		if r.extraPkgs > 0 {
-			pkgDisplay = fmt.Sprintf("%s(+%d)", r.pkg, r.extraPkgs)
+			pkgDisplay = fmt.Sprintf("%s(%d pkgs)", r.sourcePkg, r.extraPkgs+1)
 			hasCollapsed = true
 		}
 		summary := r.summary
@@ -261,12 +302,22 @@ func PrintTableWithOptions(w io.Writer, inv *inventory.Inventory, result *checke
 		if r.epss > 0 {
 			epssDisplay = fmt.Sprintf("%.3f", r.epss)
 		}
-		fmt.Fprintf(w, "%c%c %-11s %-16s %-10s %-20s %-4s  %-20s %5s  %5s  %s\n",
-			marker, categoryMark, r.ecosystem, truncate(pkgDisplay, 15), truncate(r.version, 9),
+		// A collapsed group's binary packages usually share one version, since
+		// they are built together -- but not always (util-linux's binary
+		// packages carry different version strings across a Debian source
+		// rename). Showing one of them as if it applied to the whole group
+		// would misstate which version is actually affected.
+		versionDisplay := r.version
+		if r.versionMixed {
+			versionDisplay = "multiple"
+			hasMixedVersion = true
+		}
+		fmt.Fprintf(w, "%c%c %-11s %-21s %-10s %-20s %-4s  %-20s %5s  %5s  %s\n",
+			marker, categoryMark, r.ecosystem, truncate(pkgDisplay, 20), truncate(versionDisplay, 9),
 			r.sourceDisp, r.dbSource, truncate(r.vulnID, 19), cvssDisplay, epssDisplay, summary)
 	}
 
-	if hasApproximate || hasKev || hasMalware || kernelCount > 0 || buildCount > 0 || hasCollapsed {
+	if hasApproximate || hasKev || hasMalware || kernelCount > 0 || buildCount > 0 || hasCollapsed || hasMixedVersion {
 		fmt.Fprintln(w)
 		if hasMalware {
 			fmt.Fprintln(w, "# = malicious package (OSSF Malicious Packages)")
@@ -284,7 +335,10 @@ func PrintTableWithOptions(w io.Writer, inv *inventory.Inventory, result *checke
 			fmt.Fprintln(w, "B = build toolchain (compiler, linker or development headers left from a build stage)")
 		}
 		if hasCollapsed {
-			fmt.Fprintln(w, "(+N) = the same vulnerability in N more binary packages built from the same source package")
+			fmt.Fprintln(w, "(N pkgs) = the same vulnerability in N binary packages built from this source package (PACKAGE names the source package)")
+		}
+		if hasMixedVersion {
+			fmt.Fprintln(w, "multiple = the binary packages in this row do not share one version")
 		}
 		fmt.Fprintln(w, "DB = data source (osv = Open Source Vulnerabilities, nvd = NIST NVD, advisory = Vendor Advisory)")
 		fmt.Fprintln(w, "EPSS = Exploit Prediction Scoring System probability (0.000–1.000)")

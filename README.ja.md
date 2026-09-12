@@ -157,16 +157,16 @@ heretix-cli check sbom.json --format json > results.json
 
 #### 非ランタイムパッケージ
 
-コンテナイメージには、インストールされてはいるが決して実行されないパッケージが含まれることが多い。**カーネルヘッダ**（実際に動くのはホストのカーネルであり、`linux-libc-dev` のコードではない）と、ビルドステージの残骸である**ビルドツールチェーン**（コンパイラ、リンカ、`-dev`/`-devel` ヘッダパッケージ）である。`wordpress:php8.5-fpm` では、これらが全719件中454件を占め、`linux-libc-dev` 単体で388件に達する。
+コンテナイメージには、インストールされてはいるが決して実行されないパッケージが含まれることが多い。**カーネルヘッダ**（実際に動くのはホストのカーネルであり、`linux-libc-dev` のコードではない）と、ビルドステージの残骸である**ビルドツールチェーン**（コンパイラ、リンカ、`-dev`/`-devel` ヘッダパッケージ）である。`wordpress:php8.5-fpm` では、これらが全721件中454件を占め、`linux-libc-dev` 単体で388件に達する。
 
 `collect` は、各バイナリパッケージの**ビルド元ソースパッケージ**からこれらを判定する ― dpkg status の `Source:`、RPM データベースの `SourceRpm`、APK データベースの `o:` である。パッケージ名ではなくソースパッケージを使うのは、1つの上流プロジェクトが名前からは判別できない複数のバイナリパッケージに分割されるためである。`libbinutils`・`libctf0`・`libsframe1`・`libgprofng0` はいずれも `Section: libs` であり、共通のソースパッケージ `binutils` だけがビルドツールチェーンであることを示している。
 
 同じソースパッケージ情報から、2つの帰結が得られる:
 
-- **検知件数はバイナリパッケージ単位ではなくソースパッケージ単位で数える。** 1件の `binutils` の CVE は8つのバイナリパッケージすべてに影響するが、8行ではなく `(+7)` と記した1行になる。
-- **非ランタイムの検知は隠さずタグ付けする。** レポート上で `K`（kernel）/ `B`（build）と印を付け、`Non-runtime:` 行に内訳を示す。黙って消えるものは無い。除外したい場合は `--runtime-only` を指定する。
+- **検知件数はバイナリパッケージ単位ではなくソースパッケージ単位で数える。** 1件の `binutils` の CVE は8つのバイナリパッケージすべてに影響するが、8行ではなくソースパッケージ名を示す `binutils(8 pkgs)` の1行になる。バイナリパッケージ名を1つ選ぶのではなくソースパッケージ名を表示するのは、複数バイナリを持つソースパッケージの大半には、ソースと同名のバイナリパッケージが存在しないためである（`glibc` は `libc6`/`libc6-dev` 等を生成するが、`glibc` という名前のバイナリパッケージは存在しない）。グループ内のバイナリパッケージがバージョンを共有していない場合、VERSION 列は特定の1つを選ばず `multiple` と表示する。
+- **非ランタイムの検知は隠さずタグ付けする。** レポート上で `K`（kernel）/ `B`（build）と印を付け、`Non-runtime:` 行に内訳を示す。黙って消えるものは無い。除外したい場合は `--runtime-only` を指定する。1つのソースパッケージがランタイムと非ランタイムの両方のバイナリパッケージを生成することがある（`glibc` は `libc6` と `libc6-dev` の両方を生成する）。同じ CVE がその両方に影響する場合、その行は非ランタイムとしてタグ付けされない。これにより、`--runtime-only` が実際にランタイムへ影響する検知を黙って除外してしまうことを防いでいる。
 
-`wordpress:php8.5-fpm` での実測値: 対応前1485件 → ソースパッケージ単位の集約後 **719件** → `--runtime-only` 指定時 **265件**。
+`wordpress:php8.5-fpm` での実測値: 対応前1485件 → ソースパッケージ単位の集約後 **721件** → `--runtime-only` 指定時 **267件**。
 
 SBOM はこの処理の影響を受けない。すべてのパッケージが component として残る（CycloneDX の `scope: excluded` と `heretix:category` プロパティが付く）。component を削除すると、完全な SBOM が備えるべき網羅性が損なわれるためである。
 
@@ -415,23 +415,24 @@ Source:     inventory.json
 Host:       server01
 Packages:   1523 checked (rpm: 1200, dpkg: 320, pip: 280, npm: 43)
 
-   ECOSYSTEM   PACKAGE          VERSION    SOURCE                DB    VULN ID               CVSS   EPSS  SUMMARY
-   ──────────  ───────────────  ─────────  ────────────────────  ───   ───────────────────   ────   ─────  ──────────────
-!  AlmaLinux   curl             7.88.1     rpm                   nvd   CVE-2024-1234          9.8   0.950  Remote code exec
-   AlmaLinux   openssl          3.0.11     rpm                   osv   ALSA-2024:5678         7.5   0.123  Buffer overflow
-   Debian      libssl3          3.0.11     dpkg                  nvd   CVE-2024-5678          7.5   0.098  Buffer overflow
-   PyPI        requests         2.31.0     /srv/myapp/req...     osv   GHSA-xxxx-yyyy         6.1   0.045  SSRF via proxy
- K Debian      linux-libc-dev   6.12.43-1  dpkg                  osv   CVE-2024-4321          7.8   0.010  Kernel use-after-free
- B Debian      binutils(+7)     2.44-3     dpkg                  osv   CVE-2024-9999          5.5   0.002  Heap overflow in BFD
-~  PyPI        somepkg          v2024.1    pip                   osv   GHSA-zzzz-zzzz         6.0       -  Some vulnerability
-#  npm         malicious-pkg    1.0.0      pnpm-lock.yaml        osv   MAL-2024-1234            -       -  Malicious package
+   ECOSYSTEM   PACKAGE               VERSION    SOURCE               DB    VULN ID               CVSS   EPSS  SUMMARY
+   ──────────  ────────────────────  ─────────  ──────────────────── ───   ───────────────────   ────   ────  ──────────────
+!  AlmaLinux   curl                  7.88.1     rpm                  nvd   CVE-2024-1234          9.8  0.950  Remote code exec
+   AlmaLinux   openssl               3.0.11     rpm                  osv   ALSA-2024:5678         7.5  0.123  Buffer overflow
+   Debian      libssl3               3.0.11     dpkg                 nvd   CVE-2024-5678          7.5  0.098  Buffer overflow
+   PyPI        requests              2.31.0     /srv/myapp/requir... osv   GHSA-xxxx-yyyy         6.1  0.045  SSRF via proxy
+ K Debian      linux-libc-dev        6.12.43-1  dpkg                 osv   CVE-2024-4321          7.8  0.010  Kernel use-after-free
+ B Debian      binutils(2 pkgs)      2.44-3     dpkg                 osv   CVE-2024-9999          5.5  0.002  Heap overflow in BFD
+~  PyPI        somepkg               v2024.1    pip                  osv   GHSA-zzzz-zzzz         6.0      -  Some vulnerability
+#  npm         malicious-pkg         1.0.0      pnpm-lock.yaml       osv   MAL-2024-1234            -      -  Malicious package
 
 # = malicious package (OSSF Malicious Packages)
 ! = in CISA Known Exploited Vulnerabilities (KEV) catalog
 ~ = approximate match (version could not be normalized, showing all vulnerabilities for this package)
 K = kernel headers (the host kernel runs, not this package's code)
 B = build toolchain (compiler, linker or development headers left from a build stage)
-(+N) = the same vulnerability in N more binary packages built from the same source package
+(N pkgs) = the same vulnerability in N binary packages built from this source package (PACKAGE names the source package)
+multiple = the binary packages in this row do not share one version
 DB = data source (osv = Open Source Vulnerabilities, nvd = NIST NVD, advisory = Vendor Advisory)
 EPSS = Exploit Prediction Scoring System probability (0.000–1.000)
 
