@@ -39,6 +39,7 @@ var (
 	scanImage         string
 	scanDockerfile    string
 	scanCheckRegistry bool
+	scanRuntimeOnly   bool
 )
 
 func init() {
@@ -57,6 +58,7 @@ func init() {
 	scanCmd.Flags().StringVar(&scanImage, "image", "", "Docker image to scan (e.g. nginx:latest, registry.example.com/app:v1)")
 	scanCmd.Flags().StringVar(&scanDockerfile, "dockerfile", "", "Dockerfile path: also scan the base image from its FROM instruction")
 	scanCmd.Flags().BoolVar(&scanCheckRegistry, "check-registry", false, "Query npmjs.org to classify unknown scopes (requires network)")
+	scanCmd.Flags().BoolVar(&scanRuntimeOnly, "runtime-only", false, "Report only runtime packages (hide kernel headers and build toolchain findings)")
 	rootCmd.AddCommand(scanCmd)
 }
 
@@ -134,7 +136,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("write JSON output: %w", err)
 		}
 	default:
-		report.PrintTable(os.Stdout, inv, result, scanLabel)
+		report.PrintTableWithOptions(os.Stdout, inv, result, scanLabel, report.Options{RuntimeOnly: scanRuntimeOnly})
 		if len(localFindings) > 0 {
 			report.PrintFindings(os.Stdout, localFindings)
 		}

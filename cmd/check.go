@@ -29,6 +29,7 @@ var (
 	checkConcurrency int
 	checkTimeout     string
 	checkVerbose     bool
+	checkRuntimeOnly bool
 )
 
 func init() {
@@ -39,6 +40,7 @@ func init() {
 	checkCmd.Flags().IntVar(&checkConcurrency, "concurrency", 10, "Concurrent API requests")
 	checkCmd.Flags().StringVar(&checkTimeout, "timeout", "30s", "Per-request timeout")
 	checkCmd.Flags().BoolVar(&checkVerbose, "verbose", false, "Enable verbose logging")
+	checkCmd.Flags().BoolVar(&checkRuntimeOnly, "runtime-only", false, "Report only runtime packages (hide kernel headers and build toolchain findings)")
 	rootCmd.AddCommand(checkCmd)
 }
 
@@ -102,7 +104,7 @@ func runCheck(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("write JSON output: %w", err)
 		}
 	default:
-		report.PrintTable(os.Stdout, inv, result, filePath)
+		report.PrintTableWithOptions(os.Stdout, inv, result, filePath, report.Options{RuntimeOnly: checkRuntimeOnly})
 	}
 
 	// Exit code 1 if vulnerabilities found (for CI/CD)

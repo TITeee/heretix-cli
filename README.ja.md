@@ -72,7 +72,8 @@ heretix-cli collect --image myapp:latest --dockerfile ./Dockerfile --output full
 > - lockfile の integrity ハッシュを **`hashes`** に格納（npm/pnpm は SHA-512、PyPI は SHA-256）
 > - **`licenses`** をコンポーネントに付与（APK, RPM, Composer, npm node_modules, PyPI site-packages から取得）
 > - direct/indirect を示す **`properties[cdx:direct]`** プロパティ
-> - 本番ビルドに含まれない dev/test 専用パッケージを示す **`scope: excluded`**（対応状況は下表の `scope` 列を参照）
+> - 本番ビルドに含まれない dev/test 専用パッケージ、および非ランタイムと分類された OS パッケージを示す **`scope: excluded`**（対応状況は下表の `scope` 列、および [非ランタイムパッケージ](#非ランタイムパッケージ) を参照）
+> - OS バイナリパッケージのビルド元ソースパッケージ名を示す **`properties[heretix:source-package]`**、および非ランタイムパッケージに付与される **`properties[heretix:category]`**（`kernel` / `build`）
 > - **`bom.dependencies`** セクションによる依存グラフ（npm package-lock.json, pnpm-lock.yaml, uv.lock, poetry.lock, composer.lock）
 > - コンテナスキャン時は **`metadata.component`** に OCI PURL とイメージ digest を記録
 
@@ -110,9 +111,9 @@ heretix-cli collect --image myapp:latest --dockerfile ./Dockerfile --output full
 | `gradle.lockfile` | ✓ transitive 含む | — ⁷ | ✓ | — | △ ¹² | ✓ ¹⁴ |
 | `build.gradle(.kts)`（直接解析） | △ 宣言済みのみ | △ | — | — | △ ¹² | ✓ ¹⁵ |
 | `*.jar` / `*.war` / `*.ear` | ✓ ⁸ | — ⁹ | — | ✓ SHA-256 | △ ¹⁰ | — |
-| RPM | ✓ | — | — | — | ✓ | — |
-| DPKG | ✓ | — | — | — | △ ¹³ | — |
-| APK | ✓ | — | — | — | ✓ | — |
+| RPM | ✓ | — | — | — | ✓ | ✓ ¹⁶ |
+| DPKG | ✓ | — | — | — | △ ¹³ | ✓ ¹⁶ |
+| APK | ✓ | — | — | — | ✓ | ✓ ¹⁶ |
 
 ¹ poetry.lock の `direct` 判定は `pyproject.toml` の読み取りが必要なため未実装。  
 ² `go` コマンドが利用可能な場合は `go list` を優先するため transitive deps が取れるが、`direct` 情報は失われる。  
@@ -128,7 +129,8 @@ heretix-cli collect --image myapp:latest --dockerfile ./Dockerfile --output full
 ¹² Gradle の `license` はローカルの Gradle モジュールキャッシュ（デフォルト `~/.gradle/caches/modules-2/files-2.1`、または `$GRADLE_USER_HOME`）内の依存先 POM から取得する — Go と同じくライブホスト限定。  
 ¹³ DPKG の `license` は `/usr/share/doc/{package}/copyright`（DEP-5 machine-readable format の `License:` フィールド）から取得する — 多くのパッケージで存在するが、自由形式の copyright ファイルを使う upstream もあるため保証はない。  
 ¹⁴ `scope: excluded` は、devDependencies / `packages-dev` / `develop` / test専用の Gradle configuration からのみ解決されるパッケージ ― lockfile の依存グラフには存在するが、本番ビルド（`pnpm prune --prod` など）には含まれない ― を示す。`—` の場合は、dev/test専用パッケージも本番パッケージと同様、区別なく報告される。  
-¹⁵ Maven と Gradle のビルドファイル直接解析パスは、`scope=test`（Maven）/ test専用 configuration（Gradle）の依存をタグ付けせず、そもそも出力から除外する。タグ付けではなくフィルタリングによる対応だが、実質的な結果は同じ。
+¹⁵ Maven と Gradle のビルドファイル直接解析パスは、`scope=test`（Maven）/ test専用 configuration（Gradle）の依存をタグ付けせず、そもそも出力から除外する。タグ付けではなくフィルタリングによる対応だが、実質的な結果は同じ。  
+¹⁶ OS パッケージの `scope: excluded` は、カーネルヘッダとビルドツールチェーンを示す。各バイナリパッケージのビルド元ソースパッケージから判定する ― [非ランタイムパッケージ](#非ランタイムパッケージ) を参照。
 
 `deps` の PURL、`integrity` ハッシュ、および `license` 情報は、CycloneDX 出力の `bom.dependencies`、`components[].hashes`、`components[].licenses` にそれぞれ反映される。
 
@@ -150,7 +152,23 @@ heretix-cli check sbom.json --format json > results.json
 | `--severity` | `0.0` | CVSS スコアの最小閾値 |
 | `--concurrency` | `10` | 並行 API リクエスト数 |
 | `--timeout` | `30s` | リクエストごとのタイムアウト |
+| `--runtime-only` | `false` | ランタイムパッケージのみ報告する（カーネルヘッダ・ビルドツールチェーンの検知を非表示） |
 | `--verbose` | `false` | 詳細ログ出力 |
+
+#### 非ランタイムパッケージ
+
+コンテナイメージには、インストールされてはいるが決して実行されないパッケージが含まれることが多い。**カーネルヘッダ**（実際に動くのはホストのカーネルであり、`linux-libc-dev` のコードではない）と、ビルドステージの残骸である**ビルドツールチェーン**（コンパイラ、リンカ、`-dev`/`-devel` ヘッダパッケージ）である。`wordpress:php8.5-fpm` では、これらが全719件中454件を占め、`linux-libc-dev` 単体で388件に達する。
+
+`collect` は、各バイナリパッケージの**ビルド元ソースパッケージ**からこれらを判定する ― dpkg status の `Source:`、RPM データベースの `SourceRpm`、APK データベースの `o:` である。パッケージ名ではなくソースパッケージを使うのは、1つの上流プロジェクトが名前からは判別できない複数のバイナリパッケージに分割されるためである。`libbinutils`・`libctf0`・`libsframe1`・`libgprofng0` はいずれも `Section: libs` であり、共通のソースパッケージ `binutils` だけがビルドツールチェーンであることを示している。
+
+同じソースパッケージ情報から、2つの帰結が得られる:
+
+- **検知件数はバイナリパッケージ単位ではなくソースパッケージ単位で数える。** 1件の `binutils` の CVE は8つのバイナリパッケージすべてに影響するが、8行ではなく `(+7)` と記した1行になる。
+- **非ランタイムの検知は隠さずタグ付けする。** レポート上で `K`（kernel）/ `B`（build）と印を付け、`Non-runtime:` 行に内訳を示す。黙って消えるものは無い。除外したい場合は `--runtime-only` を指定する。
+
+`wordpress:php8.5-fpm` での実測値: 対応前1485件 → ソースパッケージ単位の集約後 **719件** → `--runtime-only` 指定時 **265件**。
+
+SBOM はこの処理の影響を受けない。すべてのパッケージが component として残る（CycloneDX の `scope: excluded` と `heretix:category` プロパティが付く）。component を削除すると、完全な SBOM が備えるべき網羅性が損なわれるためである。
 
 ### 一気通貫スキャン (`scan`)
 
@@ -184,6 +202,7 @@ HERETIX_API_KEY=your-secret-key heretix-cli scan --api-url http://heretix-api:50
 | `--dockerfile` | (なし) | Dockerfile パス: FROM のベースイメージも連鎖スキャン |
 | `--skip-local` | `false` | ローカルセキュリティ検知をスキップ（GlassWorm・Dependency Confusion・Malicious Install・CI/CD Poisoning・Lock File Integrity） |
 | `--check-registry` | `false` | 未知の npm スコープを npmjs.org に問い合わせて判定（ネットワーク必須） |
+| `--runtime-only` | `false` | ランタイムパッケージのみ報告する（[非ランタイムパッケージ](#非ランタイムパッケージ) を参照） |
 
 ### GitHub Dependency Submission (`submit`)
 
@@ -396,18 +415,23 @@ Source:     inventory.json
 Host:       server01
 Packages:   1523 checked (rpm: 1200, dpkg: 320, pip: 280, npm: 43)
 
-  ECOSYSTEM   PACKAGE          VERSION    SOURCE                DB    VULN ID               CVSS   EPSS  SUMMARY
-  ──────────  ───────────────  ─────────  ────────────────────  ───   ───────────────────   ────   ─────  ──────────────
-! AlmaLinux   curl             7.88.1     rpm                   nvd   CVE-2024-1234          9.8   0.950  Remote code exec
-  AlmaLinux   openssl          3.0.11     rpm                   osv   ALSA-2024:5678         7.5   0.123  Buffer overflow
-  Debian      libssl3          3.0.11     dpkg                  nvd   CVE-2024-5678          7.5   0.098  Buffer overflow
-  PyPI        requests         2.31.0     /srv/myapp/req...     osv   GHSA-xxxx-yyyy         6.1   0.045  SSRF via proxy
-~ PyPI        somepkg          v2024.1    pip                   osv   GHSA-zzzz-zzzz         6.0       -  Some vulnerability
-# npm         malicious-pkg    1.0.0      pnpm-lock.yaml        osv   MAL-2024-1234            -       -  Malicious package
+   ECOSYSTEM   PACKAGE          VERSION    SOURCE                DB    VULN ID               CVSS   EPSS  SUMMARY
+   ──────────  ───────────────  ─────────  ────────────────────  ───   ───────────────────   ────   ─────  ──────────────
+!  AlmaLinux   curl             7.88.1     rpm                   nvd   CVE-2024-1234          9.8   0.950  Remote code exec
+   AlmaLinux   openssl          3.0.11     rpm                   osv   ALSA-2024:5678         7.5   0.123  Buffer overflow
+   Debian      libssl3          3.0.11     dpkg                  nvd   CVE-2024-5678          7.5   0.098  Buffer overflow
+   PyPI        requests         2.31.0     /srv/myapp/req...     osv   GHSA-xxxx-yyyy         6.1   0.045  SSRF via proxy
+ K Debian      linux-libc-dev   6.12.43-1  dpkg                  osv   CVE-2024-4321          7.8   0.010  Kernel use-after-free
+ B Debian      binutils(+7)     2.44-3     dpkg                  osv   CVE-2024-9999          5.5   0.002  Heap overflow in BFD
+~  PyPI        somepkg          v2024.1    pip                   osv   GHSA-zzzz-zzzz         6.0       -  Some vulnerability
+#  npm         malicious-pkg    1.0.0      pnpm-lock.yaml        osv   MAL-2024-1234            -       -  Malicious package
 
 # = malicious package (OSSF Malicious Packages)
 ! = in CISA Known Exploited Vulnerabilities (KEV) catalog
 ~ = approximate match (version could not be normalized, showing all vulnerabilities for this package)
+K = kernel headers (the host kernel runs, not this package's code)
+B = build toolchain (compiler, linker or development headers left from a build stage)
+(+N) = the same vulnerability in N more binary packages built from the same source package
 DB = data source (osv = Open Source Vulnerabilities, nvd = NIST NVD, advisory = Vendor Advisory)
 EPSS = Exploit Prediction Scoring System probability (0.000–1.000)
 
@@ -417,6 +441,8 @@ Summary: 14 packages with 21 findings (1 malware, 1 KEV)
   High (>=7.0):     4
   Medium (>=4.0):   8
   Low (<4.0):       5
+  Non-runtime:      2 (kernel 1, build 1)
+  (counted above; re-run with --runtime-only to exclude them)
 
 Local Security Findings
 =======================

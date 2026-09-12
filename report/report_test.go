@@ -359,3 +359,124 @@ func TestPrintFindingsJSON(t *testing.T) {
 		t.Errorf("expected the finding to round-trip through JSON, got %+v", decoded.LocalFindings)
 	}
 }
+
+// debianInventory mirrors a real Debian image: two binary packages built from
+// the binutils source, one kernel-header package, and one genuine runtime
+// library.
+func debianInventory() *inventory.Inventory {
+	return &inventory.Inventory{Packages: []inventory.Package{
+		{Name: "binutils", Version: "2.44-3", Ecosystem: "Debian:13", Source: "dpkg",
+			SourcePackage: "binutils", Category: "build", Scope: "excluded"},
+		{Name: "libbinutils", Version: "2.44-3", Ecosystem: "Debian:13", Source: "dpkg",
+			SourcePackage: "binutils", Category: "build", Scope: "excluded"},
+		{Name: "linux-libc-dev", Version: "6.12.43-1", Ecosystem: "Debian:13", Source: "dpkg",
+			SourcePackage: "linux", Category: "kernel", Scope: "excluded"},
+		{Name: "libc6", Version: "2.41-12", Ecosystem: "Debian:13", Source: "dpkg",
+			SourcePackage: "glibc"},
+	}}
+}
+
+func debianResult() *checker.CheckResult {
+	vuln := func(id string, score float64) []checker.Vulnerability {
+		return []checker.Vulnerability{{ExternalID: id, CvssScore: score}}
+	}
+	return &checker.CheckResult{Results: []checker.PackageResult{
+		{Package: "binutils", Version: "2.44-3", Ecosystem: "Debian:13", Vulnerabilities: vuln("CVE-2026-1", 5.0)},
+		{Package: "libbinutils", Version: "2.44-3", Ecosystem: "Debian:13", Vulnerabilities: vuln("CVE-2026-1", 5.0)},
+		{Package: "linux-libc-dev", Version: "6.12.43-1", Ecosystem: "Debian:13", Vulnerabilities: vuln("CVE-2026-3", 5.0)},
+		{Package: "libc6", Version: "2.41-12", Ecosystem: "Debian:13", Vulnerabilities: vuln("CVE-2026-2", 5.0)},
+	}}
+}
+
+// TestPrintTable_CollapsesFindingsSharingASourcePackage covers the larger of
+// the two count-inflation mechanisms: one source package fans out into several
+// binary packages, and the same CVE is then reported once per binary package.
+func TestPrintTable_CollapsesFindingsSharingASourcePackage(t *testing.T) {
+	var buf bytes.Buffer
+	PrintTable(&buf, debianInventory(), debianResult(), "sbom.json")
+	out := buf.String()
+
+	if n := countRowsContaining(out, "CVE-2026-1"); n != 1 {
+		t.Errorf("CVE-2026-1 appears on %d rows, want 1 (binutils and libbinutils share a source package)", n)
+	}
+	if !strings.Contains(out, "binutils(+1)") {
+		t.Errorf("expected the collapsed row to note the extra binary package, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Summary: 3 packages with 3 findings") {
+		t.Errorf("expected the summary to count collapsed findings once, got:\n%s", out)
+	}
+}
+
+// TestPrintTable_TagsNonRuntimeFindings checks that non-runtime findings are
+// marked rather than hidden -- the default has to stay complete so nothing
+// disappears without the reader being told.
+func TestPrintTable_TagsNonRuntimeFindings(t *testing.T) {
+	var buf bytes.Buffer
+	PrintTable(&buf, debianInventory(), debianResult(), "sbom.json")
+	out := buf.String()
+
+	if !hasRowWithPrefix(out, "CVE-2026-3", " K") {
+		t.Errorf("expected the kernel-header row to carry the K marker, got:\n%s", out)
+	}
+	if !hasRowWithPrefix(out, "CVE-2026-1", " B") {
+		t.Errorf("expected the build-tooling row to carry the B marker, got:\n%s", out)
+	}
+	if !hasRowWithPrefix(out, "CVE-2026-2", "  ") {
+		t.Errorf("expected the runtime row to carry no category marker, got:\n%s", out)
+	}
+	if !strings.Contains(out, "K = kernel headers") {
+		t.Error("expected the kernel legend line")
+	}
+	if !strings.Contains(out, "B = build toolchain") {
+		t.Error("expected the build legend line")
+	}
+	if !strings.Contains(out, "Non-runtime:      2 (kernel 1, build 1)") {
+		t.Errorf("expected the non-runtime breakdown in the summary, got:\n%s", out)
+	}
+}
+
+func TestPrintTable_RuntimeOnlyDropsNonRuntimeFindings(t *testing.T) {
+	var buf bytes.Buffer
+	PrintTableWithOptions(&buf, debianInventory(), debianResult(), "sbom.json", Options{RuntimeOnly: true})
+	out := buf.String()
+
+	if strings.Contains(out, "CVE-2026-1") || strings.Contains(out, "CVE-2026-3") {
+		t.Errorf("expected non-runtime findings to be dropped with RuntimeOnly, got:\n%s", out)
+	}
+	if !strings.Contains(out, "CVE-2026-2") {
+		t.Errorf("expected the runtime finding to remain, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Summary: 1 packages with 1 findings") {
+		t.Errorf("expected the summary to count only runtime findings, got:\n%s", out)
+	}
+	if strings.Contains(out, "Non-runtime:") {
+		t.Error("expected no non-runtime breakdown when non-runtime findings are excluded")
+	}
+}
+
+// TestPrintTable_UnclassifiedPackagesKeepTheirOwnIdentity guards the default
+// path: an inventory without source-package metadata (an npm project, or an
+// SBOM produced before this field existed) must report exactly as before.
+func TestPrintTable_UnclassifiedPackagesKeepTheirOwnIdentity(t *testing.T) {
+	var buf bytes.Buffer
+	result := &checker.CheckResult{Results: []checker.PackageResult{
+		{Package: "a", Version: "1.0", Vulnerabilities: []checker.Vulnerability{{ExternalID: "CVE-1", CvssScore: 5}}},
+		{Package: "b", Version: "1.0", Vulnerabilities: []checker.Vulnerability{{ExternalID: "CVE-1", CvssScore: 5}}},
+	}}
+	PrintTable(&buf, emptyInventory(), result, "sbom.json")
+	out := buf.String()
+
+	if n := countRowsContaining(out, "CVE-1"); n != 2 {
+		t.Errorf("CVE-1 appears on %d rows, want 2 (unrelated packages must not be collapsed)", n)
+	}
+}
+
+func countRowsContaining(out, marker string) int {
+	n := 0
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, marker) {
+			n++
+		}
+	}
+	return n
+}
