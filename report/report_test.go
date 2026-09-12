@@ -237,7 +237,7 @@ func TestPrintJSON(t *testing.T) {
 		var buf bytes.Buffer
 		result := &checker.CheckResult{Hostname: "host"}
 		findings := []detector.Finding{{Type: "glassworm", Severity: "CRITICAL", File: "index.js"}}
-		if err := PrintJSON(&buf, result, findings); err != nil {
+		if err := PrintJSON(&buf, emptyInventory(), result, findings, Options{}); err != nil {
 			t.Fatalf("PrintJSON returned an error: %v", err)
 		}
 
@@ -255,11 +255,118 @@ func TestPrintJSON(t *testing.T) {
 
 	t.Run("omits localFindings entirely when there are none", func(t *testing.T) {
 		var buf bytes.Buffer
-		if err := PrintJSON(&buf, &checker.CheckResult{}, nil); err != nil {
+		if err := PrintJSON(&buf, emptyInventory(), &checker.CheckResult{}, nil, Options{}); err != nil {
 			t.Fatalf("PrintJSON returned an error: %v", err)
 		}
 		if strings.Contains(buf.String(), "localFindings") {
 			t.Errorf("expected \"localFindings\" to be omitted via omitempty, got:\n%s", buf.String())
+		}
+	})
+
+	// PrintJSON enriches each result with the same classification metadata
+	// the table uses to group and tag rows, so a script consuming this output
+	// can group by source package itself, or at least see why a finding is
+	// (or isn't) tagged non-runtime -- see report.go's PrintTable comment on
+	// why this exists as reporting metadata rather than on
+	// checker.PackageResult itself.
+	t.Run("enriches results with sourcePackage and category", func(t *testing.T) {
+		inv := &inventory.Inventory{Packages: []inventory.Package{
+			{Name: "libbinutils", Version: "2.44-3", Ecosystem: "Debian:13", Source: "dpkg",
+				SourcePackage: "binutils", Category: "build", Scope: "excluded"},
+		}}
+		result := &checker.CheckResult{Results: []checker.PackageResult{
+			{Package: "libbinutils", Version: "2.44-3", Ecosystem: "Debian:13",
+				Vulnerabilities: []checker.Vulnerability{{ExternalID: "CVE-2026-1", CvssScore: 5.0}}},
+		}}
+
+		var buf bytes.Buffer
+		if err := PrintJSON(&buf, inv, result, nil, Options{}); err != nil {
+			t.Fatalf("PrintJSON returned an error: %v", err)
+		}
+
+		var decoded struct {
+			Results []struct {
+				Package       string `json:"package"`
+				SourcePackage string `json:"sourcePackage"`
+				Category      string `json:"category"`
+			} `json:"results"`
+		}
+		if err := json.Unmarshal(buf.Bytes(), &decoded); err != nil {
+			t.Fatalf("output is not valid JSON: %v", err)
+		}
+		if len(decoded.Results) != 1 {
+			t.Fatalf("got %d results, want 1", len(decoded.Results))
+		}
+		if decoded.Results[0].SourcePackage != "binutils" {
+			t.Errorf("sourcePackage = %q, want %q", decoded.Results[0].SourcePackage, "binutils")
+		}
+		if decoded.Results[0].Category != "build" {
+			t.Errorf("category = %q, want %q", decoded.Results[0].Category, "build")
+		}
+	})
+
+	// This is the same inconsistency fixed for the CI exit code
+	// (report.HasFindings): a script parsing --format json with
+	// --runtime-only must see the same picture the table and the exit code
+	// do, not the unfiltered raw result.
+	t.Run("drops non-runtime results under RuntimeOnly", func(t *testing.T) {
+		inv := &inventory.Inventory{Packages: []inventory.Package{
+			{Name: "linux-libc-dev", Version: "6.12.43-1", Ecosystem: "Debian:13", Source: "dpkg",
+				SourcePackage: "linux", Category: "kernel", Scope: "excluded"},
+			{Name: "libc6", Version: "2.41-12", Ecosystem: "Debian:13", Source: "dpkg", SourcePackage: "glibc"},
+		}}
+		result := &checker.CheckResult{Results: []checker.PackageResult{
+			{Package: "linux-libc-dev", Version: "6.12.43-1", Ecosystem: "Debian:13",
+				Vulnerabilities: []checker.Vulnerability{{ExternalID: "CVE-2026-1", CvssScore: 5.0}}},
+			{Package: "libc6", Version: "2.41-12", Ecosystem: "Debian:13",
+				Vulnerabilities: []checker.Vulnerability{{ExternalID: "CVE-2026-2", CvssScore: 5.0}}},
+		}}
+
+		var buf bytes.Buffer
+		if err := PrintJSON(&buf, inv, result, nil, Options{RuntimeOnly: true}); err != nil {
+			t.Fatalf("PrintJSON returned an error: %v", err)
+		}
+		if strings.Contains(buf.String(), "linux-libc-dev") {
+			t.Errorf("expected the kernel-header result to be dropped under RuntimeOnly, got:\n%s", buf.String())
+		}
+		if !strings.Contains(buf.String(), "libc6") {
+			t.Errorf("expected the runtime result to remain, got:\n%s", buf.String())
+		}
+	})
+
+	// aggregatedFindings mirrors PrintTable's collapsed row count, so a
+	// script does not have to reimplement source-package grouping just to
+	// know "how many findings" matches what the table's summary line says.
+	t.Run("summary.aggregatedFindings mirrors the table's collapsed row count", func(t *testing.T) {
+		inv := &inventory.Inventory{Packages: []inventory.Package{
+			{Name: "binutils", Version: "2.44-3", Ecosystem: "Debian:13", Source: "dpkg", SourcePackage: "binutils"},
+			{Name: "libbinutils", Version: "2.44-3", Ecosystem: "Debian:13", Source: "dpkg", SourcePackage: "binutils"},
+		}}
+		result := &checker.CheckResult{Results: []checker.PackageResult{
+			{Package: "binutils", Version: "2.44-3", Ecosystem: "Debian:13",
+				Vulnerabilities: []checker.Vulnerability{{ExternalID: "CVE-2026-1", CvssScore: 5.0}}},
+			{Package: "libbinutils", Version: "2.44-3", Ecosystem: "Debian:13",
+				Vulnerabilities: []checker.Vulnerability{{ExternalID: "CVE-2026-1", CvssScore: 5.0}}},
+		}}
+
+		var buf bytes.Buffer
+		if err := PrintJSON(&buf, inv, result, nil, Options{}); err != nil {
+			t.Fatalf("PrintJSON returned an error: %v", err)
+		}
+		var decoded struct {
+			Results []json.RawMessage `json:"results"`
+			Summary struct {
+				AggregatedFindings int `json:"aggregatedFindings"`
+			} `json:"summary"`
+		}
+		if err := json.Unmarshal(buf.Bytes(), &decoded); err != nil {
+			t.Fatalf("output is not valid JSON: %v", err)
+		}
+		if len(decoded.Results) != 2 {
+			t.Errorf("got %d raw results, want 2 (full per-binary granularity preserved)", len(decoded.Results))
+		}
+		if decoded.Summary.AggregatedFindings != 1 {
+			t.Errorf("summary.aggregatedFindings = %d, want 1 (binutils and libbinutils share a source package)", decoded.Summary.AggregatedFindings)
 		}
 	})
 }

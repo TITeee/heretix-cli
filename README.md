@@ -471,6 +471,8 @@ Local findings: 6 (1 glassworm, 2 dep-confusion, 1 malicious-install, 1 cicd-poi
 
 Only JSON is written to stdout (includes both vulnerability results and local findings under `localFindings`). Progress logs go to stderr, so pipe processing works cleanly.
 
+Each entry under `results[]` carries `sourcePackage` and `category` (see [Non-runtime packages](#non-runtime-packages)) so a script can group by source package itself; results keep full per-binary-package granularity rather than the table's collapsed rows. `--runtime-only` drops results on non-runtime packages here too, matching the table and the exit code. `summary.aggregatedFindings` gives the collapsed count (one per source package + vulnerability) without requiring that regrouping.
+
 ## Exit Codes
 
 | Code | Meaning |

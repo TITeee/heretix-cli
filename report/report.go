@@ -395,15 +395,72 @@ func PrintTableWithOptions(w io.Writer, inv *inventory.Inventory, result *checke
 	}
 }
 
-// PrintJSON writes the check result and local findings as JSON to w.
-func PrintJSON(w io.Writer, result *checker.CheckResult, findings []detector.Finding) error {
+// jsonPackageResult is checker.PackageResult enriched with the same
+// classification metadata PrintTable uses to group and tag rows. It lives
+// here rather than as fields on checker.PackageResult itself since that type
+// is also used outside reporting and carries no dependency on inventory
+// classification.
+type jsonPackageResult struct {
+	checker.PackageResult
+	// SourcePackage/Category mirror inventory.Package's fields of the same
+	// name -- see collector.classifyNonRuntime. Category is "" for a normal
+	// runtime package.
+	SourcePackage string `json:"sourcePackage,omitempty"`
+	Category      string `json:"category,omitempty"`
+}
+
+// jsonSummary carries derived counts a script would otherwise have to
+// recompute itself.
+type jsonSummary struct {
+	// AggregatedFindings is len(buildRows(...)): the number of rows
+	// PrintTable would show for the same result and options -- one per
+	// (source package, vulnerability) rather than one per binary package.
+	AggregatedFindings int `json:"aggregatedFindings"`
+}
+
+// PrintJSON writes the check result and local findings as JSON to w. Each
+// result carries sourcePackage/category, and opts.RuntimeOnly drops results
+// on non-runtime packages the same way PrintTable does -- so a script
+// consuming --format json sees the same picture as the table and the CI exit
+// code (report.HasFindings), instead of always the unfiltered raw result.
+//
+// Results keep full per-binary-package granularity (unlike the table, which
+// collapses a shared source package into one row): a script may want to know
+// exactly which binary packages are affected, and can group by
+// sourcePackage itself using the field this now carries. summary.aggregatedFindings
+// gives the collapsed count without requiring that regrouping.
+func PrintJSON(w io.Writer, inv *inventory.Inventory, result *checker.CheckResult, findings []detector.Finding, opts Options) error {
+	meta := make(map[string]inventory.Package, len(inv.Packages))
+	for _, p := range inv.Packages {
+		meta[p.Name+"\t"+p.Version+"\t"+p.Ecosystem] = p
+	}
+
+	results := make([]jsonPackageResult, 0, len(result.Results))
+	for _, r := range result.Results {
+		m := meta[r.Package+"\t"+r.Version+"\t"+r.Ecosystem]
+		if opts.RuntimeOnly && m.Category != "" {
+			continue
+		}
+		results = append(results, jsonPackageResult{
+			PackageResult: r,
+			SourcePackage: m.SourcePackage,
+			Category:      m.Category,
+		})
+	}
+
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	out := struct {
-		*checker.CheckResult
-		LocalFindings []detector.Finding `json:"localFindings,omitempty"`
+		Hostname      string              `json:"hostname"`
+		Results       []jsonPackageResult `json:"results"`
+		Errors        []string            `json:"errors,omitempty"`
+		Summary       jsonSummary         `json:"summary"`
+		LocalFindings []detector.Finding  `json:"localFindings,omitempty"`
 	}{
-		CheckResult:   result,
+		Hostname:      result.Hostname,
+		Results:       results,
+		Errors:        result.Errors,
+		Summary:       jsonSummary{AggregatedFindings: len(buildRows(inv, result, opts))},
 		LocalFindings: findings,
 	}
 	return enc.Encode(out)

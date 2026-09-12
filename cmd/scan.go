@@ -134,7 +134,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 	switch scanFormat {
 	case "json":
-		if err := report.PrintJSON(os.Stdout, result, localFindings); err != nil {
+		if err := report.PrintJSON(os.Stdout, inv, result, localFindings, reportOpts); err != nil {
 			return fmt.Errorf("write JSON output: %w", err)
 		}
 	default:

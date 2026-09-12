@@ -102,7 +102,7 @@ func runCheck(cmd *cobra.Command, args []string) error {
 
 	switch checkFormat {
 	case "json":
-		if err := report.PrintJSON(os.Stdout, result, nil); err != nil {
+		if err := report.PrintJSON(os.Stdout, inv, result, nil, reportOpts); err != nil {
 			return fmt.Errorf("write JSON output: %w", err)
 		}
 	default:

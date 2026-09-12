@@ -471,6 +471,8 @@ Local findings: 6 (1 glassworm, 2 dep-confusion, 1 malicious-install, 1 cicd-poi
 
 stdout に JSON のみ出力（脆弱性結果と `localFindings` フィールドのローカル検知結果を含む）。進捗ログは stderr に出力されるため、パイプ処理が可能。
 
+`results[]` の各要素には `sourcePackage` と `category`（[非ランタイムパッケージ](#非ランタイムパッケージ) 参照）が付与されており、スクリプト側でソースパッケージ単位の集約ができる。テーブルの集約済み行とは異なり、結果はバイナリパッケージ単位の粒度を保持する。`--runtime-only` はここでも非ランタイムパッケージの結果を除外し、テーブルおよび終了コードと一致させる。`summary.aggregatedFindings` は、その再集約をしなくても集約後の件数（ソースパッケージ+脆弱性単位）を得られるようにするものである。
+
 ## 終了コード
 
 | コード | 意味 |
