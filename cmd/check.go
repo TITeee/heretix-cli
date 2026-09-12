@@ -98,17 +98,21 @@ func runCheck(cmd *cobra.Command, args []string) error {
 		os.Exit(2)
 	}
 
+	reportOpts := report.Options{RuntimeOnly: checkRuntimeOnly}
+
 	switch checkFormat {
 	case "json":
 		if err := report.PrintJSON(os.Stdout, result, nil); err != nil {
 			return fmt.Errorf("write JSON output: %w", err)
 		}
 	default:
-		report.PrintTableWithOptions(os.Stdout, inv, result, filePath, report.Options{RuntimeOnly: checkRuntimeOnly})
+		report.PrintTableWithOptions(os.Stdout, inv, result, filePath, reportOpts)
 	}
 
-	// Exit code 1 if vulnerabilities found (for CI/CD)
-	if len(result.Results) > 0 {
+	// Exit code 1 if vulnerabilities found (for CI/CD). Must respect
+	// --runtime-only the same way the table does -- otherwise a build could
+	// fail over a kernel-header CVE that --runtime-only was asked to ignore.
+	if report.HasFindings(inv, result, reportOpts) {
 		os.Exit(1)
 	}
 	return nil

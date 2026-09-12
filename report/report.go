@@ -158,6 +158,15 @@ func buildRows(inv *inventory.Inventory, result *checker.CheckResult, opts Optio
 	return rows
 }
 
+// HasFindings reports whether any finding remains after applying opts (in
+// particular RuntimeOnly). CI/CD gating (cmd/check.go, cmd/scan.go's exit
+// code) must use this instead of raw result.Results: an inventory with
+// findings only on kernel-header or build-toolchain packages has a non-empty
+// result.Results but, under RuntimeOnly, nothing to fail the build over.
+func HasFindings(inv *inventory.Inventory, result *checker.CheckResult, opts Options) bool {
+	return len(buildRows(inv, result, opts)) > 0
+}
+
 // PrintTable writes a human-readable vulnerability report to w.
 func PrintTable(w io.Writer, inv *inventory.Inventory, result *checker.CheckResult, source string) {
 	PrintTableWithOptions(w, inv, result, source, Options{})

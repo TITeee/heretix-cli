@@ -170,6 +170,8 @@ heretix-cli check sbom.json --format json > results.json
 
 SBOM はこの処理の影響を受けない。すべてのパッケージが component として残る（CycloneDX の `scope: excluded` と `heretix:category` プロパティが付く）。component を削除すると、完全な SBOM が備えるべき網羅性が損なわれるためである。
 
+`--runtime-only` はテーブル表示だけでなく `check`/`scan` の CI/CD 用終了コード（検知が残っていれば1）も変える。`--runtime-only` で無視すると指定したカーネルヘッダ/ビルドツールチェーンのCVEだけでビルドが失敗することは無い。
+
 ### 一気通貫スキャン (`scan`)
 
 collect と check をワンコマンドで実行する。中間ファイル不要。

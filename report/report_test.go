@@ -587,6 +587,34 @@ func TestPrintTable_NeverCollapsesDifferentVersionsOfANonOSPackage(t *testing.T)
 	}
 }
 
+// TestHasFindings_RespectsRuntimeOnly guards the CI exit-code path
+// (cmd/check.go, cmd/scan.go): --runtime-only must be able to turn a
+// non-runtime-only finding into a clean exit, not just hide it from the
+// table while the process still exits 1 underneath the reader.
+func TestHasFindings_RespectsRuntimeOnly(t *testing.T) {
+	inv := &inventory.Inventory{Packages: []inventory.Package{
+		{Name: "linux-libc-dev", Version: "6.12.43-1", Ecosystem: "Debian:13", Source: "dpkg",
+			SourcePackage: "linux", Category: "kernel", Scope: "excluded"},
+	}}
+	result := &checker.CheckResult{Results: []checker.PackageResult{
+		{Package: "linux-libc-dev", Version: "6.12.43-1", Ecosystem: "Debian:13",
+			Vulnerabilities: []checker.Vulnerability{{ExternalID: "CVE-2026-1", CvssScore: 5.0}}},
+	}}
+
+	if !HasFindings(inv, result, Options{}) {
+		t.Error("expected a finding by default (non-runtime findings are shown, not excluded)")
+	}
+	if HasFindings(inv, result, Options{RuntimeOnly: true}) {
+		t.Error("expected no finding under --runtime-only: the only finding is on a kernel-header package")
+	}
+}
+
+func TestHasFindings_EmptyResultIsFalse(t *testing.T) {
+	if HasFindings(emptyInventory(), &checker.CheckResult{}, Options{}) {
+		t.Error("expected no findings for an empty check result")
+	}
+}
+
 // TestPrintTable_UnclassifiedPackagesKeepTheirOwnIdentity guards the default
 // path: an inventory without source-package metadata (an npm project, or an
 // SBOM produced before this field existed) must report exactly as before.

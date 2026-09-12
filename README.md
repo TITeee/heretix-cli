@@ -170,6 +170,8 @@ Measured on `wordpress:php8.5-fpm`: 1485 findings before, **721** after collapsi
 
 The SBOM is unaffected by all of this: every package stays a component (CycloneDX `scope: excluded` plus a `heretix:category` property), because dropping components would break the coverage a complete SBOM is supposed to provide.
 
+`--runtime-only` also changes `check`/`scan`'s CI/CD exit code (1 when findings remain), not just the table -- a build does not fail over a kernel-header or build-toolchain CVE that `--runtime-only` was asked to ignore.
+
 ### One-shot Scan (`scan`)
 
 Runs `collect` and `check` in a single command. No intermediate file needed.

@@ -130,19 +130,24 @@ func runScan(cmd *cobra.Command, args []string) error {
 		scanLabel = scanImage
 	}
 
+	reportOpts := report.Options{RuntimeOnly: scanRuntimeOnly}
+
 	switch scanFormat {
 	case "json":
 		if err := report.PrintJSON(os.Stdout, result, localFindings); err != nil {
 			return fmt.Errorf("write JSON output: %w", err)
 		}
 	default:
-		report.PrintTableWithOptions(os.Stdout, inv, result, scanLabel, report.Options{RuntimeOnly: scanRuntimeOnly})
+		report.PrintTableWithOptions(os.Stdout, inv, result, scanLabel, reportOpts)
 		if len(localFindings) > 0 {
 			report.PrintFindings(os.Stdout, localFindings)
 		}
 	}
 
-	if len(result.Results) > 0 || len(localFindings) > 0 {
+	// Must respect --runtime-only the same way the table does -- otherwise a
+	// build could fail over a kernel-header CVE that --runtime-only was asked
+	// to ignore.
+	if report.HasFindings(inv, result, reportOpts) || len(localFindings) > 0 {
 		os.Exit(1)
 	}
 	return nil
