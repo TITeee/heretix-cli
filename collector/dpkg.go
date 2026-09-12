@@ -44,20 +44,21 @@ func (c *DPKGCollector) parseStatusFile(statusPath, scanPath string, verbose boo
 	ecosystem := detectDPKGEcosystem(scanPath)
 
 	var pkgs []inventory.Package
-	var currentPkg, currentVersion, currentStatus string
+	var currentPkg, currentVersion, currentStatus, currentSource, currentSection string
 
 	flush := func() {
 		if currentPkg != "" && currentVersion != "" && strings.Contains(currentStatus, "install ok installed") {
-			pkgs = append(pkgs, inventory.Package{
+			pkgs = append(pkgs, applyCategory(inventory.Package{
 				Name:       currentPkg,
 				Version:    currentVersion,
 				RawVersion: currentVersion,
 				Ecosystem:  ecosystem,
 				Source:     "dpkg",
 				License:    parseDpkgCopyrightLicense(scanPath, currentPkg),
-			})
+			}, currentSource, currentSection))
 		}
 		currentPkg, currentVersion, currentStatus = "", "", ""
+		currentSource, currentSection = "", ""
 	}
 
 	scanner := bufio.NewScanner(f)
@@ -74,6 +75,10 @@ func (c *DPKGCollector) parseStatusFile(statusPath, scanPath string, verbose boo
 			currentVersion = strings.TrimPrefix(line, "Version: ")
 		case strings.HasPrefix(line, "Status: "):
 			currentStatus = strings.TrimPrefix(line, "Status: ")
+		case strings.HasPrefix(line, "Source: "):
+			currentSource = parseDpkgSourceField(strings.TrimPrefix(line, "Source: "))
+		case strings.HasPrefix(line, "Section: "):
+			currentSection = parseDpkgSectionField(strings.TrimPrefix(line, "Section: "))
 		}
 	}
 	flush() // handle final record
@@ -99,7 +104,7 @@ func (c *DPKGCollector) collectViaDpkgQuery(verbose bool) ([]inventory.Package, 
 		return nil, nil
 	}
 
-	cmd := exec.Command("dpkg-query", "-W", "-f=${Package}\t${Version}\n")
+	cmd := exec.Command("dpkg-query", "-W", "-f=${Package}\t${Version}\t${source:Package}\t${Section}\n")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("dpkg-query failed: %w", err)
@@ -114,8 +119,8 @@ func (c *DPKGCollector) collectViaDpkgQuery(verbose bool) ([]inventory.Package, 
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "\t", 2)
-		if len(parts) != 2 {
+		parts := strings.SplitN(line, "\t", 4)
+		if len(parts) < 2 {
 			if verbose {
 				log.Printf("[dpkg] skipping malformed line: %s", line)
 			}
@@ -126,20 +131,49 @@ func (c *DPKGCollector) collectViaDpkgQuery(verbose bool) ([]inventory.Package, 
 		if rawVersion == "" {
 			continue
 		}
-		pkgs = append(pkgs, inventory.Package{
+		// ${source:Package} and ${Section} are best-effort: an old dpkg that
+		// does not know a field substitutes an empty string for it.
+		var srcPkg, section string
+		if len(parts) > 2 {
+			srcPkg = parseDpkgSourceField(parts[2])
+		}
+		if len(parts) > 3 {
+			section = parseDpkgSectionField(parts[3])
+		}
+		pkgs = append(pkgs, applyCategory(inventory.Package{
 			Name:       name,
 			Version:    rawVersion,
 			RawVersion: rawVersion,
 			Ecosystem:  ecosystem,
 			Source:     "dpkg",
 			License:    parseDpkgCopyrightLicense("/", name),
-		})
+		}, srcPkg, section))
 	}
 
 	if verbose {
 		log.Printf("[dpkg] collected %d packages via dpkg-query", len(pkgs))
 	}
 	return pkgs, nil
+}
+
+// parseDpkgSourceField normalizes a "Source:" value. dpkg appends the source
+// version in parentheses whenever it differs from the binary package's own
+// version (e.g. "linux (6.12.43-1)"), which is common exactly for the packages
+// this field is needed for.
+func parseDpkgSourceField(v string) string {
+	if i := strings.IndexByte(v, '('); i != -1 {
+		v = v[:i]
+	}
+	return strings.TrimSpace(v)
+}
+
+// parseDpkgSectionField normalizes a "Section:" value, which carries an
+// archive area prefix outside main (e.g. "non-free/libs", "contrib/devel").
+func parseDpkgSectionField(v string) string {
+	if i := strings.LastIndexByte(v, '/'); i != -1 {
+		v = v[i+1:]
+	}
+	return strings.TrimSpace(v)
 }
 
 // parseDpkgCopyrightLicense best-effort extracts license identifiers from a

@@ -88,7 +88,8 @@ func detectAlpineEcosystem(scanPath string) string {
 
 // parseAPKDatabase parses /lib/apk/db/installed.
 // The file consists of package entries separated by blank lines.
-// Each entry contains key-value pairs: "P:" = name, "V:" = version.
+// Each entry contains key-value pairs: "P:" = name, "V:" = version,
+// "L:" = license, "o:" = origin (source) package.
 func parseAPKDatabase(dbPath string, ecosystem string, verbose bool) ([]inventory.Package, error) {
 	f, err := os.Open(dbPath)
 	if err != nil {
@@ -97,11 +98,11 @@ func parseAPKDatabase(dbPath string, ecosystem string, verbose bool) ([]inventor
 	defer f.Close()
 
 	var pkgs []inventory.Package
-	var name, version, license string
+	var name, version, license, origin string
 
 	flush := func() {
 		if name != "" && version != "" {
-			pkgs = append(pkgs, inventory.Package{
+			pkgs = append(pkgs, applyCategory(inventory.Package{
 				Name:       name,
 				Version:    version,
 				RawVersion: version,
@@ -109,11 +110,12 @@ func parseAPKDatabase(dbPath string, ecosystem string, verbose bool) ([]inventor
 				Source:     "apk-db",
 				Location:   dbPath,
 				License:    license,
-			})
+			}, origin, ""))
 		}
 		name = ""
 		version = ""
 		license = ""
+		origin = ""
 	}
 
 	scanner := bufio.NewScanner(f)
@@ -136,6 +138,10 @@ func parseAPKDatabase(dbPath string, ecosystem string, verbose bool) ([]inventor
 			version = v
 		case "L":
 			license = v
+		case "o":
+			// origin: the source package a subpackage (-dev, -doc, -libs) was
+			// split out of. Absent when the package is its own origin.
+			origin = v
 		}
 	}
 	flush() // last entry may not be followed by a blank line

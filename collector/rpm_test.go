@@ -196,3 +196,29 @@ func TestRPMCollect_ParsesRealDatabase(t *testing.T) {
 		t.Errorf("dbus Version = %q, want %q (real epoch preserved)", dbus.Version, "1:1.12.20-8.el9")
 	}
 }
+
+// TestSourceNameFromSourceRPM covers deriving the source package name from the
+// SourceRpm tag, which is the only per-package source signal an RPM database
+// carries (RPMTAG_GROUP is not decoded by go-rpmdb and is deprecated anyway).
+func TestSourceNameFromSourceRPM(t *testing.T) {
+	tests := map[string]string{
+		"binutils-2.41-1.el9.src.rpm": "binutils",
+		// kernel-headers is built from the "kernel" source, which is what makes
+		// source-based classification catch it.
+		"kernel-5.14.0-427.13.1.el9_4.src.rpm": "kernel",
+		// A name containing both dots and digits must not be mistaken for the
+		// version-release part.
+		"python3.9-3.9.18-1.el9.src.rpm": "python3.9",
+		// Names with embedded dashes survive, since only the final two
+		// dash-separated fields are version and release.
+		"device-mapper-multipath-0.8.7-27.el9.src.rpm": "device-mapper-multipath",
+		"":                        "",
+		"not-an-rpm":              "",
+		"missing-release.src.rpm": "",
+	}
+	for input, want := range tests {
+		if got := sourceNameFromSourceRPM(input); got != want {
+			t.Errorf("sourceNameFromSourceRPM(%q) = %q, want %q", input, got, want)
+		}
+	}
+}

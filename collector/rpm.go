@@ -66,14 +66,14 @@ func (c *RPMCollector) Collect(scanPath string, verbose bool, isContainer bool) 
 			continue
 		}
 		version := rpmEvr(e.Epoch, e.Version, e.Release)
-		pkgs = append(pkgs, inventory.Package{
+		pkgs = append(pkgs, applyCategory(inventory.Package{
 			Name:       e.Name,
 			Version:    version,
 			RawVersion: version,
 			Ecosystem:  ecosystem,
 			Source:     "rpm",
 			License:    e.License,
-		})
+		}, sourceNameFromSourceRPM(e.SourceRpm), ""))
 	}
 
 	if verbose {
@@ -107,6 +107,31 @@ func rpmEvr(epoch *int, version, release string) string {
 		return fmt.Sprintf("%d:%s-%s", *epoch, version, release)
 	}
 	return fmt.Sprintf("%s-%s", version, release)
+}
+
+// sourceNameFromSourceRPM extracts the source package name from a SourceRpm
+// tag such as "binutils-2.41-1.el9.src.rpm". The filename is always
+// "{name}-{version}-{release}.src.rpm" and neither version nor release may
+// contain a dash, so stripping the last two dash-separated fields is exact
+// even when the name itself contains dashes ("device-mapper-multipath").
+//
+// This is the only per-package source signal an RPM database carries:
+// go-rpmdb's PackageInfo does not decode RPMTAG_GROUP, which RHEL deprecated
+// in any case.
+func sourceNameFromSourceRPM(srcRPM string) string {
+	const suffix = ".src.rpm"
+	if !strings.HasSuffix(srcRPM, suffix) {
+		return ""
+	}
+	base := strings.TrimSuffix(srcRPM, suffix)
+	for i := 0; i < 2; i++ {
+		dash := strings.LastIndexByte(base, '-')
+		if dash <= 0 {
+			return ""
+		}
+		base = base[:dash]
+	}
+	return base
 }
 
 // detectRPMEcosystem reads <scanPath>/etc/os-release to determine the ecosystem name

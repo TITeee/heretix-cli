@@ -27,6 +27,15 @@ type Package struct {
 	Integrity  string   `json:"integrity,omitempty"` // raw integrity string from lockfile (SRI or sha256:hex)
 	License    string   `json:"license,omitempty"`   // SPDX expression (e.g. "MIT", "Apache-2.0 OR MIT")
 	Scope      string   `json:"scope,omitempty"`     // ""=unknown/required, "excluded"=dev-only (unreachable in a prod build), mirrors CycloneDX component.scope
+	// SourcePackage is the upstream source package this binary package was
+	// built from (dpkg "Source:", rpm SourceRpm, apk "o:"). It is what lets
+	// one CVE affecting one upstream project be reported once instead of once
+	// per binary package it fans out into. Empty for non-OS ecosystems.
+	SourcePackage string `json:"sourcePackage,omitempty"`
+	// Category marks a package that is present in the image but is not part of
+	// what it runs: "kernel" (kernel headers) or "build" (build toolchain).
+	// "" means a normal runtime package. See collector.classifyNonRuntime.
+	Category string `json:"category,omitempty"`
 }
 
 // BoolPtr returns a pointer to b, for use with Package.Direct.
@@ -144,6 +153,13 @@ func mergePkg(a, b Package) Package {
 	// Scope: prefer non-empty ("excluded" wins over unknown)
 	if a.Scope == "" {
 		a.Scope = b.Scope
+	}
+	// SourcePackage / Category: prefer non-empty
+	if a.SourcePackage == "" {
+		a.SourcePackage = b.SourcePackage
+	}
+	if a.Category == "" {
+		a.Category = b.Category
 	}
 	return a
 }
