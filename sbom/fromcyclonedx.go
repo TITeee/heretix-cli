@@ -49,6 +49,15 @@ func FromCycloneDX(bom *cdx.BOM) *inventory.Inventory {
 			Ecosystem: componentProperty(&c, "heretix:ecosystem"),
 			Source:    componentProperty(&c, "heretix:source"),
 			Deps:      depsByRef[c.BOMRef],
+			// Scope has been written since SBOM generation existed but was
+			// never read back, so every "check <sbom.json>" silently discarded
+			// what the collectors had worked out — dev-only npm/composer/gradle
+			// dependencies as well as non-runtime OS packages.
+			SourcePackage: componentProperty(&c, "heretix:source-package"),
+			Category:      componentProperty(&c, "heretix:category"),
+		}
+		if c.Scope == cdx.ScopeExcluded {
+			p.Scope = "excluded"
 		}
 
 		p.Name = c.Name

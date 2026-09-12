@@ -3,6 +3,7 @@ package sbom
 import (
 	"testing"
 
+	cdx "github.com/CycloneDX/cyclonedx-go"
 	"github.com/TITeee/heretix-cli/inventory"
 )
 
@@ -315,4 +316,73 @@ func fmtBool(b bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+// TestRoundTripPreservesScopeAndCategory covers the two fields the reporting
+// pipeline needs back out of an SBOM. Scope was written but never read, so
+// every "check <sbom.json>" silently lost the dev-only/non-runtime marking
+// that collectors had worked out.
+func TestRoundTripPreservesScopeAndCategory(t *testing.T) {
+	inv := &inventory.Inventory{
+		OS: inventory.OSInfo{ID: "debian", VersionID: "13"},
+		Packages: []inventory.Package{
+			{
+				Name: "libbinutils", Version: "2.44-3",
+				Ecosystem: "Debian:13", Source: "dpkg",
+				SourcePackage: "binutils", Category: "build", Scope: "excluded",
+			},
+			{
+				Name: "libc6", Version: "2.41-12",
+				Ecosystem: "Debian:13", Source: "dpkg",
+				SourcePackage: "glibc",
+			},
+			{
+				Name: "mocha", Version: "10.0.0",
+				Ecosystem: "npm", Source: "package-lock.json",
+				Scope: "excluded",
+			},
+		},
+	}
+
+	got := FromCycloneDX(GenerateCycloneDX(inv, "test"))
+	if len(got.Packages) != len(inv.Packages) {
+		t.Fatalf("got %d packages, want %d", len(got.Packages), len(inv.Packages))
+	}
+	for i, want := range inv.Packages {
+		p := got.Packages[i]
+		if p.Scope != want.Scope {
+			t.Errorf("%s: Scope = %q, want %q", want.Name, p.Scope, want.Scope)
+		}
+		if p.Category != want.Category {
+			t.Errorf("%s: Category = %q, want %q", want.Name, p.Category, want.Category)
+		}
+		if p.SourcePackage != want.SourcePackage {
+			t.Errorf("%s: SourcePackage = %q, want %q", want.Name, p.SourcePackage, want.SourcePackage)
+		}
+		_ = i
+	}
+}
+
+// TestGenerateCycloneDXKeepsNonRuntimeComponents guards the CISA 2026 SBOM
+// "coverage" expectation: classifying a package as non-runtime must mark it,
+// never drop it from the component list.
+func TestGenerateCycloneDXKeepsNonRuntimeComponents(t *testing.T) {
+	inv := &inventory.Inventory{
+		OS: inventory.OSInfo{ID: "debian", VersionID: "13"},
+		Packages: []inventory.Package{
+			{Name: "linux-libc-dev", Version: "6.12.43-1", Ecosystem: "Debian:13", Source: "dpkg",
+				SourcePackage: "linux", Category: "kernel", Scope: "excluded"},
+		},
+	}
+	bom := GenerateCycloneDX(inv, "test")
+	if bom.Components == nil || len(*bom.Components) != 1 {
+		t.Fatalf("expected the kernel-header component to still be present in the BOM, got %v", bom.Components)
+	}
+	c := (*bom.Components)[0]
+	if c.Scope != cdx.ScopeExcluded {
+		t.Errorf("Scope = %q, want %q", c.Scope, cdx.ScopeExcluded)
+	}
+	if got := componentProperty(&c, "heretix:category"); got != "kernel" {
+		t.Errorf("heretix:category = %q, want %q", got, "kernel")
+	}
 }
