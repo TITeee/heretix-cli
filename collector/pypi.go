@@ -114,17 +114,14 @@ func (c *PyPICollector) Collect(scanPath string, verbose bool, isContainer bool)
 		}
 	}
 
-	// Enrich packages with license info from installed site-packages METADATA
-	licenseMap := scanSitePackagesLicenses(scanPath, verbose)
-	if len(licenseMap) > 0 {
-		for i := range pkgs {
-			if pkgs[i].License == "" {
-				if lic, ok := licenseMap[normalizePyPIName(pkgs[i].Name)]; ok {
-					pkgs[i].License = lic
-				}
-			}
-		}
-	}
+	// site-packages/dist-packages reflect what's actually installed at scan
+	// time — the ground truth for a built image, unlike a requirements.txt
+	// range or a lock file that may predate a later `pip install`. Scanned
+	// unconditionally (lock files or not) and merged with whatever lock-file
+	// packages were already found above; inventory.Deduplicate collapses any
+	// name+version+ecosystem match, preferring the richer metadata (e.g. a
+	// lock file's Integrity hash) via mergePkg.
+	pkgs = append(pkgs, scanSitePackages(scanPath, verbose)...)
 
 	if verbose {
 		log.Printf("[pypi] collected %d packages", len(pkgs))
@@ -575,11 +572,15 @@ func normalizePyPIName(name string) string {
 	return strings.ToLower(strings.ReplaceAll(name, "-", "_"))
 }
 
-// scanSitePackagesLicenses walks scanPath looking for Python site-packages/dist-packages
-// directories and parses *.dist-info/METADATA for license information.
-// Returns a map of normalized-name → SPDX license string.
-func scanSitePackagesLicenses(scanPath string, verbose bool) map[string]string {
-	licenseMap := map[string]string{}
+// scanSitePackages walks scanPath looking for Python site-packages/dist-packages
+// directories and parses each *.dist-info/METADATA as an installed PyPI package —
+// the ground truth for what a built image actually runs, as opposed to a
+// requirements.txt range or a lock file that may predate a later `pip install`.
+// Dependency edges (Deps) are resolved against the other packages found in the
+// same site-packages directory, mirroring the two-pass approach parsePoetryLock
+// and parseUVLock use against their own lock file.
+func scanSitePackages(scanPath string, verbose bool) []inventory.Package {
+	var pkgs []inventory.Package
 
 	_ = filepath.WalkDir(scanPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -601,31 +602,74 @@ func scanSitePackagesLicenses(scanPath string, verbose bool) map[string]string {
 		if err != nil {
 			return fs.SkipDir
 		}
+
+		var metas []distInfoMetadata
 		for _, e := range entries {
 			if !e.IsDir() || !strings.HasSuffix(e.Name(), ".dist-info") {
 				continue
 			}
-			metadataPath := filepath.Join(path, e.Name(), "METADATA")
-			pkgName, license := parseDistInfoMetadata(metadataPath)
-			if pkgName != "" && license != "" {
-				licenseMap[normalizePyPIName(pkgName)] = license
+			meta := parseDistInfoMetadata(filepath.Join(path, e.Name(), "METADATA"))
+			if meta.name != "" && meta.version != "" {
+				metas = append(metas, meta)
 			}
+		}
+
+		// Pass 1: name -> version, for resolving Requires-Dist edges below.
+		nameVer := make(map[string]string, len(metas))
+		for _, m := range metas {
+			nameVer[normalizePyPIName(m.name)] = m.version
+		}
+
+		// Pass 2: build packages, resolving each Requires-Dist name against
+		// this same site-packages directory. A requirement not installed
+		// here (e.g. an extras-only or platform-specific dep) is skipped,
+		// same as parsePoetryLock/parseUVLock do for unresolved deps.
+		for _, m := range metas {
+			var deps []string
+			for _, reqName := range m.requires {
+				if depVer, ok := nameVer[normalizePyPIName(reqName)]; ok {
+					deps = append(deps, pypiDepPURL(reqName, depVer))
+				}
+			}
+			pkgs = append(pkgs, inventory.Package{
+				Name:       m.name,
+				Version:    m.version,
+				RawVersion: m.version,
+				Ecosystem:  "PyPI",
+				Source:     "dist-info",
+				Location:   m.location,
+				License:    m.license,
+				Deps:       deps,
+			})
 		}
 		return fs.SkipDir
 	})
 
-	if verbose && len(licenseMap) > 0 {
-		log.Printf("[pypi] found licenses for %d packages from site-packages", len(licenseMap))
+	if verbose && len(pkgs) > 0 {
+		log.Printf("[pypi] collected %d packages from site-packages/dist-packages", len(pkgs))
 	}
-	return licenseMap
+	return pkgs
 }
 
-// parseDistInfoMetadata reads a METADATA file and extracts the Name and License fields.
+// distInfoMetadata holds the fields parseDistInfoMetadata extracts from one
+// *.dist-info/METADATA file.
+type distInfoMetadata struct {
+	name     string
+	version  string
+	license  string
+	location string
+	requires []string // package names from Requires-Dist headers, constraints/markers stripped
+}
+
+// parseDistInfoMetadata reads a METADATA file and extracts the Name, Version,
+// License, and Requires-Dist fields.
 // License-Expression (PEP 639) takes priority over the legacy License header.
-func parseDistInfoMetadata(path string) (name, license string) {
+func parseDistInfoMetadata(path string) distInfoMetadata {
+	meta := distInfoMetadata{location: path}
+
 	f, err := os.Open(path)
 	if err != nil {
-		return "", ""
+		return distInfoMetadata{}
 	}
 	defer f.Close()
 
@@ -637,20 +681,43 @@ func parseDistInfoMetadata(path string) (name, license string) {
 		if line == "" {
 			break
 		}
-		if strings.HasPrefix(line, "Name: ") {
-			name = strings.TrimPrefix(line, "Name: ")
-		} else if strings.HasPrefix(line, "License-Expression: ") {
-			license = strings.TrimPrefix(line, "License-Expression: ")
-		} else if strings.HasPrefix(line, "License: ") {
+		switch {
+		case strings.HasPrefix(line, "Name: "):
+			meta.name = strings.TrimPrefix(line, "Name: ")
+		case strings.HasPrefix(line, "Version: "):
+			meta.version = strings.TrimPrefix(line, "Version: ")
+		case strings.HasPrefix(line, "License-Expression: "):
+			meta.license = strings.TrimPrefix(line, "License-Expression: ")
+		case strings.HasPrefix(line, "License: "):
 			legacyLicense = strings.TrimPrefix(line, "License: ")
+		case strings.HasPrefix(line, "Requires-Dist: "):
+			if reqName := parseRequiresDistName(strings.TrimPrefix(line, "Requires-Dist: ")); reqName != "" {
+				meta.requires = append(meta.requires, reqName)
+			}
 		}
 	}
-	if license == "" {
-		license = legacyLicense
+	if meta.license == "" {
+		meta.license = legacyLicense
 	}
-	// Skip unhelpful values
-	if license == "UNKNOWN" || license == "" {
-		return name, ""
+	if meta.license == "UNKNOWN" {
+		meta.license = ""
 	}
-	return name, license
+	return meta
+}
+
+// parseRequiresDistName extracts the bare package name from a Requires-Dist
+// header value, stripping extras ("pkg[extra]"), version specifiers
+// ("pkg>=1.0", "pkg (>=1.0)"), and environment markers ("pkg ; sys_platform
+// == \"win32\"").
+func parseRequiresDistName(value string) string {
+	if idx := strings.Index(value, ";"); idx != -1 {
+		value = value[:idx]
+	}
+	if idx := strings.IndexAny(value, "([<>=!~"); idx != -1 {
+		value = value[:idx]
+	}
+	if idx := strings.Index(value, "["); idx != -1 {
+		value = value[:idx]
+	}
+	return strings.TrimSpace(value)
 }

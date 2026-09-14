@@ -11,15 +11,18 @@ Linux/Windows サーバや Docker コンテナイメージの OS パッケージ
 | RHEL / AlmaLinux / Rocky Linux / Oracle Linux / CentOS (RPM) | `var/lib/rpm` / `usr/lib/sysimage/rpm` を直接パース（BDB、NDB、SQLiteいずれの形式にも対応） | Linux のみ |
 | Debian / Ubuntu 系 (DPKG) | `var/lib/dpkg/status` を直接解析 | Linux のみ |
 | Alpine (APK) | `/lib/apk/db/installed` を直接解析 | Linux のみ |
-| PyPI | `requirements.txt`, `Pipfile.lock`, `poetry.lock`, `uv.lock` / フォールバック: `pip list`* | Linux / Windows |
+| PyPI | `site-packages`/`dist-packages`（`*.dist-info/METADATA`）を一次収集源とし、加えて `requirements.txt`, `Pipfile.lock`, `poetry.lock`, `uv.lock` / フォールバック: `pip list`* | Linux / Windows |
 | npm / yarn / pnpm | `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` / フォールバック: `npm list -g`, `pnpm list -g`* | Linux / Windows |
 | Go (go modules) | `go.mod` / フォールバック: `go list -m -json all` | Linux / Windows |
+| Go (バイナリ) | コンパイル済みバイナリに静的リンクされたモジュール（ベースイメージに同梱されたツール等）を、バイナリに埋め込まれたビルド情報から読み取る — `go version -m` と同じ情報源† | イメージスキャンのみ |
 | Composer (PHP) | `composer.lock` | Linux / Windows |
 | Maven (Java) | `pom.xml` / フォールバック: `mvn dependency:tree` | Linux / Windows |
 | Gradle (Java/Kotlin) | `gradle.lockfile` / `build.gradle` / `build.gradle.kts` | Linux / Windows |
 | Java アーティファクト | `*.jar`, `*.war`, `*.ear` — `META-INF/maven/*/pom.properties` を読み、`WEB-INF/lib` / `BOOT-INF/lib` を再帰的に解析 | Linux / Windows |
 
 \* システム全体をスキャンする場合（`--scan-path` がファイルシステムのルート — `--image` 未指定時のデフォルト）にのみ実行される。`--image`/`--dockerfile` スキャン時、および `--scan-path` がルートより狭い場合はスキップされる。`pip`/`npm`/`pnpm` は `--scan-path` の値に関係なく常にこのプロセス自身のホスト環境を見てしまい、展開したイメージやスキャン対象のサブディレクトリを見るわけではないため。
+
+† `--image`/`--dockerfile` スキャン時のみ実行され、展開したrootfs配下の全ファイルを走査してGoバイナリとして解析を試みる。ホストスキャンでは対象外（稼働中のホスト上で実行ファイルを片っ端から開くのは、イメージレイヤー1つを監査するのに比べて格段にノイズが多く低速なため）。
 
 ## インストール
 

@@ -11,15 +11,18 @@ A CLI tool that scans OS packages (RPM, DPKG, APK) and OSS ecosystems (PyPI, npm
 | RHEL / AlmaLinux / Rocky Linux / Oracle Linux / CentOS (RPM) | Parses `var/lib/rpm` / `usr/lib/sysimage/rpm` directly (BDB, NDB, or SQLite) | Linux only |
 | Debian / Ubuntu-based (DPKG) | Parses `var/lib/dpkg/status` directly | Linux only |
 | Alpine (APK) | Parses `/lib/apk/db/installed` directly | Linux only |
-| PyPI | `requirements.txt`, `Pipfile.lock`, `poetry.lock`, `uv.lock` / fallback: `pip list`* | Linux / Windows |
+| PyPI | `site-packages`/`dist-packages` (`*.dist-info/METADATA`) as the primary source, plus `requirements.txt`, `Pipfile.lock`, `poetry.lock`, `uv.lock` / fallback: `pip list`* | Linux / Windows |
 | npm / yarn / pnpm | `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` / fallback: `npm list -g`, `pnpm list -g`* | Linux / Windows |
 | Go (go modules) | `go.mod` / fallback: `go list -m -json all` | Linux / Windows |
+| Go (binaries) | Modules statically linked into a compiled binary (e.g. a base image's bundled tools), read from the binary's embedded build info — same data as `go version -m`† | Image scans only |
 | Composer (PHP) | `composer.lock` | Linux / Windows |
 | Maven (Java) | `pom.xml` / fallback: `mvn dependency:tree` | Linux / Windows |
 | Gradle (Java/Kotlin) | `gradle.lockfile` / `build.gradle` / `build.gradle.kts` | Linux / Windows |
 | Java artifacts | `*.jar`, `*.war`, `*.ear` — reads `META-INF/maven/*/pom.properties`, recurses into `WEB-INF/lib` and `BOOT-INF/lib` | Linux / Windows |
 
 \* Only runs for a whole-system scan (`--scan-path` at the filesystem root, the default with no `--image`): skipped for `--image`/`--dockerfile` scans and for any `--scan-path` narrower than the root, since `pip`/`npm`/`pnpm` here always query this process's own host environment regardless of `--scan-path` — never the extracted image or the scanned subdirectory.
+
+† Only runs for `--image`/`--dockerfile` scans, walking every regular file under the extracted rootfs and attempting to parse it as a Go binary. Skipped for host scans, where opening every executable on the live filesystem would be far noisier and slower than auditing one image layer.
 
 ## Installation
 
