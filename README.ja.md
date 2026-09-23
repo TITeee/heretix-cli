@@ -1,8 +1,10 @@
 # heretix-cli
 
-[English README](README.md)
+**[heretix](https://titeee.github.io/heretix-web/)** プロジェクトの一部 — サーバ・コンテナ・ネットワーク機器（ファイアウォール・VPN）を横断してCVEを一元管理する、セルフホスト型の脆弱性管理スイートです（Apache-2.0）。
 
-Linux/Windows サーバや Docker コンテナイメージの OS パッケージ（RPM, DPKG, APK）および OSS エコシステム（PyPI, npm/yarn/pnpm, Go modules, Composer, Maven, Gradle, JAR/WAR アーカイブ）をスキャンし、脆弱性 API に問い合わせて既知の脆弱性を検出する CLI ツール。API なしで動作するローカルセキュリティ検知として、**GlassWorm**（不可視文字によるマルウェア混入）、**Dependency Confusion**（パッケージ置換攻撃）、**Malicious Install Scripts**（悪意ある install スクリプト。Shai-Hulud ワームのシグネチャを含む）、**CI/CD Pipeline Poisoning**（パイプライン汚染）、**Lock File Integrity**（ロックファイル整合性）の検出に対応。
+このリポジトリ heretix-cli は、収集エージェントです。Linux/Windows サーバや Docker コンテナイメージの OS パッケージ（RPM, DPKG, APK）および OSS エコシステム（PyPI, npm/yarn/pnpm, Go modules, Composer, Maven, Gradle, JAR/WAR アーカイブ）をスキャンし、[heretix-api](https://github.com/TITeee/heretix-api) に問い合わせて既知の脆弱性を検出します。出力は CycloneDX SBOM（または heretix 独自の inventory JSON）として [heretix-management](https://github.com/TITeee/heretix-management) へのインポートに対応。API なしで動作するローカルセキュリティ検知として、**GlassWorm**（不可視文字によるマルウェア混入）、**Dependency Confusion**（パッケージ置換攻撃）、**Malicious Install Scripts**（悪意ある install スクリプト。Shai-Hulud ワームのシグネチャを含む）、**CI/CD Pipeline Poisoning**（パイプライン汚染）、**Lock File Integrity**（ロックファイル整合性）の検出に対応。
+
+[English README](README.md)
 
 ## 対応エコシステム
 

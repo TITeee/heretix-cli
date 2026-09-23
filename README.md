@@ -1,8 +1,10 @@
 # heretix-cli
 
-[日本語版 README](README.ja.md)
+Part of the **[heretix](https://titeee.github.io/heretix-web/)** project — a self-hosted suite that tracks CVEs across servers, containers, and network appliances (firewalls, VPNs) in one inventory (Apache-2.0).
 
-A CLI tool that scans OS packages (RPM, DPKG, APK) and OSS ecosystems (PyPI, npm/yarn/pnpm, Go modules, Composer, Maven, Gradle, JAR/WAR archives) on Linux/Windows servers or Docker container images, then queries a vulnerability API to detect known vulnerabilities. Also performs local supply-chain security checks without any API access: **GlassWorm** (invisible character injection), **Dependency Confusion** (package substitution), **Malicious Install Scripts** (including the Shai-Hulud worm's signature), **CI/CD Pipeline Poisoning**, and **Lock File Integrity** detection.
+This repository, heretix-cli, is the collector: it scans OS packages (RPM, DPKG, APK) and OSS ecosystems (PyPI, npm/yarn/pnpm, Go modules, Composer, Maven, Gradle, JAR/WAR archives) on Linux/Windows servers or Docker container images, then queries [heretix-api](https://github.com/TITeee/heretix-api) to detect known vulnerabilities — output as a CycloneDX SBOM (or heretix's own inventory JSON) ready for import into [heretix-management](https://github.com/TITeee/heretix-management). Also performs local supply-chain security checks without any API access: **GlassWorm** (invisible character injection), **Dependency Confusion** (package substitution), **Malicious Install Scripts** (including the Shai-Hulud worm's signature), **CI/CD Pipeline Poisoning**, and **Lock File Integrity** detection.
+
+[日本語版 README](README.ja.md)
 
 ## Supported Ecosystems
 
