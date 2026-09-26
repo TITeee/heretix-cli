@@ -162,8 +162,8 @@ func TestGenerateCycloneDXMergesCollidingPURLs(t *testing.T) {
 		seen[c.BOMRef] = true
 	}
 
-	if got, want := len(*bom.Components), 2; got != want {
-		t.Errorf("got %d components, want %d (the two slf4j-api entries should merge)", got, want)
+	if got, want := len(libraryComponents(bom)), 2; got != want {
+		t.Errorf("got %d package components, want %d (the two slf4j-api entries should merge)", got, want)
 	}
 
 	// Merging must keep what each entry contributed, not just the first one.
@@ -189,8 +189,10 @@ func TestGenerateCycloneDXMergesCollidingPURLs(t *testing.T) {
 	if bom.Dependencies == nil {
 		t.Fatal("BOM has no dependencies section")
 	}
-	if got, want := len(*bom.Dependencies), 2; got != want {
-		t.Errorf("got %d dependency entries, want %d (one per component)", got, want)
+	// The root (metadata.component) is a valid dependency ref too.
+	seen[bom.Metadata.Component.BOMRef] = true
+	if got, want := len(*bom.Dependencies), 3; got != want {
+		t.Errorf("got %d dependency entries, want %d (one per package component, plus the root)", got, want)
 	}
 	for _, d := range *bom.Dependencies {
 		if !seen[d.Ref] {
@@ -377,14 +379,105 @@ func TestGenerateCycloneDXKeepsNonRuntimeComponents(t *testing.T) {
 		},
 	}
 	bom := GenerateCycloneDX(inv, "test")
-	if bom.Components == nil || len(*bom.Components) != 1 {
+	pkgs := libraryComponents(bom)
+	if len(pkgs) != 1 {
 		t.Fatalf("expected the kernel-header component to still be present in the BOM, got %v", bom.Components)
 	}
-	c := (*bom.Components)[0]
+	c := pkgs[0]
 	if c.Scope != cdx.ScopeExcluded {
 		t.Errorf("Scope = %q, want %q", c.Scope, cdx.ScopeExcluded)
 	}
 	if got := componentProperty(&c, "heretix:category"); got != "kernel" {
 		t.Errorf("heretix:category = %q, want %q", got, "kernel")
+	}
+}
+
+// libraryComponents returns the BOM's package components, leaving out the
+// operating-system component that describes the scanned target.
+func libraryComponents(bom *cdx.BOM) []cdx.Component {
+	var out []cdx.Component
+	if bom.Components == nil {
+		return out
+	}
+	for _, c := range *bom.Components {
+		if c.Type == cdx.ComponentTypeLibrary {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// TestGenerateCycloneDXEmitsStandardOSAndDirectEdges covers the two places
+// other tools (Syft/Trivy consumers, heretix-management) read what heretix
+// otherwise only records in its own properties: the operating-system component,
+// and edges from the root to each direct dependency.
+func TestGenerateCycloneDXEmitsStandardOSAndDirectEdges(t *testing.T) {
+	inv := &inventory.Inventory{
+		Hostname: "web-01",
+		OS:       inventory.OSInfo{ID: "rocky", VersionID: "9.3", Name: "Rocky Linux 9.3 (Blue Onyx)"},
+		Packages: []inventory.Package{
+			{Name: "lodash", Version: "4.17.21", Ecosystem: "npm", Source: "package-lock.json", Direct: inventory.BoolPtr(true)},
+			{Name: "minimist", Version: "1.2.8", Ecosystem: "npm", Source: "package-lock.json", Direct: inventory.BoolPtr(false)},
+			{Name: "openssl-libs", Version: "1:3.0.7-24.el9", Ecosystem: "Rocky Linux:9", Source: "rpm"},
+		},
+	}
+	bom := GenerateCycloneDX(inv, "test")
+
+	var os *cdx.Component
+	for i, c := range *bom.Components {
+		if c.Type == cdx.ComponentTypeOS {
+			os = &(*bom.Components)[i]
+		}
+	}
+	if os == nil {
+		t.Fatal("expected an operating-system component")
+	}
+	if os.Name != "rocky" || os.Version != "9.3" || os.Description != inv.OS.Name {
+		t.Errorf("OS component = %s %s %q, want rocky 9.3 %q", os.Name, os.Version, os.Description, inv.OS.Name)
+	}
+
+	rootRef := bom.Metadata.Component.BOMRef
+	if rootRef == "" {
+		t.Fatal("metadata.component has no bom-ref for dependencies to point from")
+	}
+	var rootDeps []string
+	found := false
+	for _, d := range *bom.Dependencies {
+		if d.Ref == rootRef {
+			found = true
+			rootDeps = *d.Dependencies
+		}
+	}
+	if !found {
+		t.Fatal("expected a dependency entry for the root")
+	}
+	if len(rootDeps) != 1 || rootDeps[0] != "pkg:npm/lodash@4.17.21" {
+		t.Errorf("root dependsOn = %v, want only the direct dependency lodash", rootDeps)
+	}
+
+	// Reading the SBOM back must not turn the OS component into a package.
+	if got := FromCycloneDX(bom); len(got.Packages) != len(inv.Packages) {
+		t.Errorf("round trip: got %d packages, want %d", len(got.Packages), len(inv.Packages))
+	}
+}
+
+func TestGenerateCycloneDXOmitsWhatIsUnknown(t *testing.T) {
+	// A project-directory scan: no OS detected, and no collector that knows directness.
+	inv := &inventory.Inventory{
+		Hostname: "src",
+		Packages: []inventory.Package{
+			{Name: "requests", Version: "2.31.0", Ecosystem: "PyPI", Source: "requirements.txt"},
+		},
+	}
+	bom := GenerateCycloneDX(inv, "test")
+	for _, c := range *bom.Components {
+		if c.Type == cdx.ComponentTypeOS {
+			t.Errorf("unexpected operating-system component %q with no OS detected", c.Name)
+		}
+	}
+	for _, d := range *bom.Dependencies {
+		if d.Ref == bom.Metadata.Component.BOMRef {
+			t.Errorf("unexpected root dependency entry %v — an empty dependsOn would claim \"no dependencies\", not \"unknown\"", *d.Dependencies)
+		}
 	}
 }

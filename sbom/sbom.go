@@ -112,13 +112,39 @@ func GenerateCycloneDX(inv *inventory.Inventory, version string) *cdx.BOM {
 		})
 	}
 
+	if os := osComponent(inv); os != nil {
+		components = append(components, *os)
+	}
+
+	root := metadataComponent(inv)
+
 	// Build bom.Dependencies for all components (leaf nodes get an empty slice per CycloneDX spec).
-	depItems := make([]cdx.Dependency, 0, len(pkgs))
+	depItems := make([]cdx.Dependency, 0, len(pkgs)+1)
+	var directRefs []string
+	directKnown := false
 	for _, p := range pkgs {
 		purl := PackagePURL(p, inv.OS.ID)
 		deps := make([]string, len(p.Deps))
 		copy(deps, p.Deps)
 		depItems = append(depItems, cdx.Dependency{Ref: purl, Dependencies: &deps})
+		if p.Direct != nil {
+			directKnown = true
+			if *p.Direct {
+				directRefs = append(directRefs, purl)
+			}
+		}
+	}
+	// The standard CycloneDX way to say which packages are direct dependencies
+	// is an edge from the root (metadata.component) to each of them — the
+	// cdx:direct property above is heretix-specific, so tools other than
+	// heretix read directness from this edge instead. It is omitted entirely
+	// when no collector determined directness (OS-only scans), since an empty
+	// dependsOn would claim "depends on nothing" rather than "unknown".
+	if directKnown {
+		if directRefs == nil {
+			directRefs = []string{}
+		}
+		depItems = append(depItems, cdx.Dependency{Ref: root.BOMRef, Dependencies: &directRefs})
 	}
 
 	legacyTools := []cdx.Tool{{Vendor: "heretix", Name: "heretix-cli", Version: version}}
@@ -127,7 +153,7 @@ func GenerateCycloneDX(inv *inventory.Inventory, version string) *cdx.BOM {
 	bom.Metadata = &cdx.Metadata{
 		Timestamp: inv.ScannedAt,
 		Tools:     &cdx.ToolsChoice{Tools: &legacyTools},
-		Component: metadataComponent(inv),
+		Component: root,
 	}
 	bom.Components = &components
 	bom.Dependencies = &depItems
@@ -220,6 +246,11 @@ func metadataComponent(inv *inventory.Inventory) *cdx.Component {
 			{Name: "heretix:os-version-id", Value: inv.OS.VersionID},
 		},
 	}
+	// A bom-ref is needed so bom.dependencies can point from the root to its
+	// direct dependencies. A container with a digest uses its PURL; anything
+	// else gets a heretix-namespaced ref, which cannot collide with a package
+	// component (those are always "pkg:" PURLs).
+	comp.BOMRef = "heretix:target:" + inv.Hostname
 	if inv.Type == "docker_image" {
 		comp.Type = cdx.ComponentTypeContainer
 		if inv.ImageDigest != "" {
@@ -231,6 +262,29 @@ func metadataComponent(inv *inventory.Inventory) *cdx.Component {
 		comp.Type = cdx.ComponentTypeOS
 	}
 	return comp
+}
+
+// osComponent describes the scanned target's OS as a component of type
+// "operating-system" — the standard CycloneDX place for it, and where Syft and
+// Trivy put it. Tools that evaluate OS packages from an SBOM (e.g.
+// "trivy sbom") look the distro up there, not in heretix's own
+// metadata.component properties. Returns nil when no OS was detected, e.g. for
+// a scan of a project directory.
+//
+// Name and version are os-release's ID and VERSION_ID, as Syft writes them.
+// metadata.component.version keeps carrying the OS pretty name too, for
+// consumers of SBOMs produced before this component existed.
+func osComponent(inv *inventory.Inventory) *cdx.Component {
+	if inv.OS.ID == "" {
+		return nil
+	}
+	return &cdx.Component{
+		BOMRef:      "heretix:os:" + inv.OS.ID + "@" + inv.OS.VersionID,
+		Type:        cdx.ComponentTypeOS,
+		Name:        inv.OS.ID,
+		Version:     inv.OS.VersionID,
+		Description: inv.OS.Name,
+	}
 }
 
 // containerPURL builds an OCI PURL for a container image reference and digest.
