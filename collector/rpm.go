@@ -73,6 +73,7 @@ func (c *RPMCollector) Collect(scanPath string, verbose bool, isContainer bool) 
 			Ecosystem:  ecosystem,
 			Source:     "rpm",
 			License:    e.License,
+			Arch:       e.Arch,
 		}, sourceNameFromSourceRPM(e.SourceRpm), ""))
 	}
 
