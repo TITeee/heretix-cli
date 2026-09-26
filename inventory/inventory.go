@@ -36,6 +36,11 @@ type Package struct {
 	// what it runs: "kernel" (kernel headers) or "build" (build toolchain).
 	// "" means a normal runtime package. See collector.classifyNonRuntime.
 	Category string `json:"category,omitempty"`
+	// Arch is the package's CPU architecture as the package manager records
+	// it ("x86_64", "noarch"). Collected for RPM only, where it is part of
+	// the package identity: Trivy only matches Rocky/Oracle Linux advisories
+	// against a package whose PURL carries its exact arch.
+	Arch string `json:"arch,omitempty"`
 }
 
 // BoolPtr returns a pointer to b, for use with Package.Direct.

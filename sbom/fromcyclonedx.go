@@ -64,6 +64,9 @@ func FromCycloneDX(bom *cdx.BOM) *inventory.Inventory {
 		if c.Scope == cdx.ScopeExcluded {
 			p.Scope = "excluded"
 		}
+		if p.Source == "rpm" {
+			p.Arch = purlQualifier(c.PackageURL, "arch")
+		}
 
 		p.Name = c.Name
 		if ecosystemToPURLType[p.Source] == "maven" {
@@ -93,6 +96,21 @@ func componentProperty(c *cdx.Component, name string) string {
 	for _, p := range *c.Properties {
 		if p.Name == name {
 			return p.Value
+		}
+	}
+	return ""
+}
+
+// purlQualifier returns the named qualifier's value from a PURL built by
+// PackagePURL, or "" if absent.
+func purlQualifier(purl, key string) string {
+	_, query, ok := strings.Cut(purl, "?")
+	if !ok {
+		return ""
+	}
+	for _, kv := range strings.Split(query, "&") {
+		if k, v, ok := strings.Cut(kv, "="); ok && k == key {
+			return v
 		}
 	}
 	return ""

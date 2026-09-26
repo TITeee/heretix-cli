@@ -68,11 +68,13 @@ heretix-cli collect --image myapp:latest --dockerfile ./Dockerfile --output full
 > **非推奨:** `--format json`（heretix 独自インベントリ形式）は引き続き動作し `check`/`submit` からも読めるが、将来のリリースで削除予定。新規スクリプトでは `--format json` を使わないこと。
 
 > **CycloneDX SBOM 出力には以下が含まれる:**
-> - OS パッケージ（apk/rpm/deb）の **PURL に `?distro=` qualifier** を付与:
+> - OS パッケージ（apk/rpm/deb）の **PURL に `?distro=` qualifier** を付与。RPM はさらに **`arch=`** と、非ゼロの場合は **`epoch=`** を付与（コンポーネントの `version` は rpm の表示どおり epoch 付きのまま）:
 >   ```
 >   pkg:apk/alpine/curl@7.79.1-r0?distro=alpine-3.18
->   pkg:rpm/almalinux/curl@7.76.1?distro=almalinux-9
+>   pkg:rpm/almalinux/curl@7.76.1-26.el9?arch=x86_64&distro=almalinux-9
+>   pkg:rpm/rocky/openssl-libs@3.0.7-24.el9?arch=x86_64&distro=rockylinux-9&epoch=1
 >   ```
+>   Trivy が前提とする PURL 仕様どおりの形式。`trivy sbom` は Rocky/Oracle Linux のアドバイザリをパッケージの arch と完全一致でしか照合せず、バージョン内の epoch は読み落とす。
 > - 全コンポーネントに **`bom-ref`** を設定（PURL と同値、依存グラフの参照解決に必要）
 > - lockfile の integrity ハッシュを **`hashes`** に格納（npm/pnpm は SHA-512、PyPI は SHA-256）
 > - **`licenses`** をコンポーネントに付与（APK, RPM, Composer, npm node_modules, PyPI site-packages から取得）

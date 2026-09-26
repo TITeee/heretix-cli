@@ -202,10 +202,31 @@ func PackagePURL(p inventory.Package, osID string) string {
 	switch p.Source {
 	case "rpm", "dpkg", "apk-db":
 		ns := osIDToPURLNamespace(osID)
-		if q := ecosystemToDistroQualifier(p.Ecosystem); q != "" {
-			return fmt.Sprintf("pkg:%s/%s/%s@%s?distro=%s", purlType, ns, p.Name, p.Version, q)
+		version := p.Version
+		// Qualifiers in the lexical key order the PURL spec requires.
+		var qualifiers []string
+		if p.Source == "rpm" && p.Arch != "" {
+			qualifiers = append(qualifiers, "arch="+p.Arch)
 		}
-		return fmt.Sprintf("pkg:%s/%s/%s@%s", purlType, ns, p.Name, p.Version)
+		if q := ecosystemToDistroQualifier(p.Ecosystem); q != "" {
+			qualifiers = append(qualifiers, "distro="+q)
+		}
+		// The PURL spec puts an RPM epoch in its own qualifier, not the
+		// version. Left in the version ("1:3.0.7-24.el9"), Trivy drops it and
+		// compares the package as epoch 0 — so every fix released under
+		// epoch 1 reads as not yet applied, a false positive per past CVE.
+		// The component's own version keeps the epoch, as rpm displays it.
+		if p.Source == "rpm" {
+			if epoch, rest, ok := strings.Cut(version, ":"); ok {
+				version = rest
+				qualifiers = append(qualifiers, "epoch="+epoch)
+			}
+		}
+		purl := fmt.Sprintf("pkg:%s/%s/%s@%s", purlType, ns, p.Name, version)
+		if len(qualifiers) > 0 {
+			purl += "?" + strings.Join(qualifiers, "&")
+		}
+		return purl
 	case "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "npm-global", "pnpm-global", "pnpm-virtual-store":
 		return npmPURL(p.Name, p.Version)
 	}

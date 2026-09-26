@@ -481,3 +481,67 @@ func TestGenerateCycloneDXOmitsWhatIsUnknown(t *testing.T) {
 		}
 	}
 }
+
+// TestPackagePURLRPMArchAndEpoch pins the RPM PURL shape Trivy needs to
+// evaluate a heretix SBOM: an arch qualifier (Rocky/Oracle Linux advisories are
+// matched on exact arch, so without it nothing matches) and the epoch as a
+// qualifier rather than inside the version (Trivy drops an in-version epoch
+// and false-positives every fix released under a higher epoch).
+func TestPackagePURLRPMArchAndEpoch(t *testing.T) {
+	tests := []struct {
+		name string
+		pkg  inventory.Package
+		want string
+	}{
+		{
+			name: "epoch and arch",
+			pkg:  inventory.Package{Name: "openssl-libs", Version: "1:3.0.7-24.el9", Ecosystem: "Rocky Linux:9", Source: "rpm", Arch: "x86_64"},
+			want: "pkg:rpm/rocky/openssl-libs@3.0.7-24.el9?arch=x86_64&distro=rockylinux-9&epoch=1",
+		},
+		{
+			name: "no epoch",
+			pkg:  inventory.Package{Name: "glibc", Version: "2.34-83.el9.7", Ecosystem: "Rocky Linux:9", Source: "rpm", Arch: "x86_64"},
+			want: "pkg:rpm/rocky/glibc@2.34-83.el9.7?arch=x86_64&distro=rockylinux-9",
+		},
+		{
+			name: "no arch recorded (inventory from an older heretix-cli)",
+			pkg:  inventory.Package{Name: "glibc", Version: "2.34-83.el9.7", Ecosystem: "Rocky Linux:9", Source: "rpm"},
+			want: "pkg:rpm/rocky/glibc@2.34-83.el9.7?distro=rockylinux-9",
+		},
+		{
+			// Only RPM is changed: Trivy's Debian results were identical either way.
+			name: "dpkg keeps its epoch in the version",
+			pkg:  inventory.Package{Name: "bsdutils", Version: "1:2.38.1-5+deb12u3", Ecosystem: "Debian:12", Source: "dpkg", Arch: "amd64"},
+			want: "pkg:deb/debian/bsdutils@1:2.38.1-5+deb12u3?distro=debian-12",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			osID := "rocky"
+			if tt.pkg.Source == "dpkg" {
+				osID = "debian"
+			}
+			if got := PackagePURL(tt.pkg, osID); got != tt.want {
+				t.Errorf("PackagePURL() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRoundTripPreservesRPMArchAndEpoch(t *testing.T) {
+	inv := &inventory.Inventory{
+		OS: inventory.OSInfo{ID: "rocky", VersionID: "9.3"},
+		Packages: []inventory.Package{
+			{Name: "openssl-libs", Version: "1:3.0.7-24.el9", Ecosystem: "Rocky Linux:9", Source: "rpm", Arch: "x86_64"},
+		},
+	}
+	bom := GenerateCycloneDX(inv, "test")
+	pkgs := libraryComponents(bom)
+	if len(pkgs) != 1 || pkgs[0].Version != "1:3.0.7-24.el9" {
+		t.Fatalf("component version = %v, want the epoch kept as rpm displays it", pkgs)
+	}
+	got := FromCycloneDX(bom).Packages[0]
+	if got.Version != "1:3.0.7-24.el9" || got.Arch != "x86_64" {
+		t.Errorf("round trip: Version=%q Arch=%q, want 1:3.0.7-24.el9 x86_64", got.Version, got.Arch)
+	}
+}

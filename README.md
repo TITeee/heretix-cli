@@ -68,11 +68,13 @@ heretix-cli collect --image myapp:latest --dockerfile ./Dockerfile --output full
 > **Deprecated:** `--format json` (the heretix-native inventory format) still works and is read by `check`/`submit`, but it will be removed in a future release. New scripts should not pass `--format json`.
 
 > **CycloneDX SBOM output includes:**
-> - **PURL with `?distro=` qualifier** for OS packages (apk/rpm/deb):
+> - **PURL with `?distro=` qualifier** for OS packages (apk/rpm/deb); RPM PURLs also carry **`arch=`** and, when non-zero, **`epoch=`** (the component `version` keeps the epoch, as rpm displays it):
 >   ```
 >   pkg:apk/alpine/curl@7.79.1-r0?distro=alpine-3.18
->   pkg:rpm/almalinux/curl@7.76.1?distro=almalinux-9
+>   pkg:rpm/almalinux/curl@7.76.1-26.el9?arch=x86_64&distro=almalinux-9
+>   pkg:rpm/rocky/openssl-libs@3.0.7-24.el9?arch=x86_64&distro=rockylinux-9&epoch=1
 >   ```
+>   This is the PURL-spec form Trivy expects: `trivy sbom` matches Rocky/Oracle Linux advisories only against a package's exact arch, and misreads an epoch placed inside the version.
 > - **`bom-ref`** on every component, matching its PURL for correct dependency resolution
 > - **`hashes`** per component from lockfile integrity fields (SHA-512 for npm/pnpm, SHA-256 for PyPI)
 > - **`licenses`** per component from lockfiles and installed packages (APK, RPM, Composer, npm node_modules, PyPI site-packages)
