@@ -44,6 +44,11 @@ func FromCycloneDX(bom *cdx.BOM) *inventory.Inventory {
 	}
 	inv.Packages = make([]inventory.Package, 0, len(*bom.Components))
 	for _, c := range *bom.Components {
+		// The operating-system component describes the target, not a package;
+		// inv.OS is restored from metadata.component's heretix properties.
+		if c.Type == cdx.ComponentTypeOS {
+			continue
+		}
 		p := inventory.Package{
 			Version:   c.Version,
 			Ecosystem: componentProperty(&c, "heretix:ecosystem"),

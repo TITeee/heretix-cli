@@ -76,11 +76,12 @@ heretix-cli collect --image myapp:latest --dockerfile ./Dockerfile --output full
 > - **`bom-ref`** on every component, matching its PURL for correct dependency resolution
 > - **`hashes`** per component from lockfile integrity fields (SHA-512 for npm/pnpm, SHA-256 for PyPI)
 > - **`licenses`** per component from lockfiles and installed packages (APK, RPM, Composer, npm node_modules, PyPI site-packages)
-> - **`properties[cdx:direct]`** marking direct vs. indirect dependencies
+> - **`properties[cdx:direct]`** marking direct vs. indirect dependencies, mirrored as standard **`bom.dependencies`** edges from `metadata.component` to each direct dependency (omitted when no collector determined directness)
 > - **`scope: excluded`** marking dev/test-only packages that don't ship in a production build (see the `scope` column below), and OS packages classified as non-runtime (see [Non-runtime packages](#non-runtime-packages))
 > - **`properties[heretix:source-package]`** naming the source package an OS binary package was built from, and **`properties[heretix:category]`** (`kernel` / `build`) on non-runtime packages
 > - **`bom.dependencies`** section with full dependency graph (npm package-lock.json, pnpm-lock.yaml, uv.lock, poetry.lock, composer.lock)
 > - **`metadata.component`** with OCI PURL and image digest for container scans
+> - An **`operating-system` component** (os-release `ID` / `VERSION_ID`, pretty name as description) when an OS was detected
 
 | Flag | Default | Description |
 |---|---|---|
