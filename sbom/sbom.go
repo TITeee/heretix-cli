@@ -80,7 +80,7 @@ func GenerateCycloneDX(inv *inventory.Inventory, version string) *cdx.BOM {
 
 		var licenses *cdx.Licenses
 		if p.License != "" {
-			l := cdx.Licenses{cdx.LicenseChoice{Expression: p.License}}
+			l := cdx.Licenses{licenseChoiceFor(p.License)}
 			licenses = &l
 		}
 

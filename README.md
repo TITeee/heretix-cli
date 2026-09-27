@@ -140,7 +140,7 @@ The table below shows which metadata fields are populated for each lockfile sour
 ¹⁵ Maven and Gradle's build-file parsing paths exclude `scope=test` (Maven) / test-only Gradle configurations outright rather than tagging them, so no dev-only package reaches the output at all — filtering instead of tagging, but the same practical result.  
 ¹⁶ `scope: excluded` for OS packages marks kernel headers and build toolchain, derived from the source package each binary package was built from — see [Non-runtime packages](#non-runtime-packages).
 
-`deps` PURLs, `integrity` hashes, and `license` information are carried through to the CycloneDX `bom.dependencies`, `components[].hashes`, and `components[].licenses` fields respectively.
+`deps` PURLs, `integrity` hashes, and `license` information are carried through to the CycloneDX `bom.dependencies`, `components[].hashes`, and `components[].licenses` fields respectively. A `license` string that is a real SPDX license ID or expression (e.g. npm's and Composer's, which are already SPDX-shaped) is written to `license.id`/`license.expression`; anything else — rpm's own "GPLv2+ and MIT"-style syntax, dpkg copyright free text, and the like — goes to `license.name` instead, since only a real SPDX id/expression may occupy those two fields per the CycloneDX spec.
 
 ### Vulnerability Check (`check`)
 

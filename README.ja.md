@@ -140,7 +140,7 @@ heretix-cli collect --image myapp:latest --dockerfile ./Dockerfile --output full
 ¹⁵ Maven と Gradle のビルドファイル直接解析パスは、`scope=test`（Maven）/ test専用 configuration（Gradle）の依存をタグ付けせず、そもそも出力から除外する。タグ付けではなくフィルタリングによる対応だが、実質的な結果は同じ。  
 ¹⁶ OS パッケージの `scope: excluded` は、カーネルヘッダとビルドツールチェーンを示す。各バイナリパッケージのビルド元ソースパッケージから判定する ― [非ランタイムパッケージ](#非ランタイムパッケージ) を参照。
 
-`deps` の PURL、`integrity` ハッシュ、および `license` 情報は、CycloneDX 出力の `bom.dependencies`、`components[].hashes`、`components[].licenses` にそれぞれ反映される。
+`deps` の PURL、`integrity` ハッシュ、および `license` 情報は、CycloneDX 出力の `bom.dependencies`、`components[].hashes`、`components[].licenses` にそれぞれ反映される。`license` 文字列が実際に有効な SPDX ライセンス ID・式である場合（npm・Composer は元から SPDX 形式）は `license.id`/`license.expression` に、そうでない場合（rpm 独自の "GPLv2+ and MIT" のような構文、dpkg copyright の自由記述など）は `license.name` に出力する — CycloneDX の仕様上、この2フィールドには実際の SPDX ID・式しか入れられないため。
 
 ### 脆弱性チェック (`check`)
 
