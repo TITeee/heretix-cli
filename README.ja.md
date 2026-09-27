@@ -78,7 +78,7 @@ heretix-cli collect --image myapp:latest --dockerfile ./Dockerfile --output full
 > - 全コンポーネントに **`bom-ref`** を設定（PURL と同値、依存グラフの参照解決に必要）
 > - lockfile の integrity ハッシュを **`hashes`** に格納（npm/pnpm は SHA-512、PyPI は SHA-256）
 > - **`licenses`** をコンポーネントに付与（APK, RPM, Composer, npm node_modules, PyPI site-packages から取得）
-> - direct/indirect を示す **`properties[cdx:direct]`** プロパティ。CycloneDX 標準の表現として、`metadata.component` から各直接依存への **`bom.dependencies`** エッジも出力（direct を判定できたコレクターが無い場合は出力しない）
+> - direct/indirect を示す **`properties[heretix:direct]`** プロパティ。CycloneDX 標準の表現として、`metadata.component` から各直接依存への **`bom.dependencies`** エッジも出力（direct を判定できたコレクターが無い場合は出力しない）。`cdx:` は CycloneDX 自身の公式プロパティ用に予約された名前空間（[cyclonedx-property-taxonomy](https://github.com/CycloneDX/cyclonedx-property-taxonomy)）のため、heretix 独自の名前空間を使用。**破壊的変更（2026-09）:** 旧バージョンは `cdx:direct` という名前で出力していた。古い SBOM は `collect` で再生成するか、そのまま使う場合は上記の `bom.dependencies` ルートエッジにフォールバックする（direct 判定は完全に同等、lockfile 由来の indirect 判定は誤判定ではなく未分類に後退するのみ）。今バージョンは `cdx:direct` を読み戻さない。
 > - 本番ビルドに含まれない dev/test 専用パッケージ、および非ランタイムと分類された OS パッケージを示す **`scope: excluded`**（対応状況は下表の `scope` 列、および [非ランタイムパッケージ](#非ランタイムパッケージ) を参照）
 > - OS バイナリパッケージのビルド元ソースパッケージ名を示す **`properties[heretix:source-package]`**、および非ランタイムパッケージに付与される **`properties[heretix:category]`**（`kernel` / `build`）
 > - **`bom.dependencies`** セクションによる依存グラフ（npm package-lock.json, pnpm-lock.yaml, uv.lock, poetry.lock, composer.lock）

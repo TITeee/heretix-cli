@@ -177,7 +177,7 @@ func TestGenerateCycloneDXMergesCollidingPURLs(t *testing.T) {
 			t.Error("merged component lost the license contributed by the second entry")
 		}
 		if c.Properties == nil {
-			t.Error("merged component lost the cdx:direct property from the first entry")
+			t.Error("merged component lost the heretix:direct property from the first entry")
 		}
 	}
 	if !merged {

@@ -62,7 +62,7 @@ func GenerateCycloneDX(inv *inventory.Inventory, version string) *cdx.BOM {
 			if *p.Direct {
 				val = "true"
 			}
-			props = append(props, cdx.Property{Name: "cdx:direct", Value: val})
+			props = append(props, cdx.Property{Name: "heretix:direct", Value: val})
 		}
 		if p.SourcePackage != "" {
 			props = append(props, cdx.Property{Name: "heretix:source-package", Value: p.SourcePackage})
@@ -136,7 +136,7 @@ func GenerateCycloneDX(inv *inventory.Inventory, version string) *cdx.BOM {
 	}
 	// The standard CycloneDX way to say which packages are direct dependencies
 	// is an edge from the root (metadata.component) to each of them — the
-	// cdx:direct property above is heretix-specific, so tools other than
+	// heretix:direct property above is heretix-specific, so tools other than
 	// heretix read directness from this edge instead. It is omitted entirely
 	// when no collector determined directness (OS-only scans), since an empty
 	// dependsOn would claim "depends on nothing" rather than "unknown".

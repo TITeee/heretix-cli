@@ -75,7 +75,7 @@ func FromCycloneDX(bom *cdx.BOM) *inventory.Inventory {
 			}
 		}
 
-		if direct := componentProperty(&c, "cdx:direct"); direct != "" {
+		if direct := componentProperty(&c, "heretix:direct"); direct != "" {
 			p.Direct = inventory.BoolPtr(direct == "true")
 		}
 
