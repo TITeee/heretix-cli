@@ -79,8 +79,8 @@ heretix-cli collect --image myapp:latest --dockerfile ./Dockerfile --output full
 > - lockfile の integrity ハッシュを **`hashes`** に格納（npm/pnpm は SHA-512、PyPI は SHA-256）
 > - **`licenses`** をコンポーネントに付与（APK, RPM, Composer, npm node_modules, PyPI site-packages から取得）
 > - direct/indirect を示す **`properties[heretix:direct]`** プロパティ。CycloneDX 標準の表現として、`metadata.component` から各直接依存への **`bom.dependencies`** エッジも出力（direct を判定できたコレクターが無い場合は出力しない）。`cdx:` は CycloneDX 自身の公式プロパティ用に予約された名前空間（[cyclonedx-property-taxonomy](https://github.com/CycloneDX/cyclonedx-property-taxonomy)）のため、heretix 独自の名前空間を使用。**破壊的変更（2026-09）:** 旧バージョンは `cdx:direct` という名前で出力していた。古い SBOM は `collect` で再生成するか、そのまま使う場合は上記の `bom.dependencies` ルートエッジにフォールバックする（direct 判定は完全に同等、lockfile 由来の indirect 判定は誤判定ではなく未分類に後退するのみ）。今バージョンは `cdx:direct` を読み戻さない。
-> - 本番ビルドに含まれない dev/test 専用パッケージ、および非ランタイムと分類された OS パッケージを示す **`scope: excluded`**（対応状況は下表の `scope` 列、および [非ランタイムパッケージ](#非ランタイムパッケージ) を参照）
-> - OS バイナリパッケージのビルド元ソースパッケージ名を示す **`properties[heretix:source-package]`**、および非ランタイムパッケージに付与される **`properties[heretix:category]`**（`kernel` / `build`）
+> - 本番ビルドに含まれない dev/test 専用パッケージ、非ランタイムと分類された OS パッケージ、および OS パッケージが入れた言語パッケージを示す **`scope: excluded`**（対応状況は下表の `scope` 列、[非ランタイムパッケージ](#非ランタイムパッケージ)、[OS 管理の言語パッケージ](#os-管理の言語パッケージ) を参照）
+> - OS バイナリパッケージのビルド元ソースパッケージ名を示す **`properties[heretix:source-package]`**、および非ランタイム・OS 管理のパッケージに付与される **`properties[heretix:category]`**（`kernel` / `build` / `os-managed`）
 > - **`bom.dependencies`** セクションによる依存グラフ（npm package-lock.json, pnpm-lock.yaml, uv.lock, poetry.lock, composer.lock）
 > - コンテナスキャン時は **`metadata.component`** に OCI PURL とイメージ digest を記録
 > - OS を検出した場合は **`operating-system` 型のコンポーネント**（os-release の `ID` / `VERSION_ID`、description にプリティネーム）を出力
@@ -179,6 +179,16 @@ heretix-cli check sbom.json --format json > results.json
 SBOM はこの処理の影響を受けない。すべてのパッケージが component として残る（CycloneDX の `scope: excluded` と `heretix:category` プロパティが付く）。component を削除すると、完全な SBOM が備えるべき網羅性が損なわれるためである。
 
 `--runtime-only` はテーブル表示だけでなく `check`/`scan` の CI/CD 用終了コード（検知が残っていれば1）も変える。`--runtime-only` で無視すると指定したカーネルヘッダ/ビルドツールチェーンのCVEだけでビルドが失敗することは無い。
+
+#### OS 管理の言語パッケージ
+
+ディストロは多くの言語ライブラリを自前のパッケージとして配布している。`python3-urllib3` は urllib3 の `site-packages` ディレクトリを入れ、`nodejs` の rpm は npm とその依存を `/usr/lib/node_modules` に同梱し、`maven` 系の rpm は jar を `/usr/share/java` に置き、`delve` は Go バイナリ `/usr/bin/dlv` を入れる。PyPI・npm・Maven・Go バイナリのコレクタもこれらのファイルを見つけるため、同じライブラリを上流バージョンでもう一度報告してしまう（`python3-urllib3 1.26.5-8.el9_8` と並んで `urllib3 1.26.5`）。上流バージョンにはディストロが自分のリリースにバックポートした修正が反映されないため、照合すると、ディストロが修正済みまたは影響なしとしている検知や、OS パッケージ自身のアドバイザリと重複する検知が返ってくる。
+
+`collect` は、パッケージ DB が保持するファイル一覧（RPM データベース、`/var/lib/dpkg/info/*.list`、APK データベース）を読む。言語パッケージの根拠ファイル（`dist-info/METADATA`、`.jar`、Go バイナリ）をいずれかの OS パッケージが所有していれば、`os-managed` と分類して `scope: excluded` にする。パスからの推測ではなく、記録された所有関係で判定するため、pip・npm・イメージ自身のビルドがディストロのコピーの隣に置いたパッケージは、どの OS パッケージにも所有されておらず対象にならない。
+
+- **問い合わせず、タグ付けもしない。** 非ランタイムパッケージと異なり、OS 管理のパッケージは脆弱性 API に送らない。検知は OS パッケージの側に属し、そちらは通常どおりチェックされる。SBOM には `heretix:category: os-managed` 付きの component として残る。
+- **別のコピーが優先される。** 同じ名前・バージョンが、どの OS パッケージにも所有されていない場所（`requirements.txt` の固定、venv、イメージのビルドがコピーしたバイナリ）でも見つかった場合、まとめられたパッケージは OS 管理とせずチェックする。Go の `stdlib` をバイナリごとに記録するのはこのためで、ある stdlib バージョンが OS 管理として残るのは、そのバージョンでビルドされたバイナリがすべて OS 所有の場合に限られる。
+- **Windows ホスト:** NTFS に展開したイメージでは、dpkg のアーキテクチャ付き一覧（`libc6:amd64.list`）が失われる（ファイル名に `:` を使えないため）。言語ライブラリはほぼすべて `Architecture: all` のパッケージで、その一覧は影響を受けない。
 
 ### 一気通貫スキャン (`scan`)
 

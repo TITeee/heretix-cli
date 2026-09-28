@@ -36,7 +36,7 @@ func (c *GoBinaryCollector) Collect(scanPath string, verbose bool, isContainer b
 	}
 
 	var pkgs []inventory.Package
-	goVersions := map[string]bool{}
+	goVersions := map[string][]string{} // Go version → binaries built with it
 
 	err := filepath.WalkDir(scanPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -73,7 +73,8 @@ func (c *GoBinaryCollector) Collect(scanPath string, verbose bool, isContainer b
 		}
 
 		if bi.GoVersion != "" {
-			goVersions[strings.TrimPrefix(bi.GoVersion, "go")] = true
+			v := strings.TrimPrefix(bi.GoVersion, "go")
+			goVersions[v] = append(goVersions[v], path)
 		}
 		for _, dep := range bi.Deps {
 			effective := dep
@@ -104,14 +105,22 @@ func (c *GoBinaryCollector) Collect(scanPath string, verbose bool, isContainer b
 	// it was built with regardless of what's installed on the system, so
 	// record it as its own package rather than relying on an "installed Go"
 	// collector that wouldn't reflect what's actually compiled into a binary.
-	for version := range goVersions {
-		pkgs = append(pkgs, inventory.Package{
-			Name:       "stdlib",
-			Version:    version,
-			RawVersion: version,
-			Ecosystem:  "Go",
-			Source:     "gobinary",
-		})
+	//
+	// One entry per binary, each located at that binary, so that ownership
+	// (markOSManaged) is decided per binary; inventory.Deduplicate then folds
+	// them into one stdlib per version, which stays os-managed only if every
+	// binary built with it is OS-owned.
+	for version, paths := range goVersions {
+		for _, path := range paths {
+			pkgs = append(pkgs, inventory.Package{
+				Name:       "stdlib",
+				Version:    version,
+				RawVersion: version,
+				Ecosystem:  "Go",
+				Source:     "gobinary",
+				Location:   path,
+			})
+		}
 	}
 
 	if verbose {

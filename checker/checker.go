@@ -112,8 +112,18 @@ func Check(ctx context.Context, inv *inventory.Inventory, opts Options) (*CheckR
 		pkgMeta[key] = p
 	}
 
+	// A language package an OS package installed is covered by that OS
+	// package's own advisories; queried at its upstream version it only adds
+	// duplicates and false positives (see inventory.CategoryOSManaged).
+	var toCheck []inventory.Package
+	for _, p := range inv.Packages {
+		if p.Category != inventory.CategoryOSManaged {
+			toCheck = append(toCheck, p)
+		}
+	}
+
 	// Chunk packages into batches of 1000
-	chunks := chunkPackages(inv.Packages, 1000)
+	chunks := chunkPackages(toCheck, 1000)
 
 	var mu sync.Mutex
 	sem := make(chan struct{}, opts.Concurrency)

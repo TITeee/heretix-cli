@@ -33,8 +33,9 @@ type Package struct {
 	// per binary package it fans out into. Empty for non-OS ecosystems.
 	SourcePackage string `json:"sourcePackage,omitempty"`
 	// Category marks a package that is present in the image but is not part of
-	// what it runs: "kernel" (kernel headers) or "build" (build toolchain).
-	// "" means a normal runtime package. See collector.classifyNonRuntime.
+	// what it runs: "kernel" (kernel headers) or "build" (build toolchain) —
+	// see collector.classifyNonRuntime — or a language package whose files an
+	// OS package owns (CategoryOSManaged). "" means a normal runtime package.
 	Category string `json:"category,omitempty"`
 	// Arch is the package's CPU architecture as the package manager records
 	// it ("x86_64", "noarch"). Collected for RPM only, where it is part of
@@ -42,6 +43,14 @@ type Package struct {
 	// against a package whose PURL carries its exact arch.
 	Arch string `json:"arch,omitempty"`
 }
+
+// CategoryOSManaged marks a language package (PyPI, npm, Go, Maven, ...) whose
+// evidence file an rpm/deb/apk package installed — python3-urllib3's
+// site-packages copy of urllib3, the npm bundled inside the nodejs rpm. Matched
+// at its upstream version it ignores the fixes the distro backports into its
+// own release, so its findings belong to that OS package; it is never sent for
+// a vulnerability check. Set by collector.markOSManaged.
+const CategoryOSManaged = "os-managed"
 
 // BoolPtr returns a pointer to b, for use with Package.Direct.
 func BoolPtr(b bool) *bool { return &b }
@@ -137,6 +146,10 @@ func DeduplicateBy(pkgs []Package, key func(Package) string) (merged []Package, 
 
 // mergePkg merges metadata from b into a, preferring the richer value per field.
 func mergePkg(a, b Package) Package {
+	// Decided before the field-by-field merge below rewrites a.Category.
+	if (a.Category == CategoryOSManaged) != (b.Category == CategoryOSManaged) {
+		return mergeWithOSManaged(a, b)
+	}
 	// Direct: true > false > nil
 	a.Direct = mergeDirectPtr(a.Direct, b.Direct)
 	// Integrity: prefer non-empty
@@ -167,6 +180,21 @@ func mergePkg(a, b Package) Package {
 		a.Category = b.Category
 	}
 	return a
+}
+
+// mergeWithOSManaged merges two copies of a package where exactly one is
+// os-managed. An OS-owned copy says nothing about another copy that something
+// else put there (a requirements.txt pin, a venv, a binary the image's own
+// build copied in) — that one still needs checking. So os-managed survives a
+// merge only when every copy is os-managed; here the other copy's
+// classification, scope and location win, and the rest merges as usual.
+func mergeWithOSManaged(a, b Package) Package {
+	owned, other := a, b
+	if b.Category == CategoryOSManaged {
+		owned, other = b, a
+	}
+	owned.Category, owned.Scope, owned.Location = "", "", ""
+	return mergePkg(other, owned)
 }
 
 // mergeDirectPtr returns the higher-priority Direct pointer.

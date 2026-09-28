@@ -192,3 +192,45 @@ func TestDeduplicateBy(t *testing.T) {
 		}
 	})
 }
+
+// An OS-owned copy of a package must not hide another copy of the same
+// name+version that something else installed: os-managed survives
+// deduplication only when every copy is os-managed.
+func TestDeduplicate_OSManagedSurvivesOnlyWhenEveryCopyIsOSManaged(t *testing.T) {
+	owned := Package{Name: "urllib3", Version: "1.26.5", Ecosystem: "PyPI", Source: "dist-info",
+		Location: "/usr/lib/python3.9/site-packages/urllib3-1.26.5.dist-info/METADATA",
+		Category: CategoryOSManaged, Scope: "excluded"}
+	pinned := Package{Name: "urllib3", Version: "1.26.5", Ecosystem: "PyPI", Source: "requirements.txt",
+		Location: "/app/requirements.txt", Direct: BoolPtr(true)}
+
+	for name, pkgs := range map[string][]Package{
+		"os-managed first": {owned, pinned},
+		"os-managed last":  {pinned, owned},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := Deduplicate(pkgs)
+			if len(got) != 1 {
+				t.Fatalf("expected one package, got %d", len(got))
+			}
+			p := got[0]
+			if p.Category != "" || p.Scope != "" {
+				t.Errorf("Category/Scope = %q/%q, want the pinned copy's empty values", p.Category, p.Scope)
+			}
+			if p.Location != "/app/requirements.txt" {
+				t.Errorf("Location = %q, want the pinned copy's", p.Location)
+			}
+			if p.Direct == nil || !*p.Direct {
+				t.Error("expected Direct from the pinned copy to survive the merge")
+			}
+		})
+	}
+
+	t.Run("every copy os-managed", func(t *testing.T) {
+		other := owned
+		other.Location = "/usr/lib64/python3.9/site-packages/urllib3-1.26.5.dist-info/METADATA"
+		got := Deduplicate([]Package{owned, other})
+		if got[0].Category != CategoryOSManaged || got[0].Scope != "excluded" {
+			t.Errorf("Category/Scope = %q/%q, want os-managed/excluded", got[0].Category, got[0].Scope)
+		}
+	})
+}

@@ -388,3 +388,29 @@ func TestCheck_CollectsBatchErrorsWithoutFailingTheWholeRun(t *testing.T) {
 		t.Errorf("expected no results after a failed batch, got %+v", result.Results)
 	}
 }
+
+func TestCheck_DoesNotQueryOSManagedPackages(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req batchRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("failed to decode request body: %v", err)
+		}
+		for _, p := range req.Packages {
+			if p.Package == "urllib3" {
+				t.Errorf("os-managed package was sent to the API: %+v", p)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results": []}`))
+	}))
+	defer server.Close()
+
+	inv := &inventory.Inventory{Packages: []inventory.Package{
+		{Name: "urllib3", Version: "1.26.5", Ecosystem: "PyPI", Source: "dist-info",
+			Category: inventory.CategoryOSManaged, Scope: "excluded"},
+		{Name: "requests", Version: "2.31.0", Ecosystem: "PyPI", Source: "dist-info"},
+	}}
+	if _, err := Check(context.Background(), inv, Options{APIURL: server.URL}); err != nil {
+		t.Fatalf("Check returned an error: %v", err)
+	}
+}

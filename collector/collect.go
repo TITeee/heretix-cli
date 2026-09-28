@@ -87,6 +87,9 @@ func CollectAll(scanPath string, skip []string, verbose bool, isContainer bool) 
 		return nil, fmt.Errorf("all collectors failed")
 	}
 
+	// Before stripScanPathPrefix: it matches Locations against the rootfs path.
+	markOSManaged(allPkgs, scanPath, verbose)
+
 	if isContainer {
 		allPkgs = stripScanPathPrefix(allPkgs, scanPath)
 	}

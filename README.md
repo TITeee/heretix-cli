@@ -79,8 +79,8 @@ heretix-cli collect --image myapp:latest --dockerfile ./Dockerfile --output full
 > - **`hashes`** per component from lockfile integrity fields (SHA-512 for npm/pnpm, SHA-256 for PyPI)
 > - **`licenses`** per component from lockfiles and installed packages (APK, RPM, Composer, npm node_modules, PyPI site-packages)
 > - **`properties[heretix:direct]`** marking direct vs. indirect dependencies, mirrored as standard **`bom.dependencies`** edges from `metadata.component` to each direct dependency (omitted when no collector determined directness). Named under heretix's own namespace, not `cdx:` — CycloneDX reserves that namespace for its own official properties ([cyclonedx-property-taxonomy](https://github.com/CycloneDX/cyclonedx-property-taxonomy)). **Breaking change (2026-09):** earlier heretix-cli versions wrote this as `cdx:direct`; re-run `collect` to regenerate an old SBOM — this version no longer reads `cdx:direct` back, so `check`/`scan` against one falls back to the `bom.dependencies` root edges above (fully equivalent for a direct dependency; a lockfile-derived indirect one degrades to unclassified rather than misreported).
-> - **`scope: excluded`** marking dev/test-only packages that don't ship in a production build (see the `scope` column below), and OS packages classified as non-runtime (see [Non-runtime packages](#non-runtime-packages))
-> - **`properties[heretix:source-package]`** naming the source package an OS binary package was built from, and **`properties[heretix:category]`** (`kernel` / `build`) on non-runtime packages
+> - **`scope: excluded`** marking dev/test-only packages that don't ship in a production build (see the `scope` column below), OS packages classified as non-runtime (see [Non-runtime packages](#non-runtime-packages)), and language packages an OS package installed (see [OS-managed language packages](#os-managed-language-packages))
+> - **`properties[heretix:source-package]`** naming the source package an OS binary package was built from, and **`properties[heretix:category]`** (`kernel` / `build` / `os-managed`) on non-runtime and OS-managed packages
 > - **`bom.dependencies`** section with full dependency graph (npm package-lock.json, pnpm-lock.yaml, uv.lock, poetry.lock, composer.lock)
 > - **`metadata.component`** with OCI PURL and image digest for container scans
 > - An **`operating-system` component** (os-release `ID` / `VERSION_ID`, pretty name as description) when an OS was detected
@@ -179,6 +179,16 @@ Measured on `wordpress:php8.5-fpm`: 1485 findings before, **721** after collapsi
 The SBOM is unaffected by all of this: every package stays a component (CycloneDX `scope: excluded` plus a `heretix:category` property), because dropping components would break the coverage a complete SBOM is supposed to provide.
 
 `--runtime-only` also changes `check`/`scan`'s CI/CD exit code (1 when findings remain), not just the table -- a build does not fail over a kernel-header or build-toolchain CVE that `--runtime-only` was asked to ignore.
+
+#### OS-managed language packages
+
+A distro ships many language libraries as its own packages: `python3-urllib3` installs urllib3's `site-packages` directory, the `nodejs` rpm bundles npm and its dependencies under `/usr/lib/node_modules`, `maven` rpms put jars in `/usr/share/java`, and `delve` installs a Go binary at `/usr/bin/dlv`. The PyPI, npm, Maven and Go-binary collectors find these files as well, and would report the library a second time at its upstream version (`urllib3 1.26.5` next to `python3-urllib3 1.26.5-8.el9_8`). That upstream version does not reflect the fixes the distro backports into its own release, so matching it returns findings the distro has already fixed or rates as not affected, or duplicates of what the OS package's own advisory reports.
+
+`collect` reads the file lists the package databases keep (the RPM database, `/var/lib/dpkg/info/*.list`, the APK database). A language package whose evidence file (`dist-info/METADATA`, the `.jar`, the Go binary) one of them owns is tagged `os-managed` and set to `scope: excluded`. Ownership is recorded fact, not a guess from the path: a package that pip, npm or an image's own build put next to the distro's copy is owned by no package and is left alone.
+
+- **Not checked, not tagged.** Unlike non-runtime packages, OS-managed packages are never sent to the vulnerability API: their findings belong to the OS package, which is checked as usual. They stay in the SBOM as components with `heretix:category: os-managed`.
+- **Another copy wins.** If the same name and version is also found somewhere nothing owns it (a `requirements.txt` pin, a venv, a binary the image's build copied in), the merged package is not OS-managed and is checked. Go's `stdlib` is recorded per binary for this reason: a stdlib version stays OS-managed only if every binary built with it is.
+- **Windows hosts:** an image extracted onto NTFS loses dpkg's architecture-qualified lists (`libc6:amd64.list`, since `:` can't appear in a file name). Language libraries are nearly always `Architecture: all` packages, whose lists are unaffected.
 
 ### One-shot Scan (`scan`)
 
