@@ -104,18 +104,21 @@ func TestPrintTable_DBColumnPrefersSourcesOverSourceOverOSVFallback(t *testing.T
 }
 
 func TestPrintTable_SeverityBucketBoundaries(t *testing.T) {
-	// switch's own thresholds: >=9.0 critical, >=7.0 high, >=4.0 medium, else low.
+	// The severity word decides the bucket (checker.SeverityTier, shared with
+	// heretix-management); the score's own thresholds apply only without one.
 	tests := map[string]struct {
 		vuln   checker.Vulnerability
 		bucket string
 	}{
-		"exactly 9.0 is critical":                           {checker.Vulnerability{ExternalID: "CVE-1", CvssScore: 9.0}, "Critical (>=9.0): 1"},
-		"just under 9.0 is high":                            {checker.Vulnerability{ExternalID: "CVE-1", CvssScore: 8.9}, "High (>=7.0):     1"},
-		"exactly 7.0 is high":                               {checker.Vulnerability{ExternalID: "CVE-1", CvssScore: 7.0}, "High (>=7.0):     1"},
-		"exactly 4.0 is medium":                             {checker.Vulnerability{ExternalID: "CVE-1", CvssScore: 4.0}, "Medium (>=4.0):   1"},
-		"just under 4.0 is low":                             {checker.Vulnerability{ExternalID: "CVE-1", CvssScore: 3.9}, "Low (<4.0):       1"},
-		"zero score falls back to Severity text (CRITICAL)": {checker.Vulnerability{ExternalID: "CVE-1", CvssScore: 0, Severity: "CRITICAL"}, "Critical (>=9.0): 1"},
-		"zero score with no Severity text is low":           {checker.Vulnerability{ExternalID: "CVE-1", CvssScore: 0}, "Low (<4.0):       1"},
+		"unrated exactly 9.0 is critical":          {checker.Vulnerability{ExternalID: "CVE-1", CvssScore: 9.0}, "Critical:         1"},
+		"unrated just under 9.0 is high":           {checker.Vulnerability{ExternalID: "CVE-1", CvssScore: 8.9}, "High:             1"},
+		"unrated exactly 7.0 is high":              {checker.Vulnerability{ExternalID: "CVE-1", CvssScore: 7.0}, "High:             1"},
+		"unrated exactly 4.0 is medium":            {checker.Vulnerability{ExternalID: "CVE-1", CvssScore: 4.0}, "Medium:           1"},
+		"unrated just under 4.0 is low":            {checker.Vulnerability{ExternalID: "CVE-1", CvssScore: 3.9}, "Low:              1"},
+		"zero score uses the Severity word":        {checker.Vulnerability{ExternalID: "CVE-1", CvssScore: 0, Severity: "CRITICAL"}, "Critical:         1"},
+		"CVSS v2 10.0 rated HIGH stays high":       {checker.Vulnerability{ExternalID: "CVE-1", CvssScore: 10.0, Severity: "HIGH"}, "High:             1"},
+		"GHSA MODERATE is medium":                  {checker.Vulnerability{ExternalID: "CVE-1", CvssScore: 0, Severity: "MODERATE"}, "Medium:           1"},
+		"no score and no Severity word is unrated": {checker.Vulnerability{ExternalID: "CVE-1", CvssScore: 0}, "N/A (unrated):    1"},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {

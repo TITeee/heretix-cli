@@ -198,7 +198,7 @@ func PrintTableWithOptions(w io.Writer, inv *inventory.Inventory, result *checke
 	malwareCount := 0
 	kevCount := 0
 	kernelCount, buildCount := 0, 0
-	critical, high, medium, low := 0, 0, 0, 0
+	critical, high, medium, low, unrated := 0, 0, 0, 0, 0
 	vulnPkgs := map[string]bool{}
 
 	for _, r := range rows {
@@ -217,15 +217,17 @@ func PrintTableWithOptions(w io.Writer, inv *inventory.Inventory, result *checke
 		if r.kev {
 			kevCount++
 		}
-		switch {
-		case r.cvss >= 9.0 || (r.cvss == 0 && strings.EqualFold(r.severity, "CRITICAL")):
+		switch checker.SeverityTier(r.severity, r.cvss) {
+		case checker.TierCritical:
 			critical++
-		case r.cvss >= 7.0 || (r.cvss == 0 && strings.EqualFold(r.severity, "HIGH")):
+		case checker.TierHigh:
 			high++
-		case r.cvss >= 4.0 || (r.cvss == 0 && strings.EqualFold(r.severity, "MEDIUM")):
+		case checker.TierMedium:
 			medium++
-		default:
+		case checker.TierLow:
 			low++
+		default:
+			unrated++
 		}
 	}
 	totalVulnPkgs := len(vulnPkgs)
@@ -370,10 +372,13 @@ func PrintTableWithOptions(w io.Writer, inv *inventory.Inventory, result *checke
 	if malwareCount > 0 {
 		fmt.Fprintf(w, "  Malware:          %d\n", malwareCount)
 	}
-	fmt.Fprintf(w, "  Critical (>=9.0): %d\n", critical)
-	fmt.Fprintf(w, "  High (>=7.0):     %d\n", high)
-	fmt.Fprintf(w, "  Medium (>=4.0):   %d\n", medium)
-	fmt.Fprintf(w, "  Low (<4.0):       %d\n", low)
+	fmt.Fprintf(w, "  Critical:         %d\n", critical)
+	fmt.Fprintf(w, "  High:             %d\n", high)
+	fmt.Fprintf(w, "  Medium:           %d\n", medium)
+	fmt.Fprintf(w, "  Low:              %d\n", low)
+	if unrated > 0 {
+		fmt.Fprintf(w, "  N/A (unrated):    %d\n", unrated)
+	}
 	if kernelCount > 0 || buildCount > 0 {
 		parts := []string{}
 		if kernelCount > 0 {

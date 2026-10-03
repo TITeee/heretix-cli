@@ -157,7 +157,7 @@ heretix-cli check sbom.json --format json > results.json
 | `--api-url` | `http://localhost:3001` | heretix-api URL |
 | `--api-key` | (none) | API authentication key (can also be set via `HERETIX_API_KEY` env var) |
 | `--format` | `table` | Output format: `table` / `json` |
-| `--severity` | `0.0` | Minimum CVSS score threshold |
+| `--severity` | `0.0` | Minimum CVSS score threshold. A vulnerability with a severity rating but no CVSS score is kept if its rating could reach the threshold (CRITICAL up to 10.0, HIGH up to 8.9, MEDIUM up to 6.9, LOW up to 3.9) |
 | `--concurrency` | `10` | Number of concurrent API requests |
 | `--timeout` | `30s` | Per-request timeout |
 | `--runtime-only` | `false` | Report only runtime packages (hide kernel header and build toolchain findings) |
@@ -458,10 +458,10 @@ EPSS = Exploit Prediction Scoring System probability (0.000–1.000)
 
 Summary: 14 packages with 21 findings (1 malware, 1 KEV)
   Malware:          1
-  Critical (>=9.0): 1
-  High (>=7.0):     4
-  Medium (>=4.0):   8
-  Low (<4.0):       5
+  Critical:         1
+  High:             4
+  Medium:           8
+  Low:              5
   Non-runtime:      2 (kernel 1, build 1)
   (counted above; re-run with --runtime-only to exclude them)
 

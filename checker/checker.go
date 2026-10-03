@@ -256,7 +256,7 @@ func filterAndSort(results []PackageResult, minSeverity float64) []PackageResult
 		var vulns []Vulnerability
 		for _, v := range r.Vulnerabilities {
 			// Malware entries bypass the severity threshold since they typically lack CVSS scores.
-			if v.CvssScore >= minSeverity || isMalware(v) {
+			if meetsThreshold(v, minSeverity) || isMalware(v) {
 				vulns = append(vulns, v)
 			}
 		}
