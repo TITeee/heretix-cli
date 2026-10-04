@@ -40,8 +40,18 @@ type Vulnerability struct {
 	// server knows one. Empty (not just unset) also means "no fix known" for
 	// a confirmed-unfixed vendor-advisory finding -- see heretix-api's
 	// RedHatVexFetcher.
-	FixedVersion string   `json:"fixedVersion"`
-	Aliases      []string `json:"aliases"`
+	FixedVersion string `json:"fixedVersion"`
+	// DistroPriority is the distro's own rating of this CVE for the matched
+	// package (Ubuntu priority, Debian urgency, Red Hat impact), verbatim. It
+	// can differ from the CVE-wide Severity and is never merged into it.
+	DistroPriority string `json:"distroPriority"`
+	// FixStatus says whether a fix will come for an unfixed package:
+	// affected, deferred, will_not_fix, out_of_support, under_investigation.
+	// heretix-api may add values; treat an unknown one like "affected".
+	// FixStatusDetail is the source's own wording (e.g. "Will not fix").
+	FixStatus       string   `json:"fixStatus"`
+	FixStatusDetail string   `json:"fixStatusDetail"`
+	Aliases         []string `json:"aliases"`
 }
 
 // PackageResult holds the vulnerability check result for one package.

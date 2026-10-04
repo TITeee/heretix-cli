@@ -491,6 +491,15 @@ Only JSON is written to stdout (includes both vulnerability results and local fi
 
 Each entry under `results[]` carries `sourcePackage` and `category` (see [Non-runtime packages](#non-runtime-packages)) so a script can group by source package itself; results keep full per-binary-package granularity rather than the table's collapsed rows. `--runtime-only` drops results on non-runtime packages here too, matching the table and the exit code. `summary.aggregatedFindings` gives the collapsed count (one per source package + vulnerability) without requiring that regrouping.
 
+Each vulnerability carries heretix-api's fix and distro fields as returned (empty string when the API has none):
+
+| Field | Meaning |
+|---|---|
+| `fixedVersion` | The version that resolves this finding, when the source states one |
+| `distroPriority` | The distro's own rating of this CVE for the matched package, verbatim — Ubuntu priority (`negligible`…`critical`), Debian urgency (`unimportant`…`high`), or Red Hat impact (`low`…`critical`). Can differ from the CVE-wide `severity` |
+| `fixStatus` | Whether a fix will come for an unfixed package: `affected`, `deferred`, `will_not_fix`, `out_of_support`, `under_investigation`. From Red Hat VEX and the Debian security tracker only. Treat an unknown value like `affected` — heretix-api may add more |
+| `fixStatusDetail` | The source's own wording for `fixStatus` (e.g. `Will not fix`, or the Debian tracker's tag and note) |
+
 ## Exit Codes
 
 | Code | Meaning |

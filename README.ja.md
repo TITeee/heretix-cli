@@ -491,6 +491,15 @@ stdout に JSON のみ出力（脆弱性結果と `localFindings` フィール�
 
 `results[]` の各要素には `sourcePackage` と `category`（[非ランタイムパッケージ](#非ランタイムパッケージ) 参照）が付与されており、スクリプト側でソースパッケージ単位の集約ができる。テーブルの集約済み行とは異なり、結果はバイナリパッケージ単位の粒度を保持する。`--runtime-only` はここでも非ランタイムパッケージの結果を除外し、テーブルおよび終了コードと一致させる。`summary.aggregatedFindings` は、その再集約をしなくても集約後の件数（ソースパッケージ+脆弱性単位）を得られるようにするものである。
 
+各脆弱性には、heretix-api が返す修正状況とディストリ固有のフィールドがそのまま含まれる（API に値が無い場合は空文字列）。
+
+| フィールド | 意味 |
+|---|---|
+| `fixedVersion` | この脆弱性が修正されるバージョン（ソースが明示している場合） |
+| `distroPriority` | 該当パッケージに対するディストリ自身の評価（そのまま）。Ubuntu の priority（`negligible`〜`critical`）、Debian の urgency（`unimportant`〜`high`）、Red Hat の impact（`low`〜`critical`）。CVE 全体の `severity` とは異なる場合がある |
+| `fixStatus` | 未修正パッケージに修正が来るかどうか：`affected`、`deferred`、`will_not_fix`、`out_of_support`、`under_investigation`。情報源は Red Hat VEX と Debian security tracker のみ。heretix-api が値を追加する可能性があるため、未知の値は `affected` と同様に扱うこと |
+| `fixStatusDetail` | `fixStatus` に対するソース自身の表現（例：`Will not fix`、Debian tracker のタグと注記） |
+
 ## 終了コード
 
 | コード | 意味 |

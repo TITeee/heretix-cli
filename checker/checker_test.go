@@ -250,6 +250,61 @@ func TestSendBatch_PreservesFullVulnerabilityShape(t *testing.T) {
 	}
 }
 
+// TestSendBatch_ParsesDistroPriorityAndFixStatus checks the per-distro fields
+// heretix-api returns: set on a Red Hat VEX unfixed match, null elsewhere.
+func TestSendBatch_ParsesDistroPriorityAndFixStatus(t *testing.T) {
+	const responseBody = `{
+		"results": [
+			{
+				"package": "libtiff",
+				"version": "4.4.0-13.el9",
+				"ecosystem": "Red Hat:9",
+				"vulnerabilities": [
+					{
+						"externalId": "CVE-2023-1",
+						"severity": "MEDIUM",
+						"fixedVersion": null,
+						"distroPriority": "low",
+						"fixStatus": "will_not_fix",
+						"fixStatusDetail": "Will not fix"
+					},
+					{
+						"externalId": "CVE-2023-2",
+						"severity": "HIGH",
+						"fixedVersion": "4.4.0-14.el9",
+						"distroPriority": null,
+						"fixStatus": null,
+						"fixStatusDetail": null
+					}
+				]
+			}
+		]
+	}`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(responseBody))
+	}))
+	defer server.Close()
+
+	pkgs := []inventory.Package{{Name: "libtiff", Version: "4.4.0-13.el9", Ecosystem: "Red Hat:9"}}
+	results, err := sendBatch(context.Background(), server.Client(), server.URL, "", pkgs)
+	if err != nil {
+		t.Fatalf("sendBatch returned an error: %v", err)
+	}
+	if len(results) != 1 || len(results[0].Vulnerabilities) != 2 {
+		t.Fatalf("expected one package with two vulnerabilities, got %+v", results)
+	}
+
+	unfixed, fixed := results[0].Vulnerabilities[0], results[0].Vulnerabilities[1]
+	if unfixed.DistroPriority != "low" || unfixed.FixStatus != "will_not_fix" || unfixed.FixStatusDetail != "Will not fix" {
+		t.Errorf("unfixed: got distroPriority=%q fixStatus=%q fixStatusDetail=%q", unfixed.DistroPriority, unfixed.FixStatus, unfixed.FixStatusDetail)
+	}
+	if fixed.DistroPriority != "" || fixed.FixStatus != "" || fixed.FixStatusDetail != "" {
+		t.Errorf("fixed: null fields should decode as empty, got %+v", fixed)
+	}
+}
+
 func TestSendBatch_SkipsRequestWhenEveryPackageIsIncomplete(t *testing.T) {
 	called := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
