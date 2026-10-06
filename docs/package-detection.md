@@ -1,0 +1,50 @@
+# Package detection
+
+How `collect` finds packages in each ecosystem, and how it tags packages that are installed but are not part of what an image runs.
+
+## Supported ecosystems
+
+| Ecosystem | Scan Target | Platform |
+|---|---|---|
+| RHEL / AlmaLinux / Rocky Linux / Oracle Linux / CentOS (RPM) | Parses `var/lib/rpm` / `usr/lib/sysimage/rpm` directly (BDB, NDB, or SQLite) | Linux only (any OS for `--image` scans) |
+| Debian / Ubuntu-based (DPKG) | Parses `var/lib/dpkg/status` directly | Linux only (any OS for `--image` scans) |
+| Alpine (APK) | Parses `/lib/apk/db/installed` directly | Linux only (any OS for `--image` scans) |
+| PyPI | `site-packages`/`dist-packages` (`*.dist-info/METADATA`) as the primary source, plus `requirements.txt`, `Pipfile.lock`, `poetry.lock`, `uv.lock` / fallback: `pip list`* | Linux / Windows |
+| npm / yarn / pnpm | `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` / fallback: `npm list -g`, `pnpm list -g`* | Linux / Windows |
+| Go (go modules) | `go.mod` / fallback: `go list -m -json all` | Linux / Windows |
+| Go (binaries) | Modules statically linked into a compiled binary (e.g. a base image's bundled tools), read from the binary's embedded build info — same data as `go version -m`† | Image scans only |
+| Composer (PHP) | `composer.lock` | Linux / Windows |
+| Maven (Java) | `pom.xml` / fallback: `mvn dependency:tree` | Linux / Windows |
+| Gradle (Java/Kotlin) | `gradle.lockfile` / `build.gradle` / `build.gradle.kts` | Linux / Windows |
+| Java artifacts | `*.jar`, `*.war`, `*.ear` — reads `META-INF/maven/*/pom.properties`, recurses into `WEB-INF/lib` and `BOOT-INF/lib` | Linux / Windows |
+
+\* Only runs for a whole-system scan (`--scan-path` at the filesystem root, the default with no `--image`): skipped for `--image`/`--dockerfile` scans and for any `--scan-path` narrower than the root, since `pip`/`npm`/`pnpm` here always query this process's own host environment regardless of `--scan-path` — never the extracted image or the scanned subdirectory.
+
+† Only runs for `--image`/`--dockerfile` scans, walking every regular file under the extracted rootfs and attempting to parse it as a Go binary. Skipped for host scans, where opening every executable on the live filesystem would be far noisier and slower than auditing one image layer.
+
+## Non-runtime packages
+
+A container image usually carries packages that are installed but never run: **kernel headers** (the host kernel is what executes, not `linux-libc-dev`) and **build toolchain** left behind by a build stage (compilers, linkers, `-dev`/`-devel` header packages). On `wordpress:php8.5-fpm` these account for 454 of 721 findings, `linux-libc-dev` alone contributing 388.
+
+`collect` classifies them from the **source package** each binary package was built from — `Source:` in the dpkg status file, `SourceRpm` in the RPM database, `o:` in the APK database. The source package is used rather than the package name because one upstream project is split into many binary packages whose names give nothing away: `libbinutils`, `libctf0`, `libsframe1` and `libgprofng0` are all `Section: libs`, and only their shared `binutils` source identifies them as build tooling.
+
+Two things follow from that same source-package information:
+
+- **Findings are counted per source package, not per binary package.** One `binutils` CVE affects all eight of its binary packages; it is now one row naming the source package, `binutils(8 pkgs)`, rather than eight rows. The source package is shown rather than picking one binary package's name, because most multi-binary sources have no binary package sharing the source's own name at all (`glibc` produces `libc6`/`libc6-dev`/..., never a package literally named `glibc`). If the group's binary packages do not all share one version, the VERSION column shows `multiple` rather than picking one of them.
+- **Non-runtime findings are tagged, not hidden.** They are marked `K` (kernel) or `B` (build) in the report and summarised under `Non-runtime:`, so nothing silently disappears. Pass `--runtime-only` to leave them out. A source package can produce both runtime and non-runtime binary packages (`glibc` ships both `libc6` and `libc6-dev`); when the same CVE affects both, the row is never tagged non-runtime, so `--runtime-only` cannot silently drop a finding that does affect something that runs.
+
+Measured on `wordpress:php8.5-fpm`: 1485 findings before, **721** after collapsing per source package, **267** with `--runtime-only`.
+
+The SBOM is unaffected by all of this: every package stays a component (CycloneDX `scope: excluded` plus a `heretix:category` property), because dropping components would break the coverage a complete SBOM is supposed to provide.
+
+`--runtime-only` also changes `check`/`scan`'s CI/CD exit code (1 when findings remain), not just the table -- a build does not fail over a kernel-header or build-toolchain CVE that `--runtime-only` was asked to ignore.
+
+## OS-managed language packages
+
+A distro ships many language libraries as its own packages: `python3-urllib3` installs urllib3's `site-packages` directory, the `nodejs` rpm bundles npm and its dependencies under `/usr/lib/node_modules`, `maven` rpms put jars in `/usr/share/java`, and `delve` installs a Go binary at `/usr/bin/dlv`. The PyPI, npm, Maven and Go-binary collectors find these files as well, and would report the library a second time at its upstream version (`urllib3 1.26.5` next to `python3-urllib3 1.26.5-8.el9_8`). That upstream version does not reflect the fixes the distro backports into its own release, so matching it returns findings the distro has already fixed or rates as not affected, or duplicates of what the OS package's own advisory reports.
+
+`collect` reads the file lists the package databases keep (the RPM database, `/var/lib/dpkg/info/*.list`, the APK database). A language package whose evidence file (`dist-info/METADATA`, the `.jar`, the Go binary) one of them owns is tagged `os-managed` and set to `scope: excluded`. Ownership is recorded fact, not a guess from the path: a package that pip, npm or an image's own build put next to the distro's copy is owned by no package and is left alone.
+
+- **Not checked, not tagged.** Unlike non-runtime packages, OS-managed packages are never sent to the vulnerability API: their findings belong to the OS package, which is checked as usual. They stay in the SBOM as components with `heretix:category: os-managed`.
+- **Another copy wins.** If the same name and version is also found somewhere nothing owns it (a `requirements.txt` pin, a venv, a binary the image's build copied in), the merged package is not OS-managed and is checked. Go's `stdlib` is recorded per binary for this reason: a stdlib version stays OS-managed only if every binary built with it is.
+- **Windows hosts:** an image extracted onto NTFS loses dpkg's architecture-qualified lists (`libc6:amd64.list`, since `:` can't appear in a file name). Language libraries are nearly always `Architecture: all` packages, whose lists are unaffected.
