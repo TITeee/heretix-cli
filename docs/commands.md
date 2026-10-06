@@ -6,6 +6,7 @@
 | [`check`](#vulnerability-check-check) | Check an SBOM against heretix-api | Yes |
 | [`scan`](#one-shot-scan-scan) | `collect` + `check` + local checks in one command | Yes |
 | [`detect`](#local-only-detection-detect) | Local security checks only | No |
+| [`upload`](#upload-to-heretix-management-upload) | Send an SBOM to heretix-management, which tracks its findings | No |
 | [`submit`](#github-dependency-submission-submit) | Send an SBOM to GitHub's Dependency Submission API (Dependabot) | No |
 
 ## Package Collection (`collect`)
@@ -25,7 +26,7 @@ heretix-cli collect --image registry.example.com/myapp:v1.2 --output myapp-sbom.
 heretix-cli collect --image myapp:latest --dockerfile ./Dockerfile --output full-sbom.json
 ```
 
-> **Removed:** the heretix inventory JSON (`--format json`, `inventory.json`) is gone. `collect` writes only a CycloneDX SBOM, and `check` and `submit` read only that; given an old `inventory.json`, they stop and ask you to re-run `collect`. `--format json` now fails with exit code 2. (`check`, `scan` and `detect` still have their own `--format json`, which selects the report format and is unaffected.)
+> **Removed:** the heretix inventory JSON (`--format json`, `inventory.json`) is gone. `collect` writes only a CycloneDX SBOM, and `check`, `submit` and `upload` read only that; given an old `inventory.json`, they stop and ask you to re-run `collect`. `--format json` now fails with exit code 2. (`check`, `scan` and `detect` still have their own `--format json`, which selects the report format and is unaffected.)
 
 | Flag | Default | Description |
 |---|---|---|
@@ -94,6 +95,41 @@ This command takes `collect`'s `--scan-path`, `--skip` and `--verbose` and all o
 | `--skip-local` | `false` | Skip local security checks (GlassWorm, Dependency Confusion, Malicious Install, CI/CD Poisoning, Lock File Integrity) |
 | `--check-registry` | `false` | Query npmjs.org to classify unknown npm scopes (requires network) |
 | `--runtime-only` | `false` | Report only runtime packages (see [Non-runtime packages](package-detection.md#non-runtime-packages)) |
+
+## Upload to heretix-management (`upload`)
+
+Uploads a CycloneDX SBOM written by `collect` to [heretix-management](https://github.com/TITeee/heretix-management), which imports it into the asset its hostname names, creating the asset if it is new. Re-uploading updates the asset incrementally. heretix-management scans it on its own schedule (daily by default), or from the asset's page with **Run Scan**; `upload` itself doesn't wait for or report findings. To fail a CI job on findings, use `scan` instead (see [CI/CD Examples](#cicd-examples)).
+
+```bash
+export HERETIX_MANAGEMENT_URL=https://heretix.example.com
+export HERETIX_MANAGEMENT_TOKEN=hx_xxx
+
+heretix-cli collect --image myapp:1.0 --name myapp --output sbom.json
+heretix-cli upload sbom.json
+```
+
+It needs an access token with the `import` scope, created by an admin in heretix-management under **Settings → Access Tokens**. The token only allows importing; it cannot sign in or read findings.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--url` | `$HERETIX_MANAGEMENT_URL` | heretix-management's URL (the console's own address, including any path prefix behind a reverse proxy). **Required** |
+| `--token` | `$HERETIX_MANAGEMENT_TOKEN` | Access token with the `import` scope. **Required** |
+| `--hostname` | (none) | The asset to import into, overriding the SBOM's own hostname. `collect --name` sets that hostname in the first place, so this is mainly for re-targeting an existing SBOM |
+| `--display-name` | (none) | The asset's display name. heretix-management sets the display name to the hostname on every upload that doesn't give one, so pass it on each upload to keep a name you chose |
+| `--dry-run` | `false` | Import nothing; show whether the upload would create a new asset or update an existing one, and how many packages it would add, remove and upgrade. Use it to check `--name`/`--hostname` before wiring up a CI job |
+| `--timeout` | `5m` | Request timeout |
+
+The URL, the token and the file (it must be a CycloneDX SBOM) are checked before anything is sent; a missing or invalid one stops `upload` with exit code 2. So does a failed upload, with a hint for the usual causes: an invalid, expired or revoked token (401), a token without the `import` scope (403), a URL that isn't heretix-management's (a redirect to its login page, or 404 from heretix-api), and too many failed token attempts (429). Over plain `http://` to anything but localhost, `upload` warns that the token travels unencrypted.
+
+A dry run prints, for example:
+
+```
+Would update asset "My App" (hostname: myapp, last scanned 2026-10-06T01:00:00Z).
+  Packages: 12 added, 3 removed (2 of them upgraded to a new version)
+Nothing was imported (dry run).
+```
+
+Assets are matched by hostname alone, so a wrong `--name` or `--hostname` would quietly update a different asset; an unexpectedly large removal count usually means the scan covered the wrong path or image.
 
 ## GitHub Dependency Submission (`submit`)
 
@@ -228,7 +264,7 @@ Each vulnerability carries heretix-api's fix and distro fields as returned (empt
 
 | Code | Meaning |
 |---|---|
-| `0` | No vulnerabilities, malware, or local findings (or successful `collect`) |
+| `0` | No vulnerabilities, malware, or local findings (or a successful `collect`, `submit` or `upload`) |
 | `1` | Vulnerabilities, malware, or local security findings found (for CI/CD integration) |
 | `2` | Execution failure |
 
@@ -258,6 +294,18 @@ heretix-cli scan --image myapp:latest --api-url http://heretix-api:5000 --api-ke
 heretix-cli scan --image myapp:latest --dockerfile ./Dockerfile \
   --api-url http://heretix-api:5000 --api-key your-secret-key --severity 7.0 --format json > vuln-report.json
 ```
+
+### Track an Image in heretix-management
+
+`scan` gives a pass/fail result in the pipeline itself. To keep the findings in heretix-management instead, where they are tracked across builds, collect and upload:
+
+```bash
+docker build -t myapp:latest .
+heretix-cli collect --image myapp:latest --name myapp --output sbom.json
+heretix-cli upload sbom.json   # HERETIX_MANAGEMENT_URL and HERETIX_MANAGEMENT_TOKEN set as CI secrets
+```
+
+A fixed `--name` keeps every build updating the same asset rather than creating one per tag.
 
 ### Dependabot Integration (GitHub Actions)
 

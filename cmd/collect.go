@@ -63,7 +63,7 @@ func runCollect(cmd *cobra.Command, args []string) error {
 	}
 
 	if collectFormat != "cyclonedx" {
-		fmt.Fprintf(os.Stderr, "Error: --format %s is not supported. The heretix inventory JSON (--format json) has been removed: collect writes a CycloneDX SBOM, which check and submit read.\n", collectFormat)
+		fmt.Fprintf(os.Stderr, "Error: --format %s is not supported. The heretix inventory JSON (--format json) has been removed: collect writes a CycloneDX SBOM, which check, submit and upload read.\n", collectFormat)
 		os.Exit(2)
 	}
 

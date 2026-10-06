@@ -18,12 +18,13 @@ heretix-cli/
 ├── cmd/                    # CLI command definitions (cobra)
 ├── collector/              # Package collection (Collector interface)
 ├── container/              # Docker image fetch & extraction
-├── inventory/              # Package list JSON schema & I/O
+├── inventory/              # Package list model & deduplication
 ├── checker/                # Vulnerability API client
 ├── detector/               # Local security checks (Detector interface)
 ├── report/                 # Table & JSON output
 ├── sbom/                   # CycloneDX SBOM generation
 ├── depgraph/               # GitHub Dependency Submission API client
+├── management/             # heretix-management API client (upload)
 └── docs/                   # Documentation (linked from README)
 ```
 

@@ -6,9 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/TITeee/heretix-cli/inventory"
+	"github.com/TITeee/heretix-cli/management"
 	"github.com/TITeee/heretix-cli/sbom"
 	"github.com/spf13/cobra"
 )
@@ -248,4 +250,51 @@ func TestResolveAPIKey(t *testing.T) {
 			t.Error("resolveAPIKey with no flag and no env returned no error")
 		}
 	})
+}
+
+// TestUploadHint checks that each failure a misconfigured CI job typically
+// hits gets an explanation, and that other errors don't get a wrong one.
+func TestUploadHint(t *testing.T) {
+	tests := map[string]struct {
+		err  error
+		want string
+	}{
+		"redirect means a wrong --url":  {&management.APIError{Status: 307, Location: "/login"}, "heretix-management's own URL"},
+		"404 means heretix-api's URL":   {&management.APIError{Status: 404}, "not heretix-api's"},
+		"401 means a bad token":         {&management.APIError{Status: 401}, "invalid, expired or revoked"},
+		"403 means a missing scope":     {&management.APIError{Status: 403}, "import scope"},
+		"429 means rate-limited":        {&management.APIError{Status: 429}, "wait before retrying"},
+		"other HTTP errors get no hint": {&management.APIError{Status: 500}, ""},
+		"network errors get no hint":    {errors.New("connection refused"), ""},
+	}
+	for name, tc := range tests {
+		got := uploadHint(tc.err)
+		if tc.want == "" && got != "" {
+			t.Errorf("%s: hint = %q, want none", name, got)
+		}
+		if tc.want != "" && !strings.Contains(got, tc.want) {
+			t.Errorf("%s: hint = %q, want it to mention %q", name, got, tc.want)
+		}
+	}
+}
+
+func TestDescribePreview(t *testing.T) {
+	var newAsset management.Preview
+	if err := json.Unmarshal([]byte(`{"hostname":"newapp","existing":null}`), &newAsset); err != nil {
+		t.Fatal(err)
+	}
+	if got := describePreview(&newAsset); !strings.Contains(got, "Would create a new asset with hostname newapp") || !strings.Contains(got, "Nothing was imported") {
+		t.Errorf("new asset preview = %q", got)
+	}
+
+	var existing management.Preview
+	if err := json.Unmarshal([]byte(`{"hostname":"myapp","existing":{"id":"a1","name":"My App","hostname":"myapp"},"diff":{"added":12,"removed":3,"superseded":2}}`), &existing); err != nil {
+		t.Fatal(err)
+	}
+	got := describePreview(&existing)
+	for _, want := range []string{`Would update asset "My App" (hostname: myapp)`, "12 added, 3 removed (2 of them upgraded", "Nothing was imported"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("existing asset preview = %q, want it to contain %q", got, want)
+		}
+	}
 }

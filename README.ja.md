@@ -97,7 +97,15 @@ heretix-cli check sbom.json
 heretix-cli detect --scan-path /srv/myapp
 ```
 
-`sbom.json` を heretix-management にインポートすると、検出結果を継続的に追跡できます。
+検出結果を継続的に追跡したい場合は、SBOM を heretix-management に送ります。送信には、`import` スコープを持つアクセストークンが必要です（heretix-management の **Settings → Access Tokens** で作成します）。
+
+```bash
+export HERETIX_MANAGEMENT_URL=https://heretix.example.com
+export HERETIX_MANAGEMENT_TOKEN=<アクセストークン>
+
+heretix-cli collect --image myapp:1.0 --name myapp --output sbom.json
+heretix-cli upload sbom.json
+```
 
 ## コマンド
 
@@ -107,6 +115,7 @@ heretix-cli detect --scan-path /srv/myapp
 | `check` | SBOM を heretix-api で照合する | 必要 |
 | `scan` | `collect`、`check`、ローカル検査を 1 回で実行する | 必要 |
 | `detect` | ローカルのセキュリティ検査だけを行う | 不要 |
+| `upload` | SBOM を heretix-management に送信し、検出結果を継続的に管理させる | 不要 |
 | `submit` | SBOM を GitHub の Dependency Submission API に送信する（Dependabot 用） | 不要 |
 
 すべてのオプション、出力形式、そのほかの使用例は [docs/commands.md](docs/commands.md)（英語）を参照してください。
@@ -115,16 +124,25 @@ heretix-cli detect --scan-path /srv/myapp
 
 ## CI での利用
 
-`check`、`scan`、`detect` は、何か検出すると終了コード `1` を返します。そのため、パイプラインのステップはそれだけで失敗扱いになります。
+パイプラインでの使い方は、目的に応じて 2 通りあります。
+
+**検出があればビルドを失敗させる。** `check`、`scan`、`detect` は、何か検出すると終了コード `1` を返します。そのため、パイプラインのステップはそれだけで失敗扱いになります。
 
 ```bash
 docker build -t myapp:latest .
 heretix-cli scan --image myapp:latest --api-url http://heretix-api:5000 --severity 7.0
 ```
 
+**検出結果を heretix-management で管理する。** `collect` と `upload` で、ビルドごとの SBOM を heretix-management に送ります。heretix-management がスキャンし、アラートをビルドをまたいで管理します。`--name` を固定しておくと、すべてのビルドが同じアセットを更新します。
+
+```bash
+heretix-cli collect --image myapp:latest --name myapp --output sbom.json
+heretix-cli upload sbom.json   # HERETIX_MANAGEMENT_URL と HERETIX_MANAGEMENT_TOKEN は CI のシークレットに設定
+```
+
 | 終了コード | 意味 |
 |---|---|
-| `0` | 何も検出されなかった（`collect`、`submit` は正常終了） |
+| `0` | 何も検出されなかった（`collect`、`submit`、`upload` は正常終了） |
 | `1` | 脆弱性、マルウェア、またはローカル検査での検出があった |
 | `2` | コマンドの実行に失敗した |
 

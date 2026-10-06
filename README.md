@@ -97,7 +97,15 @@ heretix-cli check sbom.json
 heretix-cli detect --scan-path /srv/myapp
 ```
 
-Import `sbom.json` into heretix-management to track its findings over time.
+To track findings over time instead, send the SBOM to heretix-management. It needs an access token with the `import` scope (heretix-management: **Settings → Access Tokens**):
+
+```bash
+export HERETIX_MANAGEMENT_URL=https://heretix.example.com
+export HERETIX_MANAGEMENT_TOKEN=<access token>
+
+heretix-cli collect --image myapp:1.0 --name myapp --output sbom.json
+heretix-cli upload sbom.json
+```
 
 ## Commands
 
@@ -107,6 +115,7 @@ Import `sbom.json` into heretix-management to track its findings over time.
 | `check` | Check an SBOM against heretix-api | Yes |
 | `scan` | `collect` + `check` + local checks in one command | Yes |
 | `detect` | Local security checks only | No |
+| `upload` | Send an SBOM to heretix-management, which tracks its findings | No |
 | `submit` | Send an SBOM to GitHub's Dependency Submission API (Dependabot) | No |
 
 Every flag, the output formats and more examples: [docs/commands.md](docs/commands.md).
@@ -115,16 +124,25 @@ Every flag, the output formats and more examples: [docs/commands.md](docs/comman
 
 ## Using in CI
 
-`check`, `scan` and `detect` exit with code `1` when they find something, so a pipeline step fails on its own:
+There are two ways to use heretix-cli in a pipeline, for two different needs.
+
+**Fail the build on findings.** `check`, `scan` and `detect` exit with code `1` when they find something, so a pipeline step fails on its own:
 
 ```bash
 docker build -t myapp:latest .
 heretix-cli scan --image myapp:latest --api-url http://heretix-api:5000 --severity 7.0
 ```
 
+**Track findings in heretix-management.** `collect` and `upload` send each build's SBOM to heretix-management, which scans it and keeps its alerts across builds. A fixed `--name` keeps every build updating one asset:
+
+```bash
+heretix-cli collect --image myapp:latest --name myapp --output sbom.json
+heretix-cli upload sbom.json   # HERETIX_MANAGEMENT_URL / HERETIX_MANAGEMENT_TOKEN as CI secrets
+```
+
 | Exit code | Meaning |
 |---|---|
-| `0` | Nothing found (or `collect`/`submit` succeeded) |
+| `0` | Nothing found (or `collect`, `submit` or `upload` succeeded) |
 | `1` | Vulnerabilities, malware or local security findings found |
 | `2` | The command failed |
 
