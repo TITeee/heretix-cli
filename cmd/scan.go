@@ -44,9 +44,9 @@ var (
 
 func init() {
 	// collect flags
-	scanCmd.Flags().StringVar(&scanScanPath, "scan-path", "/", "Filesystem root path to scan")
+	scanCmd.Flags().StringVar(&scanScanPath, "scan-path", defaultScanPath(), "Filesystem root path to scan")
 	scanCmd.Flags().StringSliceVar(&scanSkip, "skip", nil, "Sources to skip (e.g. --skip npm,pypi)")
-	scanCmd.Flags().BoolVar(&scanSkipLocal, "skip-local", false, "Skip local security checks (GlassWorm, Dependency Confusion)")
+	scanCmd.Flags().BoolVar(&scanSkipLocal, "skip-local", false, "Skip local security checks (GlassWorm, Dependency Confusion, Malicious Install, CI/CD Poisoning, Lock File Integrity)")
 	// check flags
 	scanCmd.Flags().StringVar(&scanAPIURL, "api-url", "http://localhost:3001", "Vulnerability API URL")
 	scanCmd.Flags().StringVar(&scanAPIKey, "api-key", "", "API key for authentication (or set HERETIX_API_KEY)")

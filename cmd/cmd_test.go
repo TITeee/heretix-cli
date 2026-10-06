@@ -9,6 +9,7 @@ import (
 
 	"github.com/TITeee/heretix-cli/inventory"
 	"github.com/TITeee/heretix-cli/sbom"
+	"github.com/spf13/cobra"
 )
 
 // withCollectFlags temporarily sets the package-level collect* flag
@@ -235,4 +236,15 @@ func TestDefaultScanPath(t *testing.T) {
 			t.Errorf("defaultScanPath() = %q, want %q", got, `C:\`)
 		}
 	})
+}
+
+// TestScanPathDefaultsAgree guards scan against drifting from collect/detect:
+// scan once hard-coded "/", which on Windows is not the system drive's root.
+func TestScanPathDefaultsAgree(t *testing.T) {
+	want := defaultScanPath()
+	for name, c := range map[string]*cobra.Command{"collect": collectCmd, "detect": detectCmd, "scan": scanCmd} {
+		if got := c.Flags().Lookup("scan-path").DefValue; got != want {
+			t.Errorf("%s --scan-path default = %q, want %q", name, got, want)
+		}
+	}
 }
