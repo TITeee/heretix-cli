@@ -793,3 +793,41 @@ func TestPrintFindings_ColumnsAlignForLongTypesAndPaths(t *testing.T) {
 		t.Fatalf("no table rows found in output:\n%s", buf.String())
 	}
 }
+
+// TestPrintTable_TagsDevOnlyFindings checks that a finding on a dev/test-only
+// dependency is marked D, explained in the legend and counted in the summary,
+// while a production dependency's finding carries no mark — and that
+// --runtime-only, which is about non-runtime OS packages, leaves it in.
+func TestPrintTable_TagsDevOnlyFindings(t *testing.T) {
+	inv := &inventory.Inventory{Packages: []inventory.Package{
+		{Name: "undici", Version: "8.10.0", Ecosystem: "npm", Source: "pnpm-lock.yaml", Scope: "excluded"},
+		{Name: "fast-uri", Version: "4.1.4", Ecosystem: "npm", Source: "pnpm-lock.yaml"},
+	}}
+	result := &checker.CheckResult{Results: []checker.PackageResult{
+		{Package: "undici", Version: "8.10.0", Ecosystem: "npm",
+			Vulnerabilities: []checker.Vulnerability{{ExternalID: "CVE-2026-85024", CvssScore: 5.9}}},
+		{Package: "fast-uri", Version: "4.1.4", Ecosystem: "npm",
+			Vulnerabilities: []checker.Vulnerability{{ExternalID: "CVE-2026-86472", CvssScore: 4.8}}},
+	}}
+
+	for _, opts := range []Options{{}, {RuntimeOnly: true}} {
+		var buf bytes.Buffer
+		PrintTableWithOptions(&buf, inv, result, "sbom.json", opts)
+		out := buf.String()
+
+		for _, l := range strings.Split(out, "\n") {
+			switch {
+			case strings.Contains(l, "undici") && !strings.HasPrefix(l, " D"):
+				t.Errorf("RuntimeOnly=%v: dev-only row not marked D: %q", opts.RuntimeOnly, l)
+			case strings.Contains(l, "fast-uri") && !strings.HasPrefix(l, "  "):
+				t.Errorf("RuntimeOnly=%v: production row should carry no mark: %q", opts.RuntimeOnly, l)
+			}
+		}
+		if !strings.Contains(out, "D = dev/test-only dependency") {
+			t.Errorf("RuntimeOnly=%v: legend missing the D entry:\n%s", opts.RuntimeOnly, out)
+		}
+		if !strings.Contains(out, "Dev/test-only:    1") {
+			t.Errorf("RuntimeOnly=%v: summary missing the dev/test-only count:\n%s", opts.RuntimeOnly, out)
+		}
+	}
+}

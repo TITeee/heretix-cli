@@ -53,7 +53,11 @@ type reportRow struct {
 	kev          bool
 	malware      bool
 	category     string
-	extraPkgs    int
+	// devOnly marks a language package resolved only through dev/test
+	// dependencies (Scope "excluded" with no non-runtime Category). Shown,
+	// not hidden: dev dependencies still run on developer machines and CI.
+	devOnly   bool
+	extraPkgs int
 }
 
 // buildRows flattens the per-package check results into printable rows,
@@ -116,6 +120,9 @@ func buildRows(inv *inventory.Inventory, result *checker.CheckResult, opts Optio
 				if m.Category == "" {
 					rows[i].category = ""
 				}
+				if !isDevOnly(m) {
+					rows[i].devOnly = false
+				}
 				if r.Version != rows[i].version {
 					rows[i].versionMixed = true
 				}
@@ -151,10 +158,18 @@ func buildRows(inv *inventory.Inventory, result *checker.CheckResult, opts Optio
 				kev:         v.IsKev,
 				malware:     isMalwareID(vulnID),
 				category:    m.Category,
+				devOnly:     isDevOnly(m),
 			})
 		}
 	}
 	return rows
+}
+
+// isDevOnly reports whether p is a dev/test-only language dependency.
+// Non-runtime OS packages also carry Scope "excluded", but they are tagged
+// K/B through Category instead.
+func isDevOnly(p inventory.Package) bool {
+	return p.Scope == "excluded" && p.Category == ""
 }
 
 // HasFindings reports whether any finding remains after applying opts (in
@@ -196,7 +211,7 @@ func PrintTableWithOptions(w io.Writer, inv *inventory.Inventory, result *checke
 	totalVulns := 0
 	malwareCount := 0
 	kevCount := 0
-	kernelCount, buildCount := 0, 0
+	kernelCount, buildCount, devCount := 0, 0, 0
 	critical, high, medium, low, unrated := 0, 0, 0, 0, 0
 	vulnPkgs := map[string]bool{}
 
@@ -207,6 +222,9 @@ func PrintTableWithOptions(w io.Writer, inv *inventory.Inventory, result *checke
 			kernelCount++
 		case "build":
 			buildCount++
+		}
+		if r.devOnly {
+			devCount++
 		}
 		if r.malware {
 			malwareCount++
@@ -287,6 +305,9 @@ func PrintTableWithOptions(w io.Writer, inv *inventory.Inventory, result *checke
 		case "build":
 			categoryMark = 'B'
 		}
+		if r.devOnly {
+			categoryMark = 'D'
+		}
 
 		// A collapsed row names the source package, not an arbitrary one of its
 		// binary packages: most multi-binary sources have no binary package
@@ -324,7 +345,7 @@ func PrintTableWithOptions(w io.Writer, inv *inventory.Inventory, result *checke
 			r.sourceDisp, r.dbSource, truncate(r.vulnID, 19), cvssDisplay, epssDisplay, summary)
 	}
 
-	if hasApproximate || hasKev || hasMalware || kernelCount > 0 || buildCount > 0 || hasCollapsed || hasMixedVersion {
+	if hasApproximate || hasKev || hasMalware || kernelCount > 0 || buildCount > 0 || devCount > 0 || hasCollapsed || hasMixedVersion {
 		fmt.Fprintln(w)
 		if hasMalware {
 			fmt.Fprintln(w, "# = malicious package (OSSF Malicious Packages)")
@@ -340,6 +361,9 @@ func PrintTableWithOptions(w io.Writer, inv *inventory.Inventory, result *checke
 		}
 		if buildCount > 0 {
 			fmt.Fprintln(w, "B = build toolchain (compiler, linker or development headers left from a build stage)")
+		}
+		if devCount > 0 {
+			fmt.Fprintln(w, "D = dev/test-only dependency (not in a production build, but runs on developer machines and CI)")
 		}
 		if hasCollapsed {
 			fmt.Fprintln(w, "(N pkgs) = the same vulnerability in N binary packages built from this source package (PACKAGE names the source package)")
@@ -386,6 +410,9 @@ func PrintTableWithOptions(w io.Writer, inv *inventory.Inventory, result *checke
 		fmt.Fprintf(w, "  Non-runtime:      %d (%s)\n", kernelCount+buildCount, strings.Join(parts, ", "))
 		fmt.Fprintln(w, "  (counted above; re-run with --runtime-only to exclude them)")
 	}
+	if devCount > 0 {
+		fmt.Fprintf(w, "  Dev/test-only:    %d (counted above)\n", devCount)
+	}
 
 	if len(result.Errors) > 0 {
 		fmt.Fprintln(w)
@@ -408,6 +435,9 @@ type jsonPackageResult struct {
 	// runtime package.
 	SourcePackage string `json:"sourcePackage,omitempty"`
 	Category      string `json:"category,omitempty"`
+	// Scope mirrors inventory.Package.Scope: "excluded" for a dev/test-only
+	// dependency (or a non-runtime OS package, which also has a Category).
+	Scope string `json:"scope,omitempty"`
 }
 
 // jsonSummary carries derived counts a script would otherwise have to
@@ -446,6 +476,7 @@ func PrintJSON(w io.Writer, inv *inventory.Inventory, result *checker.CheckResul
 			PackageResult: r,
 			SourcePackage: m.SourcePackage,
 			Category:      m.Category,
+			Scope:         m.Scope,
 		})
 	}
 

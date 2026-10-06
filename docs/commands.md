@@ -166,13 +166,14 @@ Packages:   1523 checked (rpm: 1200, dpkg: 320, pip: 280, npm: 43)
  K Debian      linux-libc-dev        6.12.43-1  dpkg                 osv   CVE-2024-4321          7.8  0.010  Kernel use-after-free
  B Debian      binutils(2 pkgs)      2.44-3     dpkg                 osv   CVE-2024-9999          5.5  0.002  Heap overflow in BFD
 ~  PyPI        somepkg               v2024.1    pip                  osv   GHSA-zzzz-zzzz         6.0      -  Some vulnerability
-#  npm         malicious-pkg         1.0.0      pnpm-lock.yaml       osv   MAL-2024-1234            -      -  Malicious package
+#D npm         malicious-pkg         1.0.0      pnpm-lock.yaml       osv   MAL-2024-1234            -      -  Malicious package
 
 # = malicious package (OSSF Malicious Packages)
 ! = in CISA Known Exploited Vulnerabilities (KEV) catalog
 ~ = approximate match (version could not be normalized, showing all vulnerabilities for this package)
 K = kernel headers (the host kernel runs, not this package's code)
 B = build toolchain (compiler, linker or development headers left from a build stage)
+D = dev/test-only dependency (not in a production build, but runs on developer machines and CI)
 (N pkgs) = the same vulnerability in N binary packages built from this source package (PACKAGE names the source package)
 multiple = the binary packages in this row do not share one version
 DB = data source (osv = Open Source Vulnerabilities, nvd = NIST NVD, advisory = Vendor Advisory)
@@ -186,6 +187,7 @@ Summary: 14 packages with 21 findings (1 malware, 1 KEV)
   Low:              5
   Non-runtime:      2 (kernel 1, build 1)
   (counted above; re-run with --runtime-only to exclude them)
+  Dev/test-only:    1 (counted above)
 
 Local Security Findings
 =======================
@@ -211,7 +213,7 @@ Local findings: 6 (1 glassworm, 2 dep-confusion, 1 malicious-install, 1 cicd-poi
 
 Only JSON is written to stdout (includes both vulnerability results and local findings under `localFindings`). Progress logs go to stderr, so pipe processing works cleanly.
 
-Each entry under `results[]` carries `sourcePackage` and `category` (see [Non-runtime packages](package-detection.md#non-runtime-packages)) so a script can group by source package itself; results keep full per-binary-package granularity rather than the table's collapsed rows. `--runtime-only` drops results on non-runtime packages here too, matching the table and the exit code. `summary.aggregatedFindings` gives the collapsed count (one per source package + vulnerability) without requiring that regrouping.
+Each entry under `results[]` carries `sourcePackage`, `category` (see [Non-runtime packages](package-detection.md#non-runtime-packages)) and `scope` (`excluded` for a dev/test-only dependency, or a non-runtime OS package) so a script can group by source package itself; results keep full per-binary-package granularity rather than the table's collapsed rows. `--runtime-only` drops results on non-runtime packages here too, matching the table and the exit code. `summary.aggregatedFindings` gives the collapsed count (one per source package + vulnerability) without requiring that regrouping.
 
 Each vulnerability carries heretix-api's fix and distro fields as returned (empty string when the API has none):
 
