@@ -16,9 +16,8 @@ import (
 
 // goExcludeDirs lists directory names to skip during filesystem walk.
 var goExcludeDirs = map[string]bool{
-	"vendor":   true,
-	".git":     true,
-	"testdata": true,
+	"vendor": true,
+	".git":   true,
 }
 
 // GoCollector collects Go module dependencies from go.mod files.
@@ -29,13 +28,14 @@ func (c *GoCollector) Name() string { return "go" }
 func (c *GoCollector) Collect(scanPath string, verbose bool, isContainer bool) ([]inventory.Package, error) {
 	var pkgs []inventory.Package
 	found := false
+	goModCount := 0
 
 	err := filepath.WalkDir(scanPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
 		if d.IsDir() {
-			if goExcludeDirs[d.Name()] {
+			if goExcludeDirs[d.Name()] || isTestdataDir(path, scanPath) {
 				return fs.SkipDir
 			}
 			return nil
@@ -43,6 +43,7 @@ func (c *GoCollector) Collect(scanPath string, verbose bool, isContainer bool) (
 		if d.Name() != "go.mod" {
 			return nil
 		}
+		goModCount++
 
 		p, err := goModulePackages(path, verbose)
 		if err != nil {
@@ -57,6 +58,17 @@ func (c *GoCollector) Collect(scanPath string, verbose bool, isContainer bool) (
 	})
 	if err != nil {
 		return nil, fmt.Errorf("walk %s: %w", scanPath, err)
+	}
+
+	// Without the go command, goModulePackages falls back to parsing go.mod,
+	// which yields only the modules it declares: no dependency edges, so a
+	// dependency graph built from this SBOM comes out empty. That is too big
+	// a difference to report only under --verbose.
+	if goModCount > 0 {
+		if _, err := exec.LookPath("go"); err != nil {
+			log.Printf("Warning: found %d go.mod file(s) but the go command is not in PATH, so Go modules come from go.mod alone: "+
+				"dependency relationships (the SBOM's dependency graph) are missing. Add Go to PATH for complete results.", goModCount)
+		}
 	}
 
 	if !found {

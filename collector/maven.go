@@ -26,7 +26,7 @@ func (c *MavenCollector) Collect(scanPath string, verbose bool, isContainer bool
 			return nil
 		}
 		if d.IsDir() {
-			if d.Name() == "target" || d.Name() == ".git" || d.Name() == ".m2" {
+			if d.Name() == "target" || d.Name() == ".git" || d.Name() == ".m2" || isTestdataDir(path, scanPath) {
 				return fs.SkipDir
 			}
 			return nil

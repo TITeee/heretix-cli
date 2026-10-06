@@ -25,7 +25,7 @@ func (c *ComposerCollector) Collect(scanPath string, verbose bool, isContainer b
 			return nil
 		}
 		if d.IsDir() {
-			if d.Name() == "vendor" || d.Name() == ".git" {
+			if d.Name() == "vendor" || d.Name() == ".git" || isTestdataDir(path, scanPath) {
 				return fs.SkipDir
 			}
 			return nil

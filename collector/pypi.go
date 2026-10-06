@@ -36,7 +36,7 @@ func (c *PyPICollector) Collect(scanPath string, verbose bool, isContainer bool)
 		}
 		if d.IsDir() {
 			name := d.Name()
-			if pypiExcludeDirs[name] {
+			if pypiExcludeDirs[name] || isTestdataDir(path, scanPath) {
 				return fs.SkipDir
 			}
 			// Exclude .venv/lib subdirectories
@@ -591,7 +591,7 @@ func scanSitePackages(scanPath string, verbose bool) []inventory.Package {
 		}
 		name := d.Name()
 		// Skip irrelevant directories early
-		if name == ".git" || name == "node_modules" || name == "vendor" || name == "__pycache__" {
+		if name == ".git" || name == "node_modules" || name == "vendor" || name == "__pycache__" || isTestdataDir(path, scanPath) {
 			return fs.SkipDir
 		}
 		if name != "site-packages" && name != "dist-packages" {

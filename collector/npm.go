@@ -28,7 +28,7 @@ func (c *NPMCollector) Collect(scanPath string, verbose bool, isContainer bool) 
 			return nil
 		}
 		if d.IsDir() {
-			if d.Name() == "node_modules" || d.Name() == ".git" {
+			if d.Name() == "node_modules" || d.Name() == ".git" || isTestdataDir(path, scanPath) {
 				return fs.SkipDir
 			}
 			return nil
@@ -780,7 +780,7 @@ func findPnpmVirtualStorePackages(scanPath string, verbose bool) ([]inventory.Pa
 		if err != nil || !d.IsDir() {
 			return nil
 		}
-		if d.Name() == ".git" {
+		if d.Name() == ".git" || isTestdataDir(path, scanPath) {
 			return fs.SkipDir
 		}
 		if d.Name() == "node_modules" {

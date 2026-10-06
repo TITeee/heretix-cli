@@ -11,7 +11,7 @@ How `collect` finds packages in each ecosystem, and how it tags packages that ar
 | Alpine (APK) | Parses `/lib/apk/db/installed` directly | Linux only (any OS for `--image` scans) |
 | PyPI | `site-packages`/`dist-packages` (`*.dist-info/METADATA`) as the primary source, plus `requirements.txt`, `Pipfile.lock`, `poetry.lock`, `uv.lock` / fallback: `pip list`* | Linux / Windows |
 | npm / yarn / pnpm | `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` / fallback: `npm list -g`, `pnpm list -g`* | Linux / Windows |
-| Go (go modules) | `go.mod` / fallback: `go list -m -json all` | Linux / Windows |
+| Go (go modules) | `go.mod`, resolved with `go list -m all` and `go mod graph` when the `go` command is in PATH‡ | Linux / Windows |
 | Go (binaries) | Modules statically linked into a compiled binary (e.g. a base image's bundled tools), read from the binary's embedded build info — same data as `go version -m`† | Image scans only |
 | Composer (PHP) | `composer.lock` | Linux / Windows |
 | Maven (Java) | `pom.xml` / fallback: `mvn dependency:tree` | Linux / Windows |
@@ -21,6 +21,10 @@ How `collect` finds packages in each ecosystem, and how it tags packages that ar
 \* Only runs for a whole-system scan (`--scan-path` at the filesystem root, the default with no `--image`): skipped for `--image`/`--dockerfile` scans and for any `--scan-path` narrower than the root, since `pip`/`npm`/`pnpm` here always query this process's own host environment regardless of `--scan-path` — never the extracted image or the scanned subdirectory.
 
 † Only runs for `--image`/`--dockerfile` scans, walking every regular file under the extracted rootfs and attempting to parse it as a Go binary. Skipped for host scans, where opening every executable on the live filesystem would be far noisier and slower than auditing one image layer.
+
+‡ Without the `go` command, `go.mod` is parsed directly: you get the modules it declares and whether each is direct, but no transitive dependencies or dependency relationships, so a dependency graph built from the SBOM comes out empty. `collect` warns when it finds a `go.mod` but no `go` command.
+
+Every collector skips directories named `testdata` below the scan path: they hold test fixtures (the Go toolchain never builds them, and the local security checks skip them too), so a manifest there is not a real dependency. A `testdata` directory given as `--scan-path` itself is still scanned.
 
 ## Non-runtime packages
 
