@@ -39,9 +39,36 @@ type Package struct {
 	Category string `json:"category,omitempty"`
 	// Arch is the package's CPU architecture as the package manager records
 	// it ("x86_64", "noarch"). Collected for RPM only, where it is part of
-	// the package identity: Trivy only matches Rocky/Oracle Linux advisories
-	// against a package whose PURL carries its exact arch.
+	// the package identity: per-arch Rocky/Oracle Linux advisory data can
+	// only be matched against a package whose PURL carries its exact arch.
 	Arch string `json:"arch,omitempty"`
+
+	// scopeRequired records, across a merge, that some copy came from a
+	// scopeDecidingSources source that placed it in production — so that
+	// copy outranks another's "excluded" whatever order the copies merge in.
+	scopeRequired bool
+}
+
+// scopeDecidingSources are the Package.Source values whose collector tells
+// dev/test-only packages from production ones, so their empty Scope means
+// "required", not "unknown". Elsewhere (pnpm's virtual store, node_modules,
+// site-packages, yarn.lock, ...) an empty Scope only means the source can't
+// tell. Lockfile formats too old to classify (package-lock v1, pnpm-lock
+// v5/v6) still count: their packages read as required, which can only keep a
+// package checked, never hide one.
+var scopeDecidingSources = map[string]bool{
+	"package-lock.json": true,
+	"pnpm-lock.yaml":    true,
+	"Pipfile.lock":      true,
+	"composer.lock":     true,
+	"gradle.lockfile":   true,
+	"pom.xml":           true, // test scope is dropped at collection, so what remains is required
+	"build.gradle":      true, // likewise for test-only configurations
+}
+
+// scopeRequired reports whether p is known to be a production dependency.
+func scopeRequired(p Package) bool {
+	return p.scopeRequired || (p.Scope == "" && scopeDecidingSources[p.Source])
 }
 
 // CategoryOSManaged marks a language package (PyPI, npm, Go, Maven, ...) whose
@@ -168,10 +195,19 @@ func mergePkg(a, b Package) Package {
 	if a.Location == "" {
 		a.Location = b.Location
 	}
-	// Scope: prefer non-empty ("excluded" wins over unknown)
+	// Scope: "excluded" fills an unknown scope, but loses to a copy a
+	// dev/prod-aware source placed in production — e.g. a package one app's
+	// lockfile resolves as a production dependency and another app's as
+	// dev-only, found in one scan. heretix-management never checks excluded
+	// packages, so letting "excluded" win there would hide its findings.
+	required := scopeRequired(a) || scopeRequired(b)
 	if a.Scope == "" {
 		a.Scope = b.Scope
 	}
+	if required {
+		a.Scope = ""
+	}
+	a.scopeRequired = required
 	// SourcePackage / Category: prefer non-empty
 	if a.SourcePackage == "" {
 		a.SourcePackage = b.SourcePackage

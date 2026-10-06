@@ -234,3 +234,39 @@ func TestDeduplicate_OSManagedSurvivesOnlyWhenEveryCopyIsOSManaged(t *testing.T)
 		}
 	})
 }
+
+// TestDeduplicate_ScopeFollowsSourcesThatTellDevFromProd guards both halves
+// of the Scope merge rule. A package one lockfile resolves as production and
+// another as dev-only must stay production (heretix-management never checks
+// excluded packages). But a copy from a source that can't tell — pnpm's
+// virtual store reports every installed package with an empty Scope — must
+// not erase a lockfile's dev-only verdict.
+func TestDeduplicate_ScopeFollowsSourcesThatTellDevFromProd(t *testing.T) {
+	pkg := func(source, location, scope string) Package {
+		return Package{Name: "lodash", Version: "4.17.21", Ecosystem: "npm", Source: source, Location: location, Scope: scope}
+	}
+	prodLock := pkg("package-lock.json", "/srv/app1/package-lock.json", "")
+	devLock := pkg("package-lock.json", "/srv/app2/package-lock.json", "excluded")
+	store := pkg("pnpm-virtual-store", "/srv/app2/node_modules/.pnpm", "")
+
+	for name, tc := range map[string]struct {
+		copies []Package
+		want   string
+	}{
+		"prod lockfile, then dev lockfile":   {[]Package{prodLock, devLock}, ""},
+		"dev lockfile, then prod lockfile":   {[]Package{devLock, prodLock}, ""},
+		"dev lockfile, then virtual store":   {[]Package{devLock, store}, "excluded"},
+		"virtual store, then dev lockfile":   {[]Package{store, devLock}, "excluded"},
+		"store, prod lockfile, dev lockfile": {[]Package{store, prodLock, devLock}, ""},
+		"dev lockfile, store, prod lockfile": {[]Package{devLock, store, prodLock}, ""},
+		"two dev lockfiles":                  {[]Package{devLock, pkg("package-lock.json", "/srv/app3/package-lock.json", "excluded")}, "excluded"},
+	} {
+		got := Deduplicate(tc.copies)
+		if len(got) != 1 {
+			t.Fatalf("%s: got %d packages, want 1", name, len(got))
+		}
+		if got[0].Scope != tc.want {
+			t.Errorf("%s: Scope = %q, want %q", name, got[0].Scope, tc.want)
+		}
+	}
+}

@@ -195,7 +195,7 @@ func TestRPMCollect_ParsesRealDatabase(t *testing.T) {
 	if dbus.Version != "1:1.12.20-8.el9" {
 		t.Errorf("dbus Version = %q, want %q (real epoch preserved)", dbus.Version, "1:1.12.20-8.el9")
 	}
-	// Arch goes into the PURL, where Trivy matches Rocky/Oracle advisories on it.
+	// Arch goes into the PURL, where per-arch Rocky/Oracle advisories are matched on it.
 	if dbus.Arch != "x86_64" {
 		t.Errorf("dbus Arch = %q, want %q", dbus.Arch, "x86_64")
 	}

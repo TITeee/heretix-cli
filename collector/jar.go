@@ -114,7 +114,7 @@ type mavenCoord struct {
 // into any nested archives it contains.
 //
 // location is the display path of this archive. Nested archives are reported as
-// "<outer>!/<inner entry>", the convention used by Syft and Trivy.
+// "<outer>!/<inner entry>", the convention SBOM tools commonly use.
 // digest is the SHA-256 of this archive's bytes.
 func parseJavaArchive(zr *zip.Reader, location, digest string, depth int, verbose bool) []inventory.Package {
 	// A shaded (uber) JAR embeds several META-INF/maven/{g}/{a}/ directories, so
