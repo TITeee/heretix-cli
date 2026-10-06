@@ -9,7 +9,7 @@ heretix-cli は、**[heretix](https://titeee.github.io/heretix-web/)** のスキ
 サーバー上で実行するか、ディレクトリやコンテナイメージを指定して実行します。インストールされているパッケージを洗い出し、そのうちどれに脆弱性があるかを [heretix-api](https://github.com/TITeee/heretix-api) に問い合わせます。
 
 ```
-$ heretix-cli scan --image myapp:latest --api-url http://localhost:5000
+$ heretix-cli scan --image myapp:latest
    ECOSYSTEM   PACKAGE               VERSION    SOURCE               DB    VULN ID               CVSS   EPSS  SUMMARY
 !  AlmaLinux   curl                  7.88.1     rpm                  nvd   CVE-2024-1234          9.8  0.950  Remote code exec
    PyPI        requests              2.31.0     /srv/myapp/requir... osv   GHSA-xxxx-yyyy         6.1  0.045  SSRF via proxy
@@ -78,20 +78,20 @@ GOOS=windows GOARCH=amd64 go build -o heretix-cli.exe .
 
 ## クイックスタート
 
-`check` と `scan` を使うには、heretix-api が動いている必要があります。heretix-api の[クイックスタート](https://github.com/TITeee/heretix-api/blob/main/README.ja.md)を参照してください。API キーは `--api-key` オプションか、環境変数 `HERETIX_API_KEY` で渡します。
+`check` と `scan` を使うには、heretix-api が動いている必要があります。heretix-api の[クイックスタート](https://github.com/TITeee/heretix-api/blob/main/README.ja.md)を参照してください。接続先は標準で `http://localhost:5000`（heretix-api のクイックスタートどおりに構築した場合の URL）です。別のホストにある場合は `--api-url` で指定します。API キーは `--api-key` オプションか、環境変数 `HERETIX_API_KEY` で渡します。
 
 ```bash
 export HERETIX_API_KEY=<API キー>
 
 # このホストをスキャンして脆弱性を表示する
-heretix-cli scan --api-url http://localhost:5000
+heretix-cli scan
 
 # コンテナイメージをスキャンする
-heretix-cli scan --image nginx:latest --api-url http://localhost:5000
+heretix-cli scan --image nginx:latest
 
 # 2 段階に分ける場合: SBOM を書き出し（オフライン）、あとで照合する
 heretix-cli collect --output sbom.json
-heretix-cli check sbom.json --api-url http://localhost:5000
+heretix-cli check sbom.json
 
 # ローカルのセキュリティ検査だけを行う（オフライン）
 heretix-cli detect --scan-path /srv/myapp

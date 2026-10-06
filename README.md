@@ -9,7 +9,7 @@ heretix-cli is the scanner of **[heretix](https://titeee.github.io/heretix-web/)
 Run it on a server, or point it at a directory or a container image. It lists every installed package and asks [heretix-api](https://github.com/TITeee/heretix-api) which of them are vulnerable:
 
 ```
-$ heretix-cli scan --image myapp:latest --api-url http://localhost:5000
+$ heretix-cli scan --image myapp:latest
    ECOSYSTEM   PACKAGE               VERSION    SOURCE               DB    VULN ID               CVSS   EPSS  SUMMARY
 !  AlmaLinux   curl                  7.88.1     rpm                  nvd   CVE-2024-1234          9.8  0.950  Remote code exec
    PyPI        requests              2.31.0     /srv/myapp/requir... osv   GHSA-xxxx-yyyy         6.1  0.045  SSRF via proxy
@@ -78,20 +78,20 @@ GOOS=windows GOARCH=amd64 go build -o heretix-cli.exe .
 
 ## Quick start
 
-`check` and `scan` need a running heretix-api: see its [quick start](https://github.com/TITeee/heretix-api#quick-start). Pass its API key with `--api-key` or the `HERETIX_API_KEY` environment variable.
+`check` and `scan` need a running heretix-api: see its [quick start](https://github.com/TITeee/heretix-api#quick-start). They connect to `http://localhost:5000` by default, where that quick start puts it; use `--api-url` for another host. Pass its API key with `--api-key` or the `HERETIX_API_KEY` environment variable.
 
 ```bash
 export HERETIX_API_KEY=<your key>
 
 # Scan this host and report vulnerabilities
-heretix-cli scan --api-url http://localhost:5000
+heretix-cli scan
 
 # Scan a container image
-heretix-cli scan --image nginx:latest --api-url http://localhost:5000
+heretix-cli scan --image nginx:latest
 
 # Or in two steps: write an SBOM (offline), then check it
 heretix-cli collect --output sbom.json
-heretix-cli check sbom.json --api-url http://localhost:5000
+heretix-cli check sbom.json
 
 # Local security checks only (offline)
 heretix-cli detect --scan-path /srv/myapp

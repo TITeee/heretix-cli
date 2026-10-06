@@ -48,7 +48,7 @@ func init() {
 	scanCmd.Flags().StringSliceVar(&scanSkip, "skip", nil, "Sources to skip (e.g. --skip npm,pypi)")
 	scanCmd.Flags().BoolVar(&scanSkipLocal, "skip-local", false, "Skip local security checks (GlassWorm, Dependency Confusion, Malicious Install, CI/CD Poisoning, Lock File Integrity)")
 	// check flags
-	scanCmd.Flags().StringVar(&scanAPIURL, "api-url", "http://localhost:3001", "Vulnerability API URL")
+	scanCmd.Flags().StringVar(&scanAPIURL, "api-url", defaultAPIURL, "Vulnerability API URL")
 	scanCmd.Flags().StringVar(&scanAPIKey, "api-key", "", "API key for authentication (or set HERETIX_API_KEY)")
 	scanCmd.Flags().StringVar(&scanFormat, "format", "table", "Output format: table / json")
 	scanCmd.Flags().Float64Var(&scanSeverity, "severity", 0.0, "Minimum CVSS score threshold")

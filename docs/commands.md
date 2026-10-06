@@ -52,7 +52,7 @@ heretix-cli check sbom.json --format json > results.json
 
 | Flag | Default | Description |
 |---|---|---|
-| `--api-url` | `http://localhost:3001` | heretix-api URL |
+| `--api-url` | `http://localhost:5000` | heretix-api URL |
 | `--api-key` | (none) | API authentication key (can also be set via `HERETIX_API_KEY` env var) |
 | `--format` | `table` | Output format: `table` / `json` |
 | `--severity` | `0.0` | Minimum CVSS score threshold. A vulnerability with a severity rating but no CVSS score is kept if its rating could reach the threshold (CRITICAL up to 10.0, HIGH up to 8.9, MEDIUM up to 6.9, LOW up to 3.9) |

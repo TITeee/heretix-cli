@@ -13,6 +13,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// defaultAPIURL matches heretix-api as its README sets it up (docker compose
+// with .env.example, both PORT=5000), not its bare-source fallback port.
+const defaultAPIURL = "http://localhost:5000"
+
 var checkCmd = &cobra.Command{
 	Use:   "check <file.json>",
 	Short: "Check inventory JSON against the vulnerability API",
@@ -33,7 +37,7 @@ var (
 )
 
 func init() {
-	checkCmd.Flags().StringVar(&checkAPIURL, "api-url", "http://localhost:3001", "Vulnerability API URL")
+	checkCmd.Flags().StringVar(&checkAPIURL, "api-url", defaultAPIURL, "Vulnerability API URL")
 	checkCmd.Flags().StringVar(&checkAPIKey, "api-key", "", "API key for authentication (or set HERETIX_API_KEY)")
 	checkCmd.Flags().StringVar(&checkFormat, "format", "table", "Output format: table / json")
 	checkCmd.Flags().Float64Var(&checkSeverity, "severity", 0.0, "Minimum CVSS score threshold")
