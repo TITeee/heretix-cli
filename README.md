@@ -111,6 +111,8 @@ Import `sbom.json` into heretix-management to track its findings over time.
 
 Every flag, the output formats and more examples: [docs/commands.md](docs/commands.md).
 
+> **The heretix inventory JSON has been removed.** `collect --format json` and `inventory.json` files are no longer supported: `collect` writes only a CycloneDX SBOM, and the other commands read only that. Re-run `collect` to replace an old `inventory.json`. The report option `--format json` of `check`, `scan` and `detect` is unaffected.
+
 ## Using in CI
 
 `check`, `scan` and `detect` exit with code `1` when they find something, so a pipeline step fails on its own:

@@ -25,13 +25,13 @@ heretix-cli collect --image registry.example.com/myapp:v1.2 --output myapp-sbom.
 heretix-cli collect --image myapp:latest --dockerfile ./Dockerfile --output full-sbom.json
 ```
 
-> **Deprecated:** `--format json` (the heretix-native inventory format) still works and is read by `check`/`submit`, but it will be removed in a future release. New scripts should not pass `--format json`.
+> **Removed:** the heretix inventory JSON (`--format json`, `inventory.json`) is gone. `collect` writes only a CycloneDX SBOM, and `check` and `submit` read only that; given an old `inventory.json`, they stop and ask you to re-run `collect`. `--format json` now fails with exit code 2. (`check`, `scan` and `detect` still have their own `--format json`, which selects the report format and is unaffected.)
 
 | Flag | Default | Description |
 |---|---|---|
-| `--output` | see description | Output file path. Defaults to `{--name}.json`, else `{--scan-path basename}.json`, else `sbom.json` (`inventory.json` with `--format json`) when the scan path is a filesystem root |
+| `--output` | see description | Output file path. Defaults to `{--name}.json`, else `{--scan-path basename}.json`, else `sbom.json` when the scan path is a filesystem root |
 | `--name` | (none) | Override the hostname recorded in the output (e.g. to tell apart several projects on one host). Also names the default output file |
-| `--format` | `cyclonedx` | Output format: `cyclonedx` (CycloneDX BOM) / `json` (heretix inventory, deprecated) |
+| `--format` | `cyclonedx` | Output format. `cyclonedx` is the only one; `json` (the heretix inventory) has been removed |
 | `--scan-path` | `/` (Linux) / `%SystemDrive%\` (Windows) | Root path for filesystem traversal |
 | `--skip` | (none) | Sources to skip (e.g. `--skip npm`) |
 | `--verbose` | `false` | Enable verbose logging |
@@ -42,7 +42,7 @@ What the SBOM contains, and which fields each lockfile can fill: [sbom.md](sbom.
 
 ## Vulnerability Check (`check`)
 
-Reads the SBOM produced by `collect` (CycloneDX or the deprecated heretix inventory JSON) and queries the vulnerability API.
+Reads a CycloneDX SBOM produced by `collect` and queries heretix-api for vulnerabilities in its packages.
 
 ```bash
 heretix-cli check sbom.json
@@ -97,7 +97,7 @@ This command takes `collect`'s `--scan-path`, `--skip` and `--verbose` and all o
 
 ## GitHub Dependency Submission (`submit`)
 
-Reads an SBOM (CycloneDX or the deprecated heretix inventory JSON) and submits it to the [GitHub Dependency Submission API](https://docs.github.com/en/rest/dependency-graph/dependency-submission) so that Dependabot can generate vulnerability alerts for the detected packages.
+Reads a CycloneDX SBOM produced by `collect` and submits it to the [GitHub Dependency Submission API](https://docs.github.com/en/rest/dependency-graph/dependency-submission) so that Dependabot can generate vulnerability alerts for the detected packages.
 
 ```bash
 # Typical CI/CD usage — env vars are set automatically by GitHub Actions
@@ -153,7 +153,7 @@ heretix-cli detect --image myapp:latest --dockerfile ./Dockerfile
 ```
 Vulnerability Check Report
 ==========================
-Source:     inventory.json
+Source:     sbom.json
 Host:       server01
 Packages:   1523 checked (rpm: 1200, dpkg: 320, pip: 280, npm: 43)
 

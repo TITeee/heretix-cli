@@ -1,9 +1,6 @@
 package inventory
 
 import (
-	"encoding/json"
-	"fmt"
-	"os"
 	"time"
 )
 
@@ -102,31 +99,6 @@ func New(hostname string, osInfo OSInfo) *Inventory {
 		OS:        osInfo,
 		Packages:  []Package{},
 	}
-}
-
-// WriteToFile writes the inventory as JSON to the specified path.
-func (inv *Inventory) WriteToFile(path string) error {
-	data, err := json.MarshalIndent(inv, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal inventory: %w", err)
-	}
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		return fmt.Errorf("write inventory file: %w", err)
-	}
-	return nil
-}
-
-// ReadFromFile reads an inventory JSON from the specified path.
-func ReadFromFile(path string) (*Inventory, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read inventory file: %w", err)
-	}
-	var inv Inventory
-	if err := json.Unmarshal(data, &inv); err != nil {
-		return nil, fmt.Errorf("parse inventory file: %w", err)
-	}
-	return &inv, nil
 }
 
 // Deduplicate removes duplicate packages (same name+version+ecosystem).

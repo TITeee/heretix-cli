@@ -1,9 +1,6 @@
 package inventory
 
 import (
-	"os"
-	"path/filepath"
-	"reflect"
 	"testing"
 	"time"
 )
@@ -25,47 +22,6 @@ func TestNew(t *testing.T) {
 	}
 	if _, err := time.Parse(time.RFC3339, inv.ScannedAt); err != nil {
 		t.Errorf("ScannedAt = %q is not a valid RFC3339 timestamp: %v", inv.ScannedAt, err)
-	}
-}
-
-func TestWriteToFileThenReadFromFile_RoundTrips(t *testing.T) {
-	original := &Inventory{
-		Version:  "1.0",
-		Hostname: "host1",
-		OS:       OSInfo{ID: "alpine", VersionID: "3.19"},
-		Packages: []Package{
-			{Name: "curl", Version: "8.5.0", Ecosystem: "apk", Source: "apk", Direct: BoolPtr(true)},
-		},
-	}
-
-	path := filepath.Join(t.TempDir(), "inventory.json")
-	if err := original.WriteToFile(path); err != nil {
-		t.Fatalf("WriteToFile returned an error: %v", err)
-	}
-
-	got, err := ReadFromFile(path)
-	if err != nil {
-		t.Fatalf("ReadFromFile returned an error: %v", err)
-	}
-	if !reflect.DeepEqual(original, got) {
-		t.Errorf("round-tripped inventory differs:\ngot:  %+v\nwant: %+v", got, original)
-	}
-}
-
-func TestReadFromFile_MissingFileReturnsError(t *testing.T) {
-	_, err := ReadFromFile(filepath.Join(t.TempDir(), "does-not-exist.json"))
-	if err == nil {
-		t.Fatal("expected an error for a missing file")
-	}
-}
-
-func TestReadFromFile_InvalidJSONReturnsError(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "bad.json")
-	if err := os.WriteFile(path, []byte("not json"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ReadFromFile(path); err == nil {
-		t.Fatal("expected an error for invalid JSON")
 	}
 }
 

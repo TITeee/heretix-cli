@@ -9,9 +9,9 @@ import (
 )
 
 var submitCmd = &cobra.Command{
-	Use:   "submit <inventory.json>",
+	Use:   "submit <sbom.json>",
 	Short: "Submit a dependency snapshot to GitHub Dependency Graph",
-	Long: `Reads an inventory JSON and submits it to the GitHub Dependency Submission API.
+	Long: `Reads a CycloneDX SBOM written by collect and submits it to the GitHub Dependency Submission API.
 Once submitted, Dependabot can generate vulnerability alerts based on the detected packages.
 
 Environment variables (used when the corresponding flag is not set):
@@ -62,9 +62,9 @@ func runSubmit(cmd *cobra.Command, args []string) error {
 	ref := firstNonEmpty(submitRef, os.Getenv("GITHUB_REF"), "refs/heads/main")
 	jobID := firstNonEmpty(submitJobID, os.Getenv("GITHUB_RUN_ID"), submitCorrelator)
 
-	inv, err := loadInventoryFile(args[0])
+	inv, err := loadSBOM(args[0])
 	if err != nil {
-		return fmt.Errorf("read inventory: %w", err)
+		return fmt.Errorf("read SBOM: %w", err)
 	}
 
 	snapshot := depgraph.BuildSnapshot(inv, sha, ref, submitCorrelator, jobID, rootCmd.Version)

@@ -111,6 +111,8 @@ heretix-cli detect --scan-path /srv/myapp
 
 すべてのオプション、出力形式、そのほかの使用例は [docs/commands.md](docs/commands.md)（英語）を参照してください。
 
+> **heretix 独自のインベントリ JSON は廃止しました。** `collect --format json` と `inventory.json` ファイルは使えなくなりました。`collect` は CycloneDX SBOM だけを出力し、ほかのコマンドもそれだけを読み込みます。古い `inventory.json` は、`collect` を実行し直して置き換えてください。なお、`check`、`scan`、`detect` のレポート形式を選ぶ `--format json` は、これとは別のもので、引き続き使えます。
+
 ## CI での利用
 
 `check`、`scan`、`detect` は、何か検出すると終了コード `1` を返します。そのため、パイプラインのステップはそれだけで失敗扱いになります。

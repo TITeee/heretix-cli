@@ -18,9 +18,9 @@ import (
 const defaultAPIURL = "http://localhost:5000"
 
 var checkCmd = &cobra.Command{
-	Use:   "check <file.json>",
-	Short: "Check inventory JSON against the vulnerability API",
-	Long:  `Reads an inventory JSON file and queries the vulnerability API to find known vulnerabilities.`,
+	Use:   "check <sbom.json>",
+	Short: "Check an SBOM against heretix-api",
+	Long:  `Reads a CycloneDX SBOM written by collect and queries heretix-api for known vulnerabilities in its packages.`,
 	Args:  cobra.ExactArgs(1),
 	RunE:  runCheck,
 }
@@ -60,7 +60,7 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	}
 
 	filePath := args[0]
-	inv, err := loadInventoryFile(filePath)
+	inv, err := loadSBOM(filePath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: cannot read %s: %v\n", filePath, err)
 		os.Exit(2)

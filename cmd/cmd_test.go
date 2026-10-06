@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -13,10 +14,10 @@ import (
 )
 
 // withCollectFlags temporarily sets the package-level collect* flag
-// variables that resolveOutputPath/writeCollectOutput read, restoring the
-// previous values afterward. These are Cobra flag targets (set by flag
-// parsing in real usage), not function parameters, so tests must manage
-// them directly rather than passing arguments.
+// variables that resolveOutputPath reads, restoring the previous values
+// afterward. These are Cobra flag targets (set by flag parsing in real
+// usage), not function parameters, so tests must manage them directly
+// rather than passing arguments.
 func withCollectFlags(t *testing.T, output, name, scanPath string) {
 	t.Helper()
 	prevOutput, prevName, prevScanPath := collectOutput, collectName, collectScanPath
@@ -28,121 +29,88 @@ func withCollectFlags(t *testing.T, output, name, scanPath string) {
 
 func TestResolveOutputPath(t *testing.T) {
 	tests := map[string]struct {
-		output, name, scanPath, format string
-		want                           string
+		output, name, scanPath string
+		want                   string
 	}{
 		"--output wins over everything else": {
-			output: "custom.json", name: "myapp", scanPath: "/var/lib", format: "cyclonedx",
+			output: "custom.json", name: "myapp", scanPath: "/var/lib",
 			want: "custom.json",
 		},
 		"--name is used when --output is not set": {
-			name: "myapp", scanPath: "/var/lib", format: "cyclonedx",
+			name: "myapp", scanPath: "/var/lib",
 			want: "myapp.json",
 		},
 		"scan-path basename is used when neither --output nor --name is set": {
-			scanPath: "/var/lib", format: "cyclonedx",
-			want: "lib.json",
+			scanPath: "/var/lib",
+			want:     "lib.json",
 		},
-		"a root scan-path falls back to the format default (cyclonedx)": {
-			scanPath: "/", format: "cyclonedx",
-			want: "sbom.json",
-		},
-		"a root scan-path falls back to the format default (json)": {
-			scanPath: "/", format: "json",
-			want: "inventory.json",
+		"a root scan-path falls back to sbom.json": {
+			scanPath: "/",
+			want:     "sbom.json",
 		},
 		"a Windows drive root is treated as a root path too": {
-			scanPath: `C:\`, format: "cyclonedx",
-			want: "sbom.json",
+			scanPath: `C:\`,
+			want:     "sbom.json",
 		},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			withCollectFlags(t, tc.output, tc.name, tc.scanPath)
-			got := resolveOutputPath(tc.format)
-			if got != tc.want {
-				t.Errorf("resolveOutputPath(%q) = %q, want %q", tc.format, got, tc.want)
+			if got := resolveOutputPath(); got != tc.want {
+				t.Errorf("resolveOutputPath() = %q, want %q", got, tc.want)
 			}
 		})
 	}
 }
 
-func TestWriteCollectOutput(t *testing.T) {
+func TestWriteSBOM(t *testing.T) {
 	inv := &inventory.Inventory{
 		Hostname: "host1",
 		Packages: []inventory.Package{{Name: "curl", Version: "8.5.0", Ecosystem: "apk"}},
 	}
-
-	t.Run("cyclonedx format writes a valid CycloneDX document", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "out.json")
-		if err := writeCollectOutput(inv, path, "cyclonedx"); err != nil {
-			t.Fatalf("writeCollectOutput returned an error: %v", err)
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("could not read output file: %v", err)
-		}
-		var probe struct {
-			BOMFormat string `json:"bomFormat"`
-		}
-		if err := json.Unmarshal(data, &probe); err != nil {
-			t.Fatalf("output is not valid JSON: %v", err)
-		}
-		if probe.BOMFormat != "CycloneDX" {
-			t.Errorf("bomFormat = %q, want %q", probe.BOMFormat, "CycloneDX")
-		}
-	})
-
-	t.Run("json format writes the legacy inventory document", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "out.json")
-		if err := writeCollectOutput(inv, path, "json"); err != nil {
-			t.Fatalf("writeCollectOutput returned an error: %v", err)
-		}
-		got, err := inventory.ReadFromFile(path)
-		if err != nil {
-			t.Fatalf("could not read output file back as an inventory: %v", err)
-		}
-		if got.Hostname != "host1" || len(got.Packages) != 1 {
-			t.Errorf("unexpected round-tripped inventory: %+v", got)
-		}
-	})
+	path := filepath.Join(t.TempDir(), "out.json")
+	if err := writeSBOM(inv, path); err != nil {
+		t.Fatalf("writeSBOM returned an error: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("could not read output file: %v", err)
+	}
+	var probe struct {
+		BOMFormat string `json:"bomFormat"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	if probe.BOMFormat != "CycloneDX" {
+		t.Errorf("bomFormat = %q, want %q", probe.BOMFormat, "CycloneDX")
+	}
 }
 
-func TestLoadInventoryFile(t *testing.T) {
-	t.Run("loads a legacy heretix inventory JSON file", func(t *testing.T) {
-		original := &inventory.Inventory{
-			Hostname: "host1",
-			Packages: []inventory.Package{{Name: "curl", Version: "8.5.0", Ecosystem: "apk"}},
-		}
-		path := filepath.Join(t.TempDir(), "inventory.json")
-		if err := original.WriteToFile(path); err != nil {
+func TestLoadSBOM(t *testing.T) {
+	write := func(t *testing.T, content string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "in.json")
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 			t.Fatal(err)
 		}
+		return path
+	}
 
-		got, err := loadInventoryFile(path)
-		if err != nil {
-			t.Fatalf("loadInventoryFile returned an error: %v", err)
-		}
-		if got.Hostname != "host1" || len(got.Packages) != 1 || got.Packages[0].Name != "curl" {
-			t.Errorf("unexpected inventory: %+v", got)
-		}
-	})
-
-	t.Run("loads a heretix-generated CycloneDX SBOM via the bomFormat probe", func(t *testing.T) {
+	t.Run("loads a heretix-generated CycloneDX SBOM", func(t *testing.T) {
 		original := &inventory.Inventory{
 			Hostname: "host1",
 			OS:       inventory.OSInfo{ID: "alpine", VersionID: "3.19"},
 			Packages: []inventory.Package{{Name: "curl", Version: "8.5.0", Ecosystem: "apk"}},
 		}
-		bom := sbom.GenerateCycloneDX(original, "0.0.0-test")
 		path := filepath.Join(t.TempDir(), "sbom.json")
-		if err := sbom.WriteToFile(bom, path); err != nil {
+		if err := sbom.WriteToFile(sbom.GenerateCycloneDX(original, "0.0.0-test"), path); err != nil {
 			t.Fatal(err)
 		}
 
-		got, err := loadInventoryFile(path)
+		got, err := loadSBOM(path)
 		if err != nil {
-			t.Fatalf("loadInventoryFile returned an error: %v", err)
+			t.Fatalf("loadSBOM returned an error: %v", err)
 		}
 		found := false
 		for _, p := range got.Packages {
@@ -155,18 +123,30 @@ func TestLoadInventoryFile(t *testing.T) {
 		}
 	})
 
+	// The heretix inventory JSON older versions of collect wrote is no longer
+	// read; it must be named as such, so the user knows to re-run collect.
+	t.Run("rejects a heretix inventory JSON with a dedicated error", func(t *testing.T) {
+		path := write(t, `{"version":"1.0","hostname":"host1","packages":[{"name":"curl","version":"8.5.0","ecosystem":"apk"}]}`)
+		if _, err := loadSBOM(path); !errors.Is(err, errInventoryJSON) {
+			t.Errorf("loadSBOM error = %v, want errInventoryJSON", err)
+		}
+	})
+
+	t.Run("rejects JSON that is not a CycloneDX SBOM", func(t *testing.T) {
+		path := write(t, `{"hello":"world"}`)
+		if _, err := loadSBOM(path); err == nil || errors.Is(err, errInventoryJSON) {
+			t.Errorf("loadSBOM error = %v, want a not-a-CycloneDX-SBOM error", err)
+		}
+	})
+
 	t.Run("returns an error for a missing file", func(t *testing.T) {
-		if _, err := loadInventoryFile(filepath.Join(t.TempDir(), "missing.json")); err == nil {
+		if _, err := loadSBOM(filepath.Join(t.TempDir(), "missing.json")); err == nil {
 			t.Error("expected an error for a missing file")
 		}
 	})
 
 	t.Run("returns an error for invalid JSON", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "bad.json")
-		if err := os.WriteFile(path, []byte("not json"), 0600); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := loadInventoryFile(path); err == nil {
+		if _, err := loadSBOM(write(t, "not json")); err == nil {
 			t.Error("expected an error for invalid JSON")
 		}
 	})

@@ -39,7 +39,7 @@ The table below shows which metadata fields are populated for each lockfile sour
 | `uv.lock` | ✓ | ✓ | ✓ | ✓ | △ ⁵ | — |
 | `go.mod` (parsed, no `go` binary) | △ declared only | ✓ | — | — | △ ¹¹ | — |
 | `go.mod` via `go list` (`go` binary available) | ✓ incl. transitive | ✓ ² | ✓ ² | — | △ ¹¹ | — |
-| Go binaries (image scans) | ✓ incl. transitive + `stdlib` | — | — | △ ¹⁸ | — | △ ¹⁷ |
+| Go binaries (image scans) | ✓ incl. transitive + `stdlib` | — | — | — ¹⁸ | — | △ ¹⁷ |
 | PyPI `site-packages` (`*.dist-info`) | ✓ | — | ✓ ¹⁹ | — | ✓ | △ ¹⁷ |
 | `composer.lock` | ✓ | △ ³ | ✓ | — | ✓ | ✓ ¹⁴ |
 | `pom.xml` (mvn command) | ✓ incl. transitive | ✓ | — | — | △ ⁶ | ✓ ¹⁵ |
@@ -68,7 +68,7 @@ The table below shows which metadata fields are populated for each lockfile sour
 ¹⁵ Maven and Gradle's build-file parsing paths exclude `scope=test` (Maven) / test-only Gradle configurations outright rather than tagging them, so no dev-only package reaches the output at all — filtering instead of tagging, but the same practical result.  
 ¹⁶ `scope: excluded` for OS packages marks kernel headers and build toolchain, derived from the source package each binary package was built from — see [Non-runtime packages](package-detection.md#non-runtime-packages).  
 ¹⁷ `scope: excluded` is set only for a package an OS package installed (`heretix:category: os-managed`) — see [OS-managed language packages](package-detection.md#os-managed-language-packages). This applies to every language collector, not just these rows.  
-¹⁸ Each module's `go.sum`-style hash (`h1:...`) is recorded in the heretix inventory JSON. CycloneDX has no algorithm for that format, so it is not written to `components[].hashes`.  
+¹⁸ CycloneDX has no algorithm for Go's `go.sum`-style hash (`h1:...`), so it is not written to `components[].hashes`.  
 ¹⁹ Resolved from each package's `Requires-Dist` headers against the other packages installed in the same `site-packages` directory; a requirement not installed there (an extra, a platform-specific dependency) is omitted.
 
 `deps` PURLs, `integrity` hashes, and `license` information are carried through to the CycloneDX `bom.dependencies`, `components[].hashes`, and `components[].licenses` fields respectively. A `license` string that is a real SPDX license ID or expression (e.g. npm's and Composer's, which are already SPDX-shaped) is written to `license.id`/`license.expression`; anything else — rpm's own "GPLv2+ and MIT"-style syntax, dpkg copyright free text, and the like — goes to `license.name` instead, since only a real SPDX id/expression may occupy those two fields per the CycloneDX spec.
