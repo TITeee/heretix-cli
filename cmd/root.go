@@ -30,6 +30,20 @@ func Execute() {
 	}
 }
 
+// resolveAPIKey returns the API key from the flag, else HERETIX_API_KEY.
+// heretix-api rejects every request without a key, so check/scan call this
+// before any work: a missing key then fails at once instead of after a
+// collection that can take minutes.
+func resolveAPIKey(flagValue string) (string, error) {
+	if flagValue != "" {
+		return flagValue, nil
+	}
+	if k := os.Getenv("HERETIX_API_KEY"); k != "" {
+		return k, nil
+	}
+	return "", fmt.Errorf("no API key: set --api-key or HERETIX_API_KEY (heretix-api rejects requests without one)")
+}
+
 // isAuthError reports whether any error message indicates a 401 response.
 func isAuthError(errs []string) bool {
 	for _, e := range errs {

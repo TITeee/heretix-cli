@@ -53,7 +53,7 @@ heretix-cli check sbom.json --format json > results.json
 | Flag | Default | Description |
 |---|---|---|
 | `--api-url` | `http://localhost:5000` | heretix-api URL |
-| `--api-key` | (none) | API authentication key (can also be set via `HERETIX_API_KEY` env var) |
+| `--api-key` | (none) | **Required.** heretix-api key; `HERETIX_API_KEY` is used when the flag is omitted. With neither set, `check`/`scan` stop with exit code 2 before doing any work, since heretix-api rejects every request without a key |
 | `--format` | `table` | Output format: `table` / `json` |
 | `--severity` | `0.0` | Minimum CVSS score threshold. A vulnerability with a severity rating but no CVSS score is kept if its rating could reach the threshold (CRITICAL up to 10.0, HIGH up to 8.9, MEDIUM up to 6.9, LOW up to 3.9) |
 | `--concurrency` | `10` | Number of concurrent API requests |

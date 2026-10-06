@@ -53,6 +53,12 @@ func runCheck(cmd *cobra.Command, args []string) error {
 		log.SetFlags(log.Ltime | log.Lshortfile)
 	}
 
+	apiKey, err := resolveAPIKey(checkAPIKey)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(2)
+	}
+
 	filePath := args[0]
 	inv, err := loadInventoryFile(filePath)
 	if err != nil {
@@ -69,11 +75,6 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	defer cancel()
 
 	fmt.Fprintf(os.Stderr, "Checking %d packages against %s...\n", len(inv.Packages), checkAPIURL)
-
-	apiKey := checkAPIKey
-	if apiKey == "" {
-		apiKey = os.Getenv("HERETIX_API_KEY")
-	}
 
 	opts := checker.Options{
 		APIURL:      checkAPIURL,

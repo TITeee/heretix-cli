@@ -67,6 +67,12 @@ func runScan(cmd *cobra.Command, args []string) error {
 		log.SetFlags(log.Ltime | log.Lshortfile)
 	}
 
+	apiKey, err := resolveAPIKey(scanAPIKey)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(2)
+	}
+
 	timeout, err := time.ParseDuration(scanTimeout)
 	if err != nil {
 		return fmt.Errorf("invalid timeout %q: %w", scanTimeout, err)
@@ -92,11 +98,6 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "Collected %d packages\n", len(inv.Packages))
 	fmt.Fprintf(os.Stderr, "Checking against %s...\n", scanAPIURL)
-
-	apiKey := scanAPIKey
-	if apiKey == "" {
-		apiKey = os.Getenv("HERETIX_API_KEY")
-	}
 
 	opts := checker.Options{
 		APIURL:      scanAPIURL,

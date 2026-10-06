@@ -78,7 +78,7 @@ GOOS=windows GOARCH=amd64 go build -o heretix-cli.exe .
 
 ## クイックスタート
 
-`check` と `scan` を使うには、heretix-api が動いている必要があります。heretix-api の[クイックスタート](https://github.com/TITeee/heretix-api/blob/main/README.ja.md)を参照してください。接続先は標準で `http://localhost:5000`（heretix-api のクイックスタートどおりに構築した場合の URL）です。別のホストにある場合は `--api-url` で指定します。API キーは `--api-key` オプションか、環境変数 `HERETIX_API_KEY` で渡します。
+`check` と `scan` を使うには、heretix-api が動いている必要があります。heretix-api の[クイックスタート](https://github.com/TITeee/heretix-api/blob/main/README.ja.md)を参照してください。接続先は標準で `http://localhost:5000`（heretix-api のクイックスタートどおりに構築した場合の URL）です。別のホストにある場合は `--api-url` で指定します。API キーは必須で、`--api-key` オプションか環境変数 `HERETIX_API_KEY` で渡します。指定が無い場合は、スキャンを始める前にエラーで終了します。
 
 ```bash
 export HERETIX_API_KEY=<API キー>

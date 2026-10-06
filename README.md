@@ -78,7 +78,7 @@ GOOS=windows GOARCH=amd64 go build -o heretix-cli.exe .
 
 ## Quick start
 
-`check` and `scan` need a running heretix-api: see its [quick start](https://github.com/TITeee/heretix-api#quick-start). They connect to `http://localhost:5000` by default, where that quick start puts it; use `--api-url` for another host. Pass its API key with `--api-key` or the `HERETIX_API_KEY` environment variable.
+`check` and `scan` need a running heretix-api: see its [quick start](https://github.com/TITeee/heretix-api#quick-start). They connect to `http://localhost:5000` by default, where that quick start puts it; use `--api-url` for another host. Pass its API key, which is required, with `--api-key` or the `HERETIX_API_KEY` environment variable; without one they stop before scanning anything.
 
 ```bash
 export HERETIX_API_KEY=<your key>

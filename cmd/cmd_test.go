@@ -248,3 +248,24 @@ func TestScanPathDefaultsAgree(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveAPIKey(t *testing.T) {
+	t.Run("flag wins over the environment", func(t *testing.T) {
+		t.Setenv("HERETIX_API_KEY", "from-env")
+		if got, err := resolveAPIKey("from-flag"); err != nil || got != "from-flag" {
+			t.Errorf("resolveAPIKey = %q, %v; want from-flag", got, err)
+		}
+	})
+	t.Run("falls back to HERETIX_API_KEY", func(t *testing.T) {
+		t.Setenv("HERETIX_API_KEY", "from-env")
+		if got, err := resolveAPIKey(""); err != nil || got != "from-env" {
+			t.Errorf("resolveAPIKey = %q, %v; want from-env", got, err)
+		}
+	})
+	t.Run("neither set is an error", func(t *testing.T) {
+		t.Setenv("HERETIX_API_KEY", "")
+		if _, err := resolveAPIKey(""); err == nil {
+			t.Error("resolveAPIKey with no flag and no env returned no error")
+		}
+	})
+}
