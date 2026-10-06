@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/TITeee/heretix-cli/checker"
 	"github.com/TITeee/heretix-cli/detector"
@@ -85,9 +86,7 @@ func buildRows(inv *inventory.Inventory, result *checker.CheckResult, opts Optio
 		if r.Location != "" {
 			sourceDisp = r.Location
 		}
-		if len(sourceDisp) > 20 {
-			sourceDisp = sourceDisp[:17] + "..."
-		}
+		sourceDisp = truncate(sourceDisp, 20)
 
 		for _, v := range r.Vulnerabilities {
 			vulnID := v.ExternalID
@@ -301,10 +300,7 @@ func PrintTableWithOptions(w io.Writer, inv *inventory.Inventory, result *checke
 			pkgDisplay = fmt.Sprintf("%s(%d pkgs)", r.sourcePkg, r.extraPkgs+1)
 			hasCollapsed = true
 		}
-		summary := r.summary
-		if len(summary) > 40 {
-			summary = summary[:37] + "..."
-		}
+		summary := truncate(r.summary, 40)
 		cvssDisplay := "-"
 		if r.cvss > 0 {
 			cvssDisplay = fmt.Sprintf("%.1f", r.cvss)
@@ -478,13 +474,24 @@ func PrintFindings(w io.Writer, findings []detector.Finding) {
 		return
 	}
 
+	// TYPE and FILE are sized to their longest value rather than truncated:
+	// the file path is what a reviewer acts on, so cutting it would lose the
+	// one thing the row is for, and fixed widths misaligned every row whose
+	// type ("malicious-install") or path ran past them.
+	typeW, fileW := len("TYPE"), len("FILE")
+	for _, f := range findings {
+		typeW = max(typeW, utf8.RuneCountInString(f.Type))
+		fileW = max(fileW, utf8.RuneCountInString(f.File))
+	}
+	rowFmt := fmt.Sprintf("%%s %%-%ds %%-%ds %%4s  %%-8s  %%s\n", typeW, fileW)
+
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Local Security Findings")
 	fmt.Fprintln(w, "=======================")
-	fmt.Fprintf(w, "  %-14s %-35s %4s  %-8s  %s\n", "TYPE", "FILE", "LINE", "SEVERITY", "DETAIL")
-	fmt.Fprintf(w, "  %-14s %-35s %4s  %-8s  %s\n",
-		strings.Repeat("─", 13),
-		strings.Repeat("─", 34),
+	fmt.Fprintf(w, rowFmt, " ", "TYPE", "FILE", "LINE", "SEVERITY", "DETAIL")
+	fmt.Fprintf(w, rowFmt, " ",
+		strings.Repeat("─", typeW),
+		strings.Repeat("─", fileW),
 		strings.Repeat("─", 4),
 		strings.Repeat("─", 8),
 		strings.Repeat("─", 20))
@@ -511,15 +518,7 @@ func PrintFindings(w io.Writer, findings []detector.Finding) {
 			lineStr = fmt.Sprintf("%d", f.Line)
 		}
 
-		fileDisplay := f.File
-
-		detail := f.Detail
-		if len(detail) > 60 {
-			detail = detail[:57] + "..."
-		}
-
-		fmt.Fprintf(w, "%s %-14s %-35s %4s  %-8s  %s\n",
-			prefix, f.Type, fileDisplay, lineStr, f.Severity, detail)
+		fmt.Fprintf(w, rowFmt, prefix, f.Type, f.File, lineStr, f.Severity, truncate(f.Detail, 60))
 	}
 
 	fmt.Fprintln(w)
@@ -562,9 +561,14 @@ func PrintFindingsJSON(w io.Writer, findings []detector.Finding) error {
 	return enc.Encode(out)
 }
 
+// truncate shortens s to at most max characters, ending in "...". It counts
+// runes, not bytes, so it never splits a multi-byte character (an em dash in
+// a finding's detail, non-ASCII text in an advisory summary) — and runes are
+// also what fmt's %-Ns padding counts, so truncated columns stay aligned.
 func truncate(s string, max int) string {
-	if len(s) <= max {
+	r := []rune(s)
+	if len(r) <= max {
 		return s
 	}
-	return s[:max-3] + "..."
+	return string(r[:max-3]) + "..."
 }

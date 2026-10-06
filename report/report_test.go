@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/TITeee/heretix-cli/checker"
 	"github.com/TITeee/heretix-cli/detector"
@@ -20,6 +21,8 @@ func TestTruncate(t *testing.T) {
 		"shorter than max is unchanged":                 {"abc", 10, "abc"},
 		"exactly max is unchanged":                      {"abcde", 5, "abcde"},
 		"longer than max is truncated with an ellipsis": {"abcdefghij", 5, "ab..."},
+		"never splits a multi-byte character":           {"abc—defghij", 7, "abc—..."},
+		"counts characters, not bytes":                  {"脆弱性あり", 5, "脆弱性あり"},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -27,7 +30,10 @@ func TestTruncate(t *testing.T) {
 			if got != tc.want {
 				t.Errorf("truncate(%q, %d) = %q, want %q", tc.s, tc.max, got, tc.want)
 			}
-			if len(got) > tc.max {
+			if !utf8.ValidString(got) {
+				t.Errorf("truncate(%q, %d) = %q, not valid UTF-8", tc.s, tc.max, got)
+			}
+			if utf8.RuneCountInString(got) > tc.max {
 				t.Errorf("truncate(%q, %d) = %q, longer than max", tc.s, tc.max, got)
 			}
 		})
@@ -750,4 +756,40 @@ func countRowsContaining(out, marker string) int {
 		}
 	}
 	return n
+}
+
+// TestPrintFindings_ColumnsAlignForLongTypesAndPaths guards the fixed-width
+// layout that misaligned every row whose type ("malicious-install", 17
+// chars) or file path ran past 14 / 35 characters: the SEVERITY column must
+// start at the same position on the header and on every finding row.
+func TestPrintFindings_ColumnsAlignForLongTypesAndPaths(t *testing.T) {
+	var buf bytes.Buffer
+	PrintFindings(&buf, []detector.Finding{
+		{Type: "malicious-install", Severity: "MEDIUM", File: `C:\dev\app\node_modules\.pnpm\esbuild@0.28.1\node_modules\esbuild\install.js`, Detail: "postinstall runs install.js"},
+		{Type: "cicd-poisoning", Severity: "LOW", File: `C:\dev\app\.github\workflows\ci.yml`, Line: 15, Detail: "third-party action pinned to a tag"},
+	})
+
+	want := -1
+	for _, l := range strings.Split(buf.String(), "\n") {
+		var sev string
+		switch {
+		case strings.Contains(l, "SEVERITY"):
+			sev = "SEVERITY"
+		case strings.Contains(l, "install.js"):
+			sev = "MEDIUM"
+		case strings.Contains(l, "ci.yml"):
+			sev = "LOW"
+		default:
+			continue
+		}
+		col := utf8.RuneCountInString(l[:strings.Index(l, sev)])
+		if want == -1 {
+			want = col
+		} else if col != want {
+			t.Errorf("SEVERITY column starts at %d on %q, want %d (as on the header)", col, l, want)
+		}
+	}
+	if want == -1 {
+		t.Fatalf("no table rows found in output:\n%s", buf.String())
+	}
 }
