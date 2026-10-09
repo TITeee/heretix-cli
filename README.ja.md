@@ -66,7 +66,59 @@ OS パッケージのデータベースは、Linux ホストで読み取れる�
 
 ## インストール
 
-単一の静的バイナリをビルドし（Go 1.25 以上）、対象のマシンにコピーするだけで使えます。実行時に必要なものはありません。
+heretix-cli は、実行時に必要なものが何もない単一の静的バイナリです。リリースをダウンロードするか、自分でビルドします。
+
+### リリースをダウンロードする
+
+各[リリース](https://github.com/TITeee/heretix-cli/releases)には、プラットフォームごとのアーカイブ、`checksums.txt`、およびその署名が付いています。
+
+| プラットフォーム | アーカイブ |
+|---|---|
+| Linux x86-64 | `heretix-cli_linux_amd64.tar.gz` |
+| Linux ARM64 | `heretix-cli_linux_arm64.tar.gz` |
+| Windows x86-64 | `heretix-cli_windows_amd64.zip` |
+
+Linux の場合:
+
+```bash
+BASE=https://github.com/TITeee/heretix-cli/releases/latest/download
+curl -fsSLO $BASE/heretix-cli_linux_amd64.tar.gz
+curl -fsSLO $BASE/checksums.txt
+sha256sum --ignore-missing -c checksums.txt        # → heretix-cli_linux_amd64.tar.gz: OK
+tar xzf heretix-cli_linux_amd64.tar.gz heretix-cli
+sudo install -m 0755 heretix-cli /usr/local/bin/
+heretix-cli --version
+```
+
+Windows（PowerShell）の場合:
+
+```powershell
+$base = "https://github.com/TITeee/heretix-cli/releases/latest/download"
+Invoke-WebRequest "$base/heretix-cli_windows_amd64.zip" -OutFile heretix-cli_windows_amd64.zip
+Invoke-WebRequest "$base/checksums.txt" -OutFile checksums.txt
+(Get-FileHash heretix-cli_windows_amd64.zip -Algorithm SHA256).Hash   # checksums.txt の該当行と照合する
+Expand-Archive heretix-cli_windows_amd64.zip -DestinationPath .
+.\heretix-cli.exe --version
+```
+
+特定のバージョンをインストールする場合は、`latest/download` を `download/v0.3.0`（タグ名）に置き換えます。
+
+チェックサムで確認できるのは、ダウンロードしたファイルが壊れていないことだけです。このリポジトリのリリースワークフローが作ったものであることを確認するには、[cosign](https://github.com/sigstore/cosign) で `checksums.txt` の署名を検証します（キーレス署名なので、取得すべき鍵はありません）。
+
+```bash
+curl -fsSLO $BASE/checksums.txt.sig
+curl -fsSLO $BASE/checksums.txt.pem
+cosign verify-blob checksums.txt \
+  --signature checksums.txt.sig --certificate checksums.txt.pem \
+  --certificate-identity-regexp 'https://github.com/TITeee/heretix-cli/.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com   # → Verified OK
+```
+
+新しい cosign では、`--signature` と `--certificate` について非推奨の警告が出ますが、検証自体は問題なく行えます。
+
+### ソースからビルドする
+
+Go 1.25 以上が必要です。
 
 ```bash
 # Linux 向け
