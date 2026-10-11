@@ -57,10 +57,16 @@ heretix-cli check sbom.json --format json > results.json
 | `--api-key` | (none) | **Required.** heretix-api key; `HERETIX_API_KEY` is used when the flag is omitted. With neither set, `check`/`scan` stop with exit code 2 before doing any work, since heretix-api rejects every request without a key |
 | `--format` | `table` | Output format: `table` / `json` |
 | `--severity` | `0.0` | Minimum CVSS score threshold. A vulnerability with a severity rating but no CVSS score is kept if its rating could reach the threshold (CRITICAL up to 10.0, HIGH up to 8.9, MEDIUM up to 6.9, LOW up to 3.9) |
-| `--concurrency` | `10` | Number of concurrent API requests |
+| `--concurrency` | `2` | Batch searches sent at once (1,000 packages each). heretix-api runs 2 at once by default and refuses the rest with 429, so a higher value only makes the extra ones wait; raise it together with `BATCH_SEARCH_MAX_CONCURRENT` on heretix-api |
 | `--timeout` | `30s` | Per-request timeout |
 | `--runtime-only` | `false` | Report only runtime packages (hide kernel header and build toolchain findings) |
 | `--verbose` | `false` | Enable verbose logging |
+
+### When heretix-api refuses a search
+
+heretix-api limits how many batch searches run at once, and how many one client address may send per minute; past a limit it answers `429` with a `Retry-After`. `check` and `scan` wait that long (5 seconds if none is given, never less than 1 or more than 60) and send the batch again, up to 5 attempts in all. The wait is logged, so a slow scan is not mistaken for a hung one. Other failures (a wrong key, a server error) are not retried.
+
+If a batch is still refused after that, its packages go unchecked, and the findings in them are missing. `check` and `scan` say so before the report (`N of M packages could not be checked`), list the errors after it, and **exit with code 2** even when the rest turned up findings, so an incomplete result is never taken for a clean or a complete one. With `--format json`, `summary.uncheckedPackages` is the number of packages not checked (`0` for a complete check).
 
 ## One-shot Scan (`scan`)
 
@@ -249,7 +255,7 @@ Local findings: 6 (1 glassworm, 2 dep-confusion, 1 malicious-install, 1 cicd-poi
 
 Only JSON is written to stdout (includes both vulnerability results and local findings under `localFindings`). Progress logs go to stderr, so pipe processing works cleanly.
 
-Each entry under `results[]` carries `sourcePackage`, `category` (see [Non-runtime packages](package-detection.md#non-runtime-packages)) and `scope` (`excluded` for a dev/test-only dependency, or a non-runtime OS package) so a script can group by source package itself; results keep full per-binary-package granularity rather than the table's collapsed rows. `--runtime-only` drops results on non-runtime packages here too, matching the table and the exit code. `summary.aggregatedFindings` gives the collapsed count (one per source package + vulnerability) without requiring that regrouping.
+Each entry under `results[]` carries `sourcePackage`, `category` (see [Non-runtime packages](package-detection.md#non-runtime-packages)) and `scope` (`excluded` for a dev/test-only dependency, or a non-runtime OS package) so a script can group by source package itself; results keep full per-binary-package granularity rather than the table's collapsed rows. `--runtime-only` drops results on non-runtime packages here too, matching the table and the exit code. `summary.aggregatedFindings` gives the collapsed count (one per source package + vulnerability) without requiring that regrouping, and `summary.uncheckedPackages` the number of packages whose search failed (see [When heretix-api refuses a search](#when-heretix-api-refuses-a-search)).
 
 Each vulnerability carries heretix-api's fix and distro fields as returned (empty string when the API has none):
 
@@ -266,7 +272,7 @@ Each vulnerability carries heretix-api's fix and distro fields as returned (empt
 |---|---|
 | `0` | No vulnerabilities, malware, or local findings (or a successful `collect`, `submit` or `upload`) |
 | `1` | Vulnerabilities, malware, or local security findings found (for CI/CD integration) |
-| `2` | Execution failure |
+| `2` | Execution failure, including a check that could not search every package (see [When heretix-api refuses a search](#when-heretix-api-refuses-a-search)): the findings shown are then incomplete |
 
 ## CI/CD Examples
 

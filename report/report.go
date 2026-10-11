@@ -447,6 +447,10 @@ type jsonSummary struct {
 	// PrintTable would show for the same result and options -- one per
 	// (source package, vulnerability) rather than one per binary package.
 	AggregatedFindings int `json:"aggregatedFindings"`
+	// UncheckedPackages is how many packages were in a batch search that
+	// failed even after retries, so their findings are missing. 0 means the
+	// check was complete.
+	UncheckedPackages int `json:"uncheckedPackages"`
 }
 
 // PrintJSON writes the check result and local findings as JSON to w. Each
@@ -492,7 +496,7 @@ func PrintJSON(w io.Writer, inv *inventory.Inventory, result *checker.CheckResul
 		Hostname:      result.Hostname,
 		Results:       results,
 		Errors:        result.Errors,
-		Summary:       jsonSummary{AggregatedFindings: len(buildRows(inv, result, opts))},
+		Summary:       jsonSummary{AggregatedFindings: len(buildRows(inv, result, opts)), UncheckedPackages: result.Unchecked},
 		LocalFindings: findings,
 	}
 	return enc.Encode(out)

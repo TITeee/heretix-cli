@@ -196,7 +196,7 @@ heretix-cli upload sbom.json   # HERETIX_MANAGEMENT_URL / HERETIX_MANAGEMENT_TOK
 |---|---|
 | `0` | Nothing found (or `collect`, `submit` or `upload` succeeded) |
 | `1` | Vulnerabilities, malware or local security findings found |
-| `2` | The command failed |
+| `2` | The command failed, or a check could not search every package, so its findings are incomplete |
 
 `--severity` sets a minimum CVSS score, `--runtime-only` ignores kernel-header and build-toolchain findings, and `--format json` writes a machine-readable report. More CI examples, including GitHub Actions: [docs/commands.md](docs/commands.md#cicd-examples).
 

@@ -52,7 +52,7 @@ func init() {
 	scanCmd.Flags().StringVar(&scanAPIKey, "api-key", "", "API key for authentication (or set HERETIX_API_KEY)")
 	scanCmd.Flags().StringVar(&scanFormat, "format", "table", "Output format: table / json")
 	scanCmd.Flags().Float64Var(&scanSeverity, "severity", 0.0, "Minimum CVSS score threshold")
-	scanCmd.Flags().IntVar(&scanConcurrency, "concurrency", 10, "Concurrent API requests")
+	scanCmd.Flags().IntVar(&scanConcurrency, "concurrency", checker.DefaultConcurrency, "Concurrent batch searches (heretix-api runs 2 at once by default; more wait and retry)")
 	scanCmd.Flags().StringVar(&scanTimeout, "timeout", "30s", "Per-request timeout")
 	scanCmd.Flags().BoolVar(&scanVerbose, "verbose", false, "Enable verbose logging")
 	scanCmd.Flags().StringVar(&scanImage, "image", "", "Docker image to scan (e.g. nginx:latest, registry.example.com/app:v1)")
@@ -115,15 +115,12 @@ func runScan(cmd *cobra.Command, args []string) error {
 		os.Exit(2)
 	}
 	if len(result.Results) == 0 && len(result.Errors) > 0 {
-		for _, e := range result.Errors {
-			fmt.Fprintf(os.Stderr, "Error: %s\n", e)
-		}
-		if isAuthError(result.Errors) {
-			fmt.Fprintln(os.Stderr, "Authentication failed: please set --api-key or HERETIX_API_KEY.")
-		} else {
-			fmt.Fprintf(os.Stderr, "Please verify --api-url (%s) is correct and the API is running.\n", scanAPIURL)
-		}
+		explainCheckFailure(result, scanAPIURL)
 		os.Exit(2)
+	}
+
+	if w := incompleteWarning(result); w != "" {
+		fmt.Fprintln(os.Stderr, w)
 	}
 
 	scanLabel := scanScanPath
@@ -148,8 +145,8 @@ func runScan(cmd *cobra.Command, args []string) error {
 	// Must respect --runtime-only the same way the table does -- otherwise a
 	// build could fail over a kernel-header CVE that --runtime-only was asked
 	// to ignore.
-	if report.HasFindings(inv, result, reportOpts) || len(localFindings) > 0 {
-		os.Exit(1)
+	if code := checkExitCode(result, report.HasFindings(inv, result, reportOpts), len(localFindings) > 0); code != 0 {
+		os.Exit(code)
 	}
 	return nil
 }

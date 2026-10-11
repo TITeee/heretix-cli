@@ -196,7 +196,7 @@ heretix-cli upload sbom.json   # HERETIX_MANAGEMENT_URL と HERETIX_MANAGEMENT_T
 |---|---|
 | `0` | 何も検出されなかった（`collect`、`submit`、`upload` は正常終了） |
 | `1` | 脆弱性、マルウェア、またはローカル検査での検出があった |
-| `2` | コマンドの実行に失敗した |
+| `2` | コマンドの実行に失敗した、または一部のパッケージを検索できず、検出結果が不完全だった |
 
 `--severity` で CVSS スコアの下限を指定でき、`--runtime-only` を付けるとカーネルヘッダーとビルドツールチェーンの検出を除外します。`--format json` を指定すると、プログラムで扱いやすい JSON で出力します。GitHub Actions を含むそのほかの例は、[docs/commands.md](docs/commands.md#cicd-examples)（英語）を参照してください。
 

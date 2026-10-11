@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -70,6 +72,12 @@ type CheckResult struct {
 	Hostname string          `json:"hostname"`
 	Results  []PackageResult `json:"results"`
 	Errors   []string        `json:"errors,omitempty"`
+
+	// Queried is how many packages were sent to the API, and Unchecked how
+	// many of those sit in a batch that failed even after retries — so
+	// their findings are missing from Results.
+	Queried   int `json:"-"`
+	Unchecked int `json:"-"`
 }
 
 // Options configures the vulnerability checker.
@@ -106,7 +114,7 @@ type batchResponse struct {
 // Check queries the vulnerability API for the given inventory packages.
 func Check(ctx context.Context, inv *inventory.Inventory, opts Options) (*CheckResult, error) {
 	if opts.Concurrency <= 0 {
-		opts.Concurrency = 10
+		opts.Concurrency = DefaultConcurrency
 	}
 	if opts.Timeout <= 0 {
 		opts.Timeout = 30 * time.Second
@@ -146,10 +154,12 @@ func Check(ctx context.Context, inv *inventory.Inventory, opts Options) (*CheckR
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			batchResults, err := sendBatch(ctx, client, opts.APIURL, opts.APIKey, pkgs)
+			batchResults, err := sendBatchWithRetry(ctx, client, opts.APIURL, opts.APIKey, pkgs)
 			mu.Lock()
 			defer mu.Unlock()
+			result.Queried += queryable(pkgs)
 			if err != nil {
+				result.Unchecked += queryable(pkgs)
 				result.Errors = append(result.Errors, fmt.Sprintf("batch request failed: %v", err))
 				if opts.Verbose {
 					log.Printf("[check] batch error: %v", err)
@@ -234,7 +244,7 @@ func sendBatch(ctx context.Context, client *http.Client, apiURL, apiKey string, 
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API returned %d: %s", resp.StatusCode, string(respBody))
+		return nil, &statusError{Status: resp.StatusCode, Body: string(respBody), RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())}
 	}
 
 	var batchResp batchResponse
@@ -243,6 +253,113 @@ func sendBatch(ctx context.Context, client *http.Client, apiURL, apiKey string, 
 	}
 
 	return batchResp.Results, nil
+}
+
+// DefaultConcurrency is how many batch searches run at once when --concurrency
+// isn't given: heretix-api runs at most two at once by default and refuses the
+// rest with 429, so asking for more only makes the extra ones wait and retry.
+const DefaultConcurrency = 2
+
+const (
+	maxBatchAttempts = 5 // the first try plus four retries
+	defaultRetryWait = 5 * time.Second
+	minRetryWait     = time.Second
+	maxRetryWait     = time.Minute
+)
+
+// statusError is a non-200 answer from the API.
+type statusError struct {
+	Status     int
+	Body       string
+	RetryAfter time.Duration // from the Retry-After header; 0 when absent or unreadable
+}
+
+func (e *statusError) Error() string {
+	return fmt.Sprintf("API returned %d: %s", e.Status, e.Body)
+}
+
+// retrySleep waits for d or until ctx is done. A variable so tests needn't wait.
+var retrySleep = func(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// parseRetryAfter reads a Retry-After header: a number of seconds, or an HTTP
+// date. It returns 0 when the header is absent or unreadable.
+func parseRetryAfter(value string, now time.Time) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(value); err == nil {
+		if secs < 0 {
+			return 0
+		}
+		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(value); err == nil {
+		if d := t.Sub(now); d > 0 {
+			return d
+		}
+	}
+	return 0
+}
+
+// retryWait is how long to wait before retrying after d was asked for: the
+// header's value, bounded so a bad one can neither hammer the API nor stall
+// a CI job; defaultRetryWait when there was none.
+func retryWait(asked time.Duration) time.Duration {
+	switch {
+	case asked <= 0:
+		return defaultRetryWait
+	case asked < minRetryWait:
+		return minRetryWait
+	case asked > maxRetryWait:
+		return maxRetryWait
+	}
+	return asked
+}
+
+// sendBatchWithRetry is sendBatch that waits and tries again when the API
+// answers 429 — it refuses a batch search past its concurrency cap or a
+// client's per-minute limit, and says when to come back. Any other failure
+// is final: a 401 won't get better, and a 5xx may have done the work.
+func sendBatchWithRetry(ctx context.Context, client *http.Client, apiURL, apiKey string, pkgs []inventory.Package) ([]struct {
+	Package         string          `json:"package"`
+	Version         string          `json:"version"`
+	Ecosystem       string          `json:"ecosystem"`
+	Vulnerabilities []Vulnerability `json:"vulnerabilities"`
+}, error) {
+	for attempt := 1; ; attempt++ {
+		results, err := sendBatch(ctx, client, apiURL, apiKey, pkgs)
+		var se *statusError
+		if err == nil || !errors.As(err, &se) || se.Status != http.StatusTooManyRequests || attempt == maxBatchAttempts {
+			return results, err
+		}
+		wait := retryWait(se.RetryAfter)
+		log.Printf("API refused a batch search (429); retrying in %s (attempt %d of %d)", wait, attempt+1, maxBatchAttempts)
+		if err := retrySleep(ctx, wait); err != nil {
+			return nil, err
+		}
+	}
+}
+
+// queryable counts the packages sendBatch actually sends: it skips any
+// without a name, version or ecosystem.
+func queryable(pkgs []inventory.Package) int {
+	n := 0
+	for _, p := range pkgs {
+		if p.Name != "" && p.Version != "" && p.Ecosystem != "" {
+			n++
+		}
+	}
+	return n
 }
 
 // chunkPackages splits packages into chunks of the given size.

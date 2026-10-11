@@ -41,7 +41,7 @@ func init() {
 	checkCmd.Flags().StringVar(&checkAPIKey, "api-key", "", "API key for authentication (or set HERETIX_API_KEY)")
 	checkCmd.Flags().StringVar(&checkFormat, "format", "table", "Output format: table / json")
 	checkCmd.Flags().Float64Var(&checkSeverity, "severity", 0.0, "Minimum CVSS score threshold")
-	checkCmd.Flags().IntVar(&checkConcurrency, "concurrency", 10, "Concurrent API requests")
+	checkCmd.Flags().IntVar(&checkConcurrency, "concurrency", checker.DefaultConcurrency, "Concurrent batch searches (heretix-api runs 2 at once by default; more wait and retry)")
 	checkCmd.Flags().StringVar(&checkTimeout, "timeout", "30s", "Per-request timeout")
 	checkCmd.Flags().BoolVar(&checkVerbose, "verbose", false, "Enable verbose logging")
 	checkCmd.Flags().BoolVar(&checkRuntimeOnly, "runtime-only", false, "Report only runtime packages (hide kernel headers and build toolchain findings)")
@@ -92,15 +92,12 @@ func runCheck(cmd *cobra.Command, args []string) error {
 		os.Exit(2)
 	}
 	if len(result.Results) == 0 && len(result.Errors) > 0 {
-		for _, e := range result.Errors {
-			fmt.Fprintf(os.Stderr, "Error: %s\n", e)
-		}
-		if isAuthError(result.Errors) {
-			fmt.Fprintln(os.Stderr, "Authentication failed: please set --api-key or HERETIX_API_KEY.")
-		} else {
-			fmt.Fprintf(os.Stderr, "Please verify --api-url (%s) is correct and the API is running.\n", checkAPIURL)
-		}
+		explainCheckFailure(result, checkAPIURL)
 		os.Exit(2)
+	}
+
+	if w := incompleteWarning(result); w != "" {
+		fmt.Fprintln(os.Stderr, w)
 	}
 
 	reportOpts := report.Options{RuntimeOnly: checkRuntimeOnly}
@@ -117,8 +114,8 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	// Exit code 1 if vulnerabilities found (for CI/CD). Must respect
 	// --runtime-only the same way the table does -- otherwise a build could
 	// fail over a kernel-header CVE that --runtime-only was asked to ignore.
-	if report.HasFindings(inv, result, reportOpts) {
-		os.Exit(1)
+	if code := checkExitCode(result, report.HasFindings(inv, result, reportOpts), false); code != 0 {
+		os.Exit(code)
 	}
 	return nil
 }
