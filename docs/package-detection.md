@@ -43,6 +43,14 @@ The SBOM is unaffected by all of this: every package stays a component (CycloneD
 
 `--runtime-only` also changes `check`/`scan`'s CI/CD exit code (1 when findings remain), not just the table -- a build does not fail over a kernel-header or build-toolchain CVE that `--runtime-only` was asked to ignore.
 
+### On a host, only kernel headers count as non-runtime
+
+The classification above is for container images, where the host's kernel is what runs and a compiler is a leftover. On a host the reverse holds: the installed kernel image and modules (`linux-image-*`, `kernel`, `kernel-core`, ...) are what runs, and a toolchain is there because someone installed it, on a build server, CI runner or developer machine, where its vulnerabilities matter. So for a scan that is not of an image (`collect`, `scan` and `check` without `--image`), only kernel **header** packages (`linux-libc-dev`, `linux-headers-*`, `kernel-headers`, `kernel-devel*`) are tagged non-runtime; the kernel itself, compilers and `-dev`/`-devel` packages are reported like any other package.
+
+The two mistakes cost different amounts: a package wrongly tagged non-runtime gets `scope: excluded`, which heretix-management never scans, so its findings disappear without a trace, whereas one wrongly kept as runtime only adds findings that can be seen and ignored.
+
+> Versions up to 0.3.1 applied the image rules to hosts too, so a host's kernel and build packages came out as `scope: excluded` and heretix-management never scanned them. Upload a new SBOM from 0.3.2 or later to bring them back; the next scan then reports their findings.
+
 ## OS-managed language packages
 
 A distro ships many language libraries as its own packages: `python3-urllib3` installs urllib3's `site-packages` directory, the `nodejs` rpm bundles npm and its dependencies under `/usr/lib/node_modules`, `maven` rpms put jars in `/usr/share/java`, and `delve` installs a Go binary at `/usr/bin/dlv`. The PyPI, npm, Maven and Go-binary collectors find these files as well, and would report the library a second time at its upstream version (`urllib3 1.26.5` next to `python3-urllib3 1.26.5-8.el9_8`). That upstream version does not reflect the fixes the distro backports into its own release, so matching it returns findings the distro has already fixed or rates as not affected, or duplicates of what the OS package's own advisory reports.

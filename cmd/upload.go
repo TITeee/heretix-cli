@@ -45,7 +45,7 @@ func init() {
 	uploadCmd.Flags().StringVar(&uploadURL, "url", "", "heretix-management URL, e.g. https://heretix.example.com (default: $HERETIX_MANAGEMENT_URL)")
 	uploadCmd.Flags().StringVar(&uploadToken, "token", "", "Access token with the import scope (default: $HERETIX_MANAGEMENT_TOKEN)")
 	uploadCmd.Flags().StringVar(&uploadHostname, "hostname", "", "Asset to import into, overriding the SBOM's own hostname")
-	uploadCmd.Flags().StringVar(&uploadDisplayName, "display-name", "", "Asset display name (heretix-management resets it to the hostname on an upload without one)")
+	uploadCmd.Flags().StringVar(&uploadDisplayName, "display-name", "", "Asset display name; without it a new asset is named after its hostname and an existing one keeps its name (older heretix-management versions reset it to the hostname)")
 	uploadCmd.Flags().BoolVar(&uploadDryRun, "dry-run", false, "Show which asset the upload would create or update, and its package changes, without importing")
 	uploadCmd.Flags().StringVar(&uploadTimeout, "timeout", "5m", "Request timeout")
 	rootCmd.AddCommand(uploadCmd)

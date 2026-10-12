@@ -121,7 +121,7 @@ It needs an access token with the `import` scope, created by an admin in heretix
 | `--url` | `$HERETIX_MANAGEMENT_URL` | heretix-management's URL (the console's own address, including any path prefix behind a reverse proxy). **Required** |
 | `--token` | `$HERETIX_MANAGEMENT_TOKEN` | Access token with the `import` scope. **Required** |
 | `--hostname` | (none) | The asset to import into, overriding the SBOM's own hostname. `collect --name` sets that hostname in the first place, so this is mainly for re-targeting an existing SBOM |
-| `--display-name` | (none) | The asset's display name. heretix-management sets the display name to the hostname on every upload that doesn't give one, so pass it on each upload to keep a name you chose |
+| `--display-name` | (none) | The asset's display name. Without it, a new asset is named after its hostname and an existing asset keeps the name it has, so pass it only to set or change the name. (heretix-management before 2026-10-06 reset the name to the hostname on every upload without one; with such a version, pass it on every upload.) |
 | `--dry-run` | `false` | Import nothing; show whether the upload would create a new asset or update an existing one, and how many packages it would add, remove and upgrade. Use it to check `--name`/`--hostname` before wiring up a CI job |
 | `--timeout` | `5m` | Request timeout |
 

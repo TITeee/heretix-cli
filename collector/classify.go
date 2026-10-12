@@ -105,6 +105,31 @@ func isKernelHeaderName(name string) bool {
 	return strings.HasPrefix(name, "linux-headers-") || strings.HasPrefix(name, "kernel-devel")
 }
 
+// relaxForHost takes back, for a scan of a host rather than a container image,
+// the classifications that only hold in an image. The kernel and build-toolchain
+// rules rest on how an image is used: the host's kernel is what runs, and
+// compilers were left behind by a build stage. On a host the premises are
+// reversed — the installed kernel image and modules are what runs, and a
+// toolchain is there because someone installed it, on a build server, CI runner
+// or developer machine, where its vulnerabilities matter.
+//
+// Getting this wrong is not symmetric. A package wrongly kept as non-runtime
+// gets scope=excluded, which heretix-management never scans, so its findings
+// vanish without a trace; a package wrongly kept as runtime only adds findings
+// that are visible and can be ignored. So on a host only kernel header
+// packages, which run no code on any system, stay non-runtime.
+func relaxForHost(pkgs []inventory.Package) {
+	for i, p := range pkgs {
+		if !osPackageSources[p.Source] || (p.Category != CategoryKernel && p.Category != CategoryBuild) {
+			continue
+		}
+		if p.Category == CategoryKernel && isKernelHeaderName(p.Name) {
+			continue
+		}
+		pkgs[i].Category, pkgs[i].Scope = "", ""
+	}
+}
+
 // applyCategory fills in SourcePackage and Category on a collected OS package,
 // and mirrors a non-runtime classification into Scope so it reaches the
 // CycloneDX component as scope=excluded.
