@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -88,5 +89,71 @@ func TestGoListAllInDir_ExcludesTestOnlyTransitiveModules(t *testing.T) {
 	}
 	if !foundReal {
 		t.Error("expected go.opentelemetry.io/otel (a real go.mod dependency) to still be reported")
+	}
+}
+
+// resolveModGraph must point every edge at the version the build selects:
+// "go mod graph" names the version each module asked for, which is not a
+// component of the SBOM unless it happens to be the selected one.
+func TestResolveModGraph_PointsEdgesAtSelectedVersions(t *testing.T) {
+	graph := `example.com/app golang.org/x/sys@v0.42.0
+example.com/app github.com/a/lib@v1.2.0
+github.com/a/lib@v1.2.0 golang.org/x/sys@v0.10.0
+github.com/a/lib@v1.2.0 golang.org/x/sys@v0.13.0
+github.com/a/lib@v1.2.0 github.com/b/testonly@v0.1.0
+github.com/a/lib@v1.0.0 github.com/c/old@v0.1.0
+golang.org/x/sys@v0.10.0 github.com/d/gone@v1.0.0
+`
+	selected := map[string]string{
+		"golang.org/x/sys": "v0.42.0",
+		"github.com/a/lib": "v1.2.0",
+		"github.com/c/old": "v0.1.0",
+	}
+	depsByKey, directKeys, edges := resolveModGraph(graph, selected)
+
+	if edges != 7 {
+		t.Errorf("edges = %d, want 7", edges)
+	}
+	want := map[string][]string{
+		"example.com/app": {"pkg:golang/golang.org/x/sys@v0.42.0", "pkg:golang/github.com/a/lib@v1.2.0"},
+		// Both requested x/sys versions collapse into the selected one; the
+		// module go.mod doesn't declare is dropped.
+		"github.com/a/lib@v1.2.0": {"pkg:golang/golang.org/x/sys@v0.42.0"},
+		// lib@v1.0.0 and x/sys@v0.10.0 are not what the build uses, so their
+		// requirements are not edges of anything in the SBOM.
+	}
+	if !reflect.DeepEqual(depsByKey, want) {
+		t.Errorf("depsByKey = %v, want %v", depsByKey, want)
+	}
+	if !reflect.DeepEqual(directKeys, map[string]bool{"golang.org/x/sys@v0.42.0": true, "github.com/a/lib@v1.2.0": true}) {
+		t.Errorf("directKeys = %v", directKeys)
+	}
+}
+
+// On heretix-cli's own module, every dependency edge must point at a package
+// the scan reports, or the SBOM's dependsOn references dangle.
+func TestGoListAllInDir_EdgesPointAtReportedPackages(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go binary not available")
+	}
+	pkgs, err := goListAllInDir("..", false)
+	if err != nil {
+		t.Fatalf("goListAllInDir: %v", err)
+	}
+	reported := make(map[string]bool, len(pkgs))
+	for _, p := range pkgs {
+		reported[goModuleToPURL(p.Name+"@"+p.Version)] = true
+	}
+	edges := 0
+	for _, p := range pkgs {
+		for _, d := range p.Deps {
+			edges++
+			if !reported[d] {
+				t.Errorf("%s@%s depends on %s, which is not a reported package", p.Name, p.Version, d)
+			}
+		}
+	}
+	if edges == 0 {
+		t.Error("expected some dependency edges")
 	}
 }

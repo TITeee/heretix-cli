@@ -165,7 +165,11 @@ func goListAllInDir(dir string, verbose bool) ([]inventory.Package, error) {
 	}
 
 	// Populate Deps and Direct from go mod graph (best-effort; skipped on failure)
-	depsByKey, directKeys := goModGraph(dir, verbose, allowed, allowedOK)
+	selected := make(map[string]string, len(pkgs))
+	for _, p := range pkgs {
+		selected[p.Name] = p.Version
+	}
+	depsByKey, directKeys := goModGraph(dir, verbose, selected)
 	for i := range pkgs {
 		key := pkgs[i].Name + "@" + pkgs[i].Version
 		if deps, ok := depsByKey[key]; ok {
@@ -199,26 +203,13 @@ func goModDeclaredModules(goModPath string, verbose bool) (allowed map[string]bo
 	return allowed, true
 }
 
-// goModGraph runs "go mod graph" in dir and returns:
-//   - depsByKey: map of "module@version" → []PURL of its direct dependencies
-//   - directKeys: set of "module@version" strings that are direct deps of the main module
-//
-// allowed/allowedOK mirror goModDeclaredModules: when allowedOK is true, an
-// edge is dropped whenever its target module isn't in allowed. "go mod graph"
-// walks the same full historical module graph as "go list -m all" (see
-// goListAllInDir), so without this filter a package that did survive that
-// filter could still end up with a Deps entry pointing at a PURL for a module
-// this build doesn't actually include — a dangling reference once that module
-// itself is filtered out of the package list.
-//
-// Returns empty maps on any failure (go binary missing, network unavailable, etc.)
-// so callers can treat it as best-effort enrichment.
-func goModGraph(dir string, verbose bool, allowed map[string]bool, allowedOK bool) (depsByKey map[string][]string, directKeys map[string]bool) {
-	depsByKey = make(map[string][]string)
-	directKeys = make(map[string]bool)
-
+// goModGraph runs "go mod graph" in dir and resolves it against selected
+// (see resolveModGraph). Returns empty maps on any failure (go binary
+// missing, network unavailable, etc.) so callers can treat it as best-effort
+// enrichment.
+func goModGraph(dir string, verbose bool, selected map[string]string) (depsByKey map[string][]string, directKeys map[string]bool) {
 	if _, err := exec.LookPath("go"); err != nil {
-		return
+		return map[string][]string{}, map[string]bool{}
 	}
 
 	cmd := exec.Command("go", "mod", "graph")
@@ -228,12 +219,37 @@ func goModGraph(dir string, verbose bool, allowed map[string]bool, allowedOK boo
 		if verbose {
 			log.Printf("[go] go mod graph failed in %s: %v", dir, err)
 		}
-		return
+		return map[string][]string{}, map[string]bool{}
 	}
+
+	depsByKey, directKeys, edges := resolveModGraph(string(out), selected)
+	if verbose {
+		log.Printf("[go] go mod graph: %d module edges from %s", edges, dir)
+	}
+	return depsByKey, directKeys
+}
+
+// resolveModGraph turns "go mod graph" output into:
+//   - depsByKey: map of "module@version" → []PURL of its direct dependencies
+//   - directKeys: set of "module@version" strings that are direct deps of the main module
+//
+// selected maps each module path the package list kept to the version the
+// build uses ("go list -m all"). "go mod graph" lists every requirement as
+// the version that module asked for — golang.org/x/sys@v0.10.0 — while
+// minimal version selection builds with one version per path, v0.42.0, and
+// only that one is a component in the SBOM. An edge therefore points at the
+// selected version of its target; pointing at the requested one left a
+// dependsOn reference to a component the SBOM doesn't have. Edges to a path
+// that isn't selected (a module go.mod doesn't declare, see goListAllInDir)
+// are dropped, as are edges from a version that isn't selected, whose
+// requirements the build never uses.
+func resolveModGraph(graph string, selected map[string]string) (depsByKey map[string][]string, directKeys map[string]bool, edges int) {
+	depsByKey = make(map[string][]string)
+	directKeys = make(map[string]bool)
 
 	var mainModule string
 	var lines []string
-	scanner := bufio.NewScanner(strings.NewReader(string(out)))
+	scanner := bufio.NewScanner(strings.NewReader(graph))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -250,22 +266,33 @@ func goModGraph(dir string, verbose bool, allowed map[string]bool, allowedOK boo
 		}
 	}
 
+	seen := make(map[string]bool)
 	for _, line := range lines {
 		parts := strings.Fields(line)
 		left, right := parts[0], parts[1]
-		if allowedOK && !allowed[modulePathOf(right)] {
+		if left != mainModule {
+			if v, ok := selected[modulePathOf(left)]; !ok || modulePathOf(left)+"@"+v != left {
+				continue
+			}
+		}
+		path := modulePathOf(right)
+		v, ok := selected[path]
+		if !ok {
 			continue
 		}
-		depsByKey[left] = append(depsByKey[left], goModuleToPURL(right))
+		target := path + "@" + v
+		// Several requested versions of one path resolve to the same target.
+		edge := left + " " + target
+		if seen[edge] {
+			continue
+		}
+		seen[edge] = true
+		depsByKey[left] = append(depsByKey[left], goModuleToPURL(target))
 		if mainModule != "" && left == mainModule {
-			directKeys[right] = true
+			directKeys[target] = true
 		}
 	}
-
-	if verbose {
-		log.Printf("[go] go mod graph: %d module edges from %s", len(lines), dir)
-	}
-	return
+	return depsByKey, directKeys, len(lines)
 }
 
 // modulePathOf strips the "@version" suffix from a "go mod graph" token,
