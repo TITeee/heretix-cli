@@ -65,6 +65,11 @@ type PackageResult struct {
 	Location         string          `json:"location,omitempty"`
 	ApproximateMatch bool            `json:"approximateMatch,omitempty"`
 	Vulnerabilities  []Vulnerability `json:"vulnerabilities"`
+	// Truncated is set when heretix-api matched more vulnerabilities (Total)
+	// than it returns for one package, and so returned only the most severe
+	// ones. A Windows Server many months behind on updates is the usual case.
+	Truncated bool `json:"truncated,omitempty"`
+	Total     int  `json:"total,omitempty"`
 }
 
 // CheckResult holds the complete check output.
@@ -103,12 +108,18 @@ type batchPackage struct {
 
 // batchResponse is the response from the batch endpoint.
 type batchResponse struct {
-	Results []struct {
-		Package         string          `json:"package"`
-		Version         string          `json:"version"`
-		Ecosystem       string          `json:"ecosystem"`
-		Vulnerabilities []Vulnerability `json:"vulnerabilities"`
-	} `json:"results"`
+	Results []batchResult `json:"results"`
+}
+
+// batchResult is one package's entry in batchResponse.
+type batchResult struct {
+	Package         string          `json:"package"`
+	Version         string          `json:"version"`
+	Ecosystem       string          `json:"ecosystem"`
+	Vulnerabilities []Vulnerability `json:"vulnerabilities"`
+	// Absent from heretix-api releases that cut silently at 500.
+	Total     int  `json:"total"`
+	Truncated bool `json:"truncated"`
 }
 
 // Check queries the vulnerability API for the given inventory packages.
@@ -186,6 +197,10 @@ func Check(ctx context.Context, inv *inventory.Inventory, opts Options) (*CheckR
 					Location:         meta.Location,
 					ApproximateMatch: approx,
 					Vulnerabilities:  r.Vulnerabilities,
+					Truncated:        r.Truncated,
+				}
+				if r.Truncated {
+					pr.Total = r.Total
 				}
 				result.Results = append(result.Results, pr)
 			}
@@ -200,12 +215,7 @@ func Check(ctx context.Context, inv *inventory.Inventory, opts Options) (*CheckR
 }
 
 // sendBatch sends a single batch request to the API.
-func sendBatch(ctx context.Context, client *http.Client, apiURL, apiKey string, pkgs []inventory.Package) ([]struct {
-	Package         string          `json:"package"`
-	Version         string          `json:"version"`
-	Ecosystem       string          `json:"ecosystem"`
-	Vulnerabilities []Vulnerability `json:"vulnerabilities"`
-}, error) {
+func sendBatch(ctx context.Context, client *http.Client, apiURL, apiKey string, pkgs []inventory.Package) ([]batchResult, error) {
 	reqBody := batchRequest{}
 	for _, p := range pkgs {
 		if p.Name == "" || p.Version == "" || p.Ecosystem == "" {
@@ -330,12 +340,7 @@ func retryWait(asked time.Duration) time.Duration {
 // answers 429 — it refuses a batch search past its concurrency cap or a
 // client's per-minute limit, and says when to come back. Any other failure
 // is final: a 401 won't get better, and a 5xx may have done the work.
-func sendBatchWithRetry(ctx context.Context, client *http.Client, apiURL, apiKey string, pkgs []inventory.Package) ([]struct {
-	Package         string          `json:"package"`
-	Version         string          `json:"version"`
-	Ecosystem       string          `json:"ecosystem"`
-	Vulnerabilities []Vulnerability `json:"vulnerabilities"`
-}, error) {
+func sendBatchWithRetry(ctx context.Context, client *http.Client, apiURL, apiKey string, pkgs []inventory.Package) ([]batchResult, error) {
 	for attempt := 1; ; attempt++ {
 		results, err := sendBatch(ctx, client, apiURL, apiKey, pkgs)
 		var se *statusError

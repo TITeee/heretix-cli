@@ -56,6 +56,21 @@ func incompleteWarning(r *checker.CheckResult) string {
 		"any findings in them are missing, so the exit code is 2.", r.Unchecked, r.Queried)
 }
 
+// truncatedWarnings describes each package heretix-api returned only part of,
+// keeping its most severe findings, so the report is not read as the full list.
+func truncatedWarnings(r *checker.CheckResult) []string {
+	var out []string
+	for _, p := range r.Results {
+		if !p.Truncated {
+			continue
+		}
+		// Not len(p.Vulnerabilities): --severity may have filtered those since.
+		out = append(out, fmt.Sprintf("Warning: %s %s matched %d vulnerabilities, more than heretix-api returns for one package; "+
+			"only the most severe are reported.", p.Package, p.Version, p.Total))
+	}
+	return out
+}
+
 // checkExitCode is the exit code of check and scan: 2 when part of the check
 // failed (the results can't be trusted to be complete, whatever they show),
 // else 1 when there is anything to report, else 0.

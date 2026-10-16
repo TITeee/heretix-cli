@@ -99,6 +99,9 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	if w := incompleteWarning(result); w != "" {
 		fmt.Fprintln(os.Stderr, w)
 	}
+	for _, w := range truncatedWarnings(result) {
+		fmt.Fprintln(os.Stderr, w)
+	}
 
 	reportOpts := report.Options{RuntimeOnly: checkRuntimeOnly}
 

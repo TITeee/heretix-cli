@@ -42,6 +42,25 @@ func TestIncompleteWarning(t *testing.T) {
 	}
 }
 
+func TestTruncatedWarnings(t *testing.T) {
+	r := &checker.CheckResult{Results: []checker.PackageResult{
+		{Package: "lodash", Version: "4.17.20"},
+		{Package: "Windows Server 2019", Version: "10.0.17763.1", Truncated: true, Total: 5128},
+	}}
+	got := truncatedWarnings(r)
+	if len(got) != 1 {
+		t.Fatalf("got %d warnings %q, want one for the truncated package", len(got), got)
+	}
+	for _, want := range []string{"Windows Server 2019 10.0.17763.1", "matched 5128 vulnerabilities", "most severe"} {
+		if !strings.Contains(got[0], want) {
+			t.Errorf("warning %q should mention %q", got[0], want)
+		}
+	}
+	if got := truncatedWarnings(&checker.CheckResult{}); got != nil {
+		t.Errorf("no truncation got warnings: %q", got)
+	}
+}
+
 func TestIsRateLimited(t *testing.T) {
 	if !isRateLimited([]string{"batch request failed: API returned 429: {}"}) {
 		t.Error("a 429 error was not recognized")

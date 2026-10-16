@@ -421,6 +421,47 @@ func TestCheck_AttachesInventoryMetadataAndApproximateMatch(t *testing.T) {
 	}
 }
 
+// heretix-api marks a package it returned only part of; that has to reach the
+// result so the report can say so. Older releases send neither field.
+func TestCheck_CarriesTruncation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"results": [
+				{
+					"package": "Windows Server 2019", "version": "10.0.17763.1", "ecosystem": "advisory",
+					"vulnerabilities": [{"id": "1", "externalId": "CVE-2026-1", "cvssScore": 9.8}],
+					"total": 5128, "truncated": true
+				},
+				{
+					"package": "lodash", "version": "4.17.20", "ecosystem": "npm",
+					"vulnerabilities": [{"id": "2", "externalId": "CVE-2026-2", "cvssScore": 7.0}]
+				}
+			]
+		}`))
+	}))
+	defer server.Close()
+
+	inv := &inventory.Inventory{Packages: []inventory.Package{
+		{Name: "Windows Server 2019", Version: "10.0.17763.1", Ecosystem: "advisory", Source: "windows-registry"},
+		{Name: "lodash", Version: "4.17.20", Ecosystem: "npm", Source: "npm"},
+	}}
+	result, err := Check(context.Background(), inv, Options{APIURL: server.URL})
+	if err != nil {
+		t.Fatalf("Check returned an error: %v", err)
+	}
+	got := map[string]PackageResult{}
+	for _, pr := range result.Results {
+		got[pr.Package] = pr
+	}
+	if w := got["Windows Server 2019"]; !w.Truncated || w.Total != 5128 {
+		t.Errorf("Windows Server: Truncated=%v Total=%d, want true 5128", w.Truncated, w.Total)
+	}
+	if l := got["lodash"]; l.Truncated || l.Total != 0 {
+		t.Errorf("lodash: Truncated=%v Total=%d, want false 0", l.Truncated, l.Total)
+	}
+}
+
 func TestCheck_CollectsBatchErrorsWithoutFailingTheWholeRun(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
