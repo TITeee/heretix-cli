@@ -44,6 +44,7 @@ What is left out:
 
 - A client Windows (`InstallationType` = `Client`) and Nano Server report nothing.
 - A Windows Server release heretix-api has no data for (2012 R2 and older, the semi-annual channel releases) is left out with a warning, so that a clean report is not read as a checked OS. So is a server whose UBR cannot be read: without it, every CVE since the release would be reported.
+- Installed roles and features are not read. Every CVE fixed for the release is reported, including those of roles the server does not run (DNS Server, DHCP Server, ...): the fix is the same cumulative update, but such a CVE cannot be exploited without the role.
 - The limits of the matching itself (CVEs fixed before March 2021, hotpatch-track servers, .NET and other Microsoft products) are listed in heretix-api's known issues.
 
 A server many months behind can match thousands of CVEs, more than heretix-api returns for one package. heretix-api then returns the most severe ones, and `check` and `scan` print a warning naming the package and how many it matched.
