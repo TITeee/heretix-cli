@@ -18,7 +18,7 @@ $ heretix-cli scan --image myapp:latest
 Summary: 14 packages with 21 findings (1 malware, 1 KEV)
 ```
 
-OS パッケージ（RPM、DPKG、APK）はパッケージデータベースから直接読み取ります。言語パッケージ（PyPI、npm、Go、Composer、Maven、Gradle、Java アーカイブ）は、ロックファイル、インストール済みパッケージのメタデータ、コンパイル済みバイナリから読み取ります。
+OS パッケージ（RPM、DPKG、APK）はパッケージデータベースから直接読み取ります。Windows Server のリリースとビルド番号はレジストリから読み取ります（ベータ）。言語パッケージ（PyPI、npm、Go、Composer、Maven、Gradle、Java アーカイブ）は、ロックファイル、インストール済みパッケージのメタデータ、コンパイル済みバイナリから読み取ります。
 
 heretix 全体の構成は次のとおりです。
 
@@ -61,8 +61,9 @@ heretix 全体の構成は次のとおりです。
 | Composer（PHP） | `composer.lock` |
 | Maven / Gradle | `pom.xml`、`gradle.lockfile`、`build.gradle(.kts)` |
 | Java アーカイブ | `*.jar`、`*.war`、`*.ear` |
+| Windows Server 2016〜2025（ベータ） | レジストリ（リリースと、UBR を含む OS ビルド番号） |
 
-OS パッケージのデータベースは、Linux ホストで読み取れるほか、イメージスキャンであればどの OS からでも読み取れます。フォールバックの動作、読み取り元ごとの詳細、実行時に使われないパッケージや OS 管理のパッケージの扱いは、[docs/package-detection.md](docs/package-detection.md)（英語）を参照してください。
+OS パッケージのデータベースは、Linux ホストで読み取れるほか、イメージスキャンであればどの OS からでも読み取れます。Windows Server はそのホスト上で読み取り、OS ビルド番号を Microsoft のセキュリティ更新と照合します。フォールバックの動作、読み取り元ごとの詳細、実行時に使われないパッケージや OS 管理のパッケージの扱いは、[docs/package-detection.md](docs/package-detection.md)（英語）を参照してください。
 
 ## インストール
 

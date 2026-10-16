@@ -17,6 +17,7 @@ How `collect` finds packages in each ecosystem, and how it tags packages that ar
 | Maven (Java) | `pom.xml` / fallback: `mvn dependency:tree` | Linux / Windows |
 | Gradle (Java/Kotlin) | `gradle.lockfile` / `build.gradle` / `build.gradle.kts` | Linux / Windows |
 | Java artifacts | `*.jar`, `*.war`, `*.ear` — reads `META-INF/maven/*/pom.properties`, recurses into `WEB-INF/lib` and `BOOT-INF/lib` | Linux / Windows |
+| Windows Server (beta) | The registry: release, installation type and OS build including the UBR — see [Windows Server](#windows-server-beta)* | Windows only |
 
 \* Only runs for a whole-system scan (`--scan-path` at the filesystem root, the default with no `--image`): skipped for `--image`/`--dockerfile` scans and for any `--scan-path` narrower than the root, since `pip`/`npm`/`pnpm` here always query this process's own host environment regardless of `--scan-path` — never the extracted image or the scanned subdirectory.
 
@@ -25,6 +26,25 @@ How `collect` finds packages in each ecosystem, and how it tags packages that ar
 ‡ Without the `go` command, `go.mod` is parsed directly: you get the modules it declares and whether each is direct, but no transitive dependencies or dependency relationships, so a dependency graph built from the SBOM comes out empty. `collect` warns when it finds a `go.mod` but no `go` command.
 
 Every collector skips directories named `testdata` below the scan path: they hold test fixtures (the Go toolchain never builds them, and the local security checks skip them too), so a manifest there is not a real dependency. A `testdata` directory given as `--scan-path` itself is still scanned.
+
+## Windows Server (beta)
+
+On a Windows Server host, the OS itself is reported as one package, read from `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion`:
+
+| Field | Value |
+|---|---|
+| Name | The product as Microsoft's Security Update Guide names it, from `CurrentBuild`: `Windows Server 2016` (14393), `2019` (17763), `2022` (20348) or `2025` (26100). A Server Core installation (`InstallationType` = `Server Core`) is its own product: `Windows Server 2022 (Server Core installation)` |
+| Version | The full OS build, including the update build revision (`UBR`) that each monthly cumulative update raises: `10.0.20348.5761` |
+| Ecosystem / source | `advisory` / `windows-registry` |
+| PURL | `pkg:generic/microsoft/Windows%20Server%202022@10.0.20348.5761` |
+
+heretix-api reports the CVEs whose fixing update has a higher build than this one, so a server one month behind gets that month's CVEs, and a server on the latest update gets none. Installed KBs are not read: cumulative updates replace each other, so the build alone says which fixes are in.
+
+What is left out:
+
+- A client Windows (`InstallationType` = `Client`) and Nano Server report nothing.
+- A Windows Server release heretix-api has no data for (2012 R2 and older, the semi-annual channel releases) is left out with a warning, so that a clean report is not read as a checked OS. So is a server whose UBR cannot be read: without it, every CVE since the release would be reported.
+- The limits of the matching itself (CVEs fixed before March 2021, hotpatch-track servers, .NET and other Microsoft products) are listed in heretix-api's known issues.
 
 ## Non-runtime packages
 

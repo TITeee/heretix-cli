@@ -8,6 +8,7 @@ require (
 	github.com/google/go-containerregistry v0.21.3
 	github.com/knqyf263/go-rpmdb v0.1.1
 	github.com/spf13/cobra v1.10.2
+	golang.org/x/sys v0.42.0
 )
 
 require (
@@ -46,7 +47,6 @@ require (
 	go.opentelemetry.io/otel/metric v1.41.0 // indirect
 	go.opentelemetry.io/otel/trace v1.41.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
 	modernc.org/libc v1.22.2 // indirect
 	modernc.org/mathutil v1.5.0 // indirect

@@ -529,6 +529,28 @@ func TestPackagePURLRPMArchAndEpoch(t *testing.T) {
 	}
 }
 
+// The Windows OS package keeps MSRC's product name, spaces and all, since that
+// is what heretix-api matches on; only the PURL percent-encodes it.
+func TestWindowsServerPURLAndRoundTrip(t *testing.T) {
+	inv := &inventory.Inventory{
+		OS: inventory.OSInfo{ID: "windows", VersionID: "10.0.20348.5761"},
+		Packages: []inventory.Package{
+			{Name: "Windows Server 2022 (Server Core installation)", Version: "10.0.20348.5761", Ecosystem: "advisory",
+				Source: "windows-registry", Location: `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion`},
+		},
+	}
+	want := "pkg:generic/microsoft/Windows%20Server%202022%20%28Server%20Core%20installation%29@10.0.20348.5761"
+	if got := PackagePURL(inv.Packages[0], "windows"); got != want {
+		t.Errorf("PackagePURL() = %q, want %q", got, want)
+	}
+
+	got := FromCycloneDX(GenerateCycloneDX(inv, "test")).Packages
+	if len(got) != 1 || got[0].Name != inv.Packages[0].Name || got[0].Version != inv.Packages[0].Version ||
+		got[0].Ecosystem != "advisory" || got[0].Source != "windows-registry" || got[0].Location != inv.Packages[0].Location {
+		t.Errorf("round trip = %+v, want %+v", got, inv.Packages[0])
+	}
+}
+
 func TestRoundTripPreservesRPMArchAndEpoch(t *testing.T) {
 	inv := &inventory.Inventory{
 		OS: inventory.OSInfo{ID: "rocky", VersionID: "9.3"},

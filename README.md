@@ -18,7 +18,7 @@ $ heretix-cli scan --image myapp:latest
 Summary: 14 packages with 21 findings (1 malware, 1 KEV)
 ```
 
-It reads OS packages (RPM, DPKG, APK) straight from the package database, and language packages (PyPI, npm, Go, Composer, Maven, Gradle, Java archives) from lockfiles, installed package metadata and compiled binaries.
+It reads OS packages (RPM, DPKG, APK) straight from the package database, the Windows Server release and build from the registry (beta), and language packages (PyPI, npm, Go, Composer, Maven, Gradle, Java archives) from lockfiles, installed package metadata and compiled binaries.
 
 Where it sits in heretix:
 
@@ -61,8 +61,9 @@ Where it sits in heretix:
 | Composer (PHP) | `composer.lock` |
 | Maven / Gradle | `pom.xml`, `gradle.lockfile`, `build.gradle(.kts)` |
 | Java archives | `*.jar`, `*.war`, `*.ear` |
+| Windows Server 2016-2025 (beta) | The registry: release and OS build including the UBR |
 
-OS package databases are read on Linux hosts, and from any OS for an image scan. Fallbacks, per-source details and the non-runtime / OS-managed tagging: [docs/package-detection.md](docs/package-detection.md).
+OS package databases are read on Linux hosts, and from any OS for an image scan. Windows Server is read on the host itself and checked by its OS build against Microsoft's security updates. Fallbacks, per-source details and the non-runtime / OS-managed tagging: [docs/package-detection.md](docs/package-detection.md).
 
 ## Installation
 

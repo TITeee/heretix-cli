@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"strings"
 
@@ -230,6 +231,17 @@ func PackagePURL(p inventory.Package, osID string) string {
 		return purl
 	case "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "npm-global", "pnpm-global", "pnpm-virtual-store":
 		return npmPURL(p.Name, p.Version)
+	case "windows-registry":
+		// PURL has no type for Windows itself. The name stays MSRC's product
+		// name ("Windows Server 2022 (Server Core installation)"), which is
+		// what heretix-api matches on, percent-encoded.
+		//
+		// Its component is a "library" like every other package, although
+		// "operating-system" would describe it better: FromCycloneDX and
+		// heretix-management's import both skip operating-system components
+		// as the distro descriptor osComponent writes, so typed that way the
+		// OS would never be checked.
+		return fmt.Sprintf("pkg:generic/microsoft/%s@%s", url.PathEscape(p.Name), p.Version)
 	}
 
 	// Maven-family sources (pom.xml, Gradle build files, JAR archives) store the
