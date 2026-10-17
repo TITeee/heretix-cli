@@ -4,10 +4,25 @@ package collector
 
 import (
 	"errors"
+	"os/exec"
 	"strconv"
 
 	"golang.org/x/sys/windows/registry"
 )
+
+// readWindowsFeatures lists the optional features installed on the host
+// (Win32_OptionalFeature with InstallState 1), by their language-neutral
+// DISM names ("DNS-Server-Full-Role"). heretix-api names the features a role's
+// CVEs need in the same terms. Win32_ServerFeature would be shorter, but its
+// names are localized.
+func readWindowsFeatures() ([]string, error) {
+	out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
+		"Get-CimInstance -ClassName Win32_OptionalFeature -Filter 'InstallState=1' | ForEach-Object Name").Output()
+	if err != nil {
+		return nil, err
+	}
+	return parseWindowsFeatures(string(out)), nil
+}
 
 // readWindowsVersion reads the release and build of the running Windows from
 // the registry. The 64-bit view is asked for explicitly so that a 32-bit

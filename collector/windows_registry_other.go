@@ -9,3 +9,7 @@ import "errors"
 func readWindowsVersion() (windowsVersion, error) {
 	return windowsVersion{}, errors.New("not running on Windows")
 }
+
+func readWindowsFeatures() ([]string, error) {
+	return nil, errors.New("not running on Windows")
+}

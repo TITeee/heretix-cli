@@ -71,6 +71,11 @@ func GenerateCycloneDX(inv *inventory.Inventory, version string) *cdx.BOM {
 		if p.Category != "" {
 			props = append(props, cdx.Property{Name: "heretix:category", Value: p.Category})
 		}
+		// Comma-separated; written whenever known, even empty, since "none
+		// installed" and "not read" mean different things to a consumer.
+		if p.Features != nil {
+			props = append(props, cdx.Property{Name: "heretix:windows-features", Value: strings.Join(p.Features, ",")})
+		}
 
 		var evidence *cdx.Evidence
 		if p.Location != "" {

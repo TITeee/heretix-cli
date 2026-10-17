@@ -3,6 +3,8 @@ package collector
 import (
 	"fmt"
 	"log"
+	"sort"
+	"strings"
 
 	"github.com/TITeee/heretix-cli/inventory"
 )
@@ -65,7 +67,36 @@ func (c *WindowsCollector) Collect(scanPath string, verbose bool, isContainer bo
 	if verbose {
 		log.Printf("[windows] %s %s", p.Name, p.Version)
 	}
+	// Best effort: without them every finding is reported, as before.
+	if features, err := readWindowsFeatures(); err != nil {
+		if verbose {
+			log.Printf("[windows] installed features not read, so role findings cannot be set aside: %v", err)
+		}
+	} else {
+		p.Features = features
+		if verbose {
+			log.Printf("[windows] %d optional features installed", len(features))
+		}
+	}
 	return []inventory.Package{p}, nil
+}
+
+// parseWindowsFeatures reads the feature names readWindowsFeatures' query
+// prints, one per line, into a sorted, de-duplicated list. Never nil: a
+// server with nothing optional installed is known to have none.
+func parseWindowsFeatures(out string) []string {
+	seen := map[string]bool{}
+	features := []string{}
+	for _, line := range strings.Split(out, "\n") {
+		name := strings.TrimSpace(line)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		features = append(features, name)
+	}
+	sort.Strings(features)
+	return features
 }
 
 // windowsServerPackage builds the package for a Windows Server host. ok is

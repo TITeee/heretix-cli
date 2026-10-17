@@ -108,3 +108,15 @@ func TestWindowsCollectorOnlyForTheHostRoot(t *testing.T) {
 		t.Errorf("container rootfs: got %v, %v; want nothing", pkgs, err)
 	}
 }
+
+func TestParseWindowsFeatures(t *testing.T) {
+	// PowerShell's output: one name per line, CRLF, unsorted.
+	got := parseWindowsFeatures("NetFx4\r\nDNS-Server-Full-Role\r\n\r\nNetFx4\r\n")
+	want := []string{"DNS-Server-Full-Role", "NetFx4"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("parseWindowsFeatures = %#v, want %#v", got, want)
+	}
+	if got := parseWindowsFeatures(""); got == nil || len(got) != 0 {
+		t.Errorf("no output = %#v, want an empty, non-nil list (known to be none)", got)
+	}
+}

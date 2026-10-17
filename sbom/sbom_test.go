@@ -551,6 +551,33 @@ func TestWindowsServerPURLAndRoundTrip(t *testing.T) {
 	}
 }
 
+// The installed features travel with the OS package, and "none installed"
+// stays distinct from "not read".
+func TestRoundTripPreservesWindowsFeatures(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		features []string
+	}{
+		{"some installed", []string{"DNS-Server-Full-Role", "NetFx4"}},
+		{"none installed", []string{}},
+		{"not read", nil},
+	} {
+		inv := &inventory.Inventory{Packages: []inventory.Package{
+			{Name: "Windows Server 2022", Version: "10.0.20348.5761", Ecosystem: "advisory", Source: "windows-registry", Features: tc.features},
+		}}
+		got := FromCycloneDX(GenerateCycloneDX(inv, "test")).Packages[0].Features
+		if (got == nil) != (tc.features == nil) || len(got) != len(tc.features) {
+			t.Errorf("%s: Features = %#v, want %#v", tc.name, got, tc.features)
+			continue
+		}
+		for i := range got {
+			if got[i] != tc.features[i] {
+				t.Errorf("%s: Features = %#v, want %#v", tc.name, got, tc.features)
+			}
+		}
+	}
+}
+
 func TestRoundTripPreservesRPMArchAndEpoch(t *testing.T) {
 	inv := &inventory.Inventory{
 		OS: inventory.OSInfo{ID: "rocky", VersionID: "9.3"},

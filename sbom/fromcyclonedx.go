@@ -67,6 +67,17 @@ func FromCycloneDX(bom *cdx.BOM) *inventory.Inventory {
 		if p.Source == "rpm" {
 			p.Arch = purlQualifier(c.PackageURL, "arch")
 		}
+		if c.Properties != nil {
+			for _, prop := range *c.Properties {
+				if prop.Name != "heretix:windows-features" {
+					continue
+				}
+				p.Features = []string{}
+				if prop.Value != "" {
+					p.Features = strings.Split(prop.Value, ",")
+				}
+			}
+		}
 
 		p.Name = c.Name
 		if ecosystemToPURLType[p.Source] == "maven" {

@@ -39,6 +39,12 @@ type Package struct {
 	// the package identity: per-arch Rocky/Oracle Linux advisory data can
 	// only be matched against a package whose PURL carries its exact arch.
 	Arch string `json:"arch,omitempty"`
+	// Features lists the optional features installed on a Windows Server
+	// (DISM names, "DNS-Server-Full-Role"), on the package for the OS itself.
+	// heretix-api names the features a role's CVEs need, so a consumer can set
+	// aside the findings of roles the server does not run. nil means unknown,
+	// as for every other package.
+	Features []string `json:"features,omitempty"`
 
 	// scopeRequired records, across a merge, that some copy came from a
 	// scopeDecidingSources source that placed it in production — so that
