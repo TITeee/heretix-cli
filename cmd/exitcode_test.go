@@ -1,8 +1,11 @@
 package cmd
 
 import (
+	"io"
 	"strings"
 	"testing"
+
+	"github.com/spf13/pflag"
 
 	"github.com/TITeee/heretix-cli/checker"
 )
@@ -67,5 +70,55 @@ func TestIsRateLimited(t *testing.T) {
 	}
 	if isRateLimited([]string{"batch request failed: API returned 401: no"}) {
 		t.Error("a 401 error was taken for a 429")
+	}
+}
+
+func TestCollectorSkip(t *testing.T) {
+	// --skip is passed through as given.
+	if got, err := collectorSkip(nil, []string{"npm"}); err != nil || len(got) != 1 || got[0] != "npm" {
+		t.Errorf("--skip: got %v, %v", got, err)
+	}
+	// --only becomes every other collector.
+	got, err := collectorSkip([]string{"windows"}, nil)
+	if err != nil || len(got) == 0 {
+		t.Fatalf("--only: got %v, %v", got, err)
+	}
+	for _, s := range got {
+		if s == "windows" {
+			t.Errorf("--only windows still skips windows: %v", got)
+		}
+	}
+	// An unknown name is an error, not an empty SBOM.
+	if _, err := collectorSkip([]string{"windoze"}, nil); err == nil || !strings.Contains(err.Error(), "unknown collector") {
+		t.Errorf("--only windoze: err = %v, want an unknown-collector error", err)
+	}
+}
+
+// --only and --skip contradict each other, so cobra refuses both together,
+// before anything is collected.
+func TestOnlyAndSkipAreExclusive(t *testing.T) {
+	for _, name := range []string{"collect", "scan"} {
+		t.Run(name, func(t *testing.T) {
+			c, _, err := rootCmd.Find([]string{name})
+			if err != nil || c.Flags().Lookup("only") == nil {
+				t.Fatalf("%s has no --only (%v)", name, err)
+			}
+			t.Cleanup(func() {
+				for _, flag := range []string{"only", "skip"} {
+					f := c.Flags().Lookup(flag)
+					f.Changed = false
+					if sv, ok := f.Value.(pflag.SliceValue); ok {
+						_ = sv.Replace(nil)
+					}
+				}
+			})
+			rootCmd.SetOut(io.Discard)
+			rootCmd.SetErr(io.Discard)
+			rootCmd.SetArgs([]string{name, "--only", "windows", "--skip", "npm"})
+			err = rootCmd.Execute()
+			if err == nil || !strings.Contains(err.Error(), "none of the others can be") {
+				t.Errorf("--only with --skip: err = %v, want a mutually-exclusive error", err)
+			}
+		})
 	}
 }

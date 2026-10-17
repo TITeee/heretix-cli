@@ -38,6 +38,7 @@ var (
 	collectOutput     string
 	collectScanPath   string
 	collectSkip       []string
+	collectOnly       []string
 	collectVerbose    bool
 	collectImage      string
 	collectDockerfile string
@@ -49,6 +50,8 @@ func init() {
 	collectCmd.Flags().StringVar(&collectOutput, "output", "", "Output file path (default: {name}.json, else {scan-path-basename}.json, else sbom.json)")
 	collectCmd.Flags().StringVar(&collectScanPath, "scan-path", defaultScanPath(), "Filesystem root path to scan")
 	collectCmd.Flags().StringSliceVar(&collectSkip, "skip", nil, "Sources to skip (e.g. --skip npm,pypi)")
+	collectCmd.Flags().StringSliceVar(&collectOnly, "only", nil, "Collect only these sources (e.g. --only windows); cannot be combined with --skip")
+	collectCmd.MarkFlagsMutuallyExclusive("only", "skip")
 	collectCmd.Flags().BoolVar(&collectVerbose, "verbose", false, "Enable verbose logging")
 	collectCmd.Flags().StringVar(&collectImage, "image", "", "Docker image to scan (e.g. nginx:latest, registry.example.com/app:v1)")
 	collectCmd.Flags().StringVar(&collectDockerfile, "dockerfile", "", "Dockerfile path: also scan the base image from its FROM instruction")
@@ -67,16 +70,19 @@ func runCollect(cmd *cobra.Command, args []string) error {
 		os.Exit(2)
 	}
 
+	skip, err := collectorSkip(collectOnly, collectSkip)
+	if err != nil {
+		return err
+	}
+
 	if collectImage != "" {
-		return runCollectWithImage()
+		return runCollectWithImage(skip)
 	}
 
 	fmt.Fprintf(os.Stderr, "Scanning packages (scan-path: %s)...\n", collectScanPath)
-	if len(collectSkip) > 0 {
-		fmt.Fprintf(os.Stderr, "Skipping: %s\n", strings.Join(collectSkip, ", "))
-	}
+	describeCollectors(collectOnly, collectSkip)
 
-	inv, err := collector.CollectAll(collectScanPath, collectSkip, collectVerbose, false)
+	inv, err := collector.CollectAll(collectScanPath, skip, collectVerbose, false)
 	if err != nil {
 		return fmt.Errorf("collection failed: %w", err)
 	}
@@ -94,7 +100,7 @@ func runCollect(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runCollectWithImage() error {
+func runCollectWithImage(skip []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
@@ -123,7 +129,7 @@ func runCollectWithImage() error {
 		}
 
 		fmt.Fprintf(os.Stderr, "Scanning image %s...\n", imageRef)
-		inv, err := collector.CollectAll(rootfs, collectSkip, collectVerbose, true)
+		inv, err := collector.CollectAll(rootfs, skip, collectVerbose, true)
 		cleanup()
 		if err != nil {
 			return fmt.Errorf("collection failed for %s: %w", imageRef, err)

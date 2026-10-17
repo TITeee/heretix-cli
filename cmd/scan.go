@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"strings"
 	"time"
 
 	"github.com/TITeee/heretix-cli/checker"
@@ -28,6 +27,7 @@ var scanCmd = &cobra.Command{
 var (
 	scanScanPath      string
 	scanSkip          []string
+	scanOnly          []string
 	scanSkipLocal     bool
 	scanAPIURL        string
 	scanAPIKey        string
@@ -46,6 +46,8 @@ func init() {
 	// collect flags
 	scanCmd.Flags().StringVar(&scanScanPath, "scan-path", defaultScanPath(), "Filesystem root path to scan")
 	scanCmd.Flags().StringSliceVar(&scanSkip, "skip", nil, "Sources to skip (e.g. --skip npm,pypi)")
+	scanCmd.Flags().StringSliceVar(&scanOnly, "only", nil, "Collect only these sources (e.g. --only windows); cannot be combined with --skip")
+	scanCmd.MarkFlagsMutuallyExclusive("only", "skip")
 	scanCmd.Flags().BoolVar(&scanSkipLocal, "skip-local", false, "Skip local security checks (GlassWorm, Dependency Confusion, Malicious Install, CI/CD Poisoning, Lock File Integrity)")
 	// check flags
 	scanCmd.Flags().StringVar(&scanAPIURL, "api-url", defaultAPIURL, "Vulnerability API URL")
@@ -84,10 +86,15 @@ func runScan(cmd *cobra.Command, args []string) error {
 	var inv *inventory.Inventory
 	var localFindings []detector.Finding
 
+	skip, err := collectorSkip(scanOnly, scanSkip)
+	if err != nil {
+		return err
+	}
+
 	if scanImage != "" {
-		inv, localFindings, err = collectFromImages(ctx)
+		inv, localFindings, err = collectFromImages(ctx, skip)
 	} else {
-		inv, err = collectFromFilesystem()
+		inv, err = collectFromFilesystem(skip)
 		if err == nil && !scanSkipLocal {
 			localFindings, _ = detector.RunAll(scanScanPath, scanVerbose, false, scanCheckRegistry)
 		}
@@ -154,15 +161,13 @@ func runScan(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func collectFromFilesystem() (*inventory.Inventory, error) {
+func collectFromFilesystem(skip []string) (*inventory.Inventory, error) {
 	fmt.Fprintf(os.Stderr, "Scanning packages (scan-path: %s)...\n", scanScanPath)
-	if len(scanSkip) > 0 {
-		fmt.Fprintf(os.Stderr, "Skipping: %s\n", strings.Join(scanSkip, ", "))
-	}
-	return collector.CollectAll(scanScanPath, scanSkip, scanVerbose, false)
+	describeCollectors(scanOnly, scanSkip)
+	return collector.CollectAll(scanScanPath, skip, scanVerbose, false)
 }
 
-func collectFromImages(ctx context.Context) (*inventory.Inventory, []detector.Finding, error) {
+func collectFromImages(ctx context.Context, skip []string) (*inventory.Inventory, []detector.Finding, error) {
 	images := []string{scanImage}
 
 	// Phase 3: also scan base image from Dockerfile
@@ -188,7 +193,7 @@ func collectFromImages(ctx context.Context) (*inventory.Inventory, []detector.Fi
 		}
 
 		fmt.Fprintf(os.Stderr, "Scanning image %s...\n", imageRef)
-		inv, err := collector.CollectAll(rootfs, scanSkip, scanVerbose, true)
+		inv, err := collector.CollectAll(rootfs, skip, scanVerbose, true)
 		if err == nil && !scanSkipLocal {
 			if findings, detErr := detector.RunAll(rootfs, scanVerbose, true, scanCheckRegistry); detErr == nil {
 				allFindings = append(allFindings, findings...)

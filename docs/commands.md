@@ -18,6 +18,9 @@ heretix-cli collect
 heretix-cli collect --output packages.json --scan-path /srv
 heretix-cli collect --skip npm,pypi --verbose
 
+# Collect only the Windows Server OS (on a Windows Server host)
+heretix-cli collect --only windows
+
 # Scan a Docker image
 heretix-cli collect --image nginx:latest --output nginx-sbom.json
 heretix-cli collect --image registry.example.com/myapp:v1.2 --output myapp-sbom.json
@@ -35,9 +38,12 @@ heretix-cli collect --image myapp:latest --dockerfile ./Dockerfile --output full
 | `--format` | `cyclonedx` | Output format. `cyclonedx` is the only one; `json` (the heretix inventory) has been removed |
 | `--scan-path` | `/` (Linux) / `%SystemDrive%\` (Windows) | Root path for filesystem traversal |
 | `--skip` | (none) | Sources to skip (e.g. `--skip npm`) |
+| `--only` | (none) | Collect only these sources (e.g. `--only windows`, or `--only pypi,npm`); every other source is skipped. Cannot be combined with `--skip` (exit code 2). A name that is not a source is an error. A source that does not run on this system (`windows` on Linux, `rpm` on a Windows host) collects nothing, with a warning |
 | `--verbose` | `false` | Enable verbose logging |
 | `--image` | (none) | Docker image reference to scan (e.g. `nginx:latest`) |
 | `--dockerfile` | (none) | Dockerfile path: also chain-scans the FROM base image |
+
+The sources are `rpm`, `dpkg`, `apk`, `windows`, `pypi`, `npm`, `go`, `gobinary`, `composer`, `maven`, `gradle` and `jar`.
 
 What the SBOM contains, and which fields each lockfile can fill: [sbom.md](sbom.md).
 
@@ -92,7 +98,7 @@ When `--image` is specified, the Docker daemon is checked first; if the image is
 
 When `--image` is specified, the host reported (and, with `collect`, the `hostname` field in the SBOM) is the **image reference** (e.g. `nginx:latest`) instead of the machine hostname. This allows each image to be managed as an independent asset when imported into heretix-management.
 
-This command takes `collect`'s `--scan-path`, `--skip` and `--verbose` and all of `check`'s flags (`--api-url`, `--api-key`, `--format`, `--severity`, `--concurrency`, `--timeout`). It writes no SBOM file, so `collect`'s `--output` and `--name` don't apply, and `--format` is `check`'s `table`/`json`, not `cyclonedx`.
+This command takes `collect`'s `--scan-path`, `--skip`, `--only` and `--verbose` and all of `check`'s flags (`--api-url`, `--api-key`, `--format`, `--severity`, `--concurrency`, `--timeout`). It writes no SBOM file, so `collect`'s `--output` and `--name` don't apply, and `--format` is `check`'s `table`/`json`, not `cyclonedx`.
 
 | Flag | Default | Description |
 |---|---|---|

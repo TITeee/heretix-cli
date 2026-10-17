@@ -36,6 +36,46 @@ func isFilesystemRoot(scanPath string) bool {
 	return filepath.Dir(abs) == abs
 }
 
+// CollectorNames are the names --skip and --only take, one per collector. A
+// collector some systems never register (windows on Linux, rpm on a Windows
+// host) is still named, so a script can use one list everywhere.
+var CollectorNames = []string{"rpm", "dpkg", "apk", "windows", "pypi", "npm", "go", "gobinary", "composer", "maven", "gradle", "jar"}
+
+// SkipAllExcept turns an --only list into the skip list CollectAll takes: every
+// collector but the ones named. Names are case-insensitive. An unknown name is
+// an error, unlike for --skip, where one is harmless: a mistyped --only would
+// otherwise skip everything and write an empty SBOM without a word.
+func SkipAllExcept(only []string) ([]string, error) {
+	keep := make(map[string]bool)
+	for _, name := range only {
+		name = strings.ToLower(strings.TrimSpace(name))
+		if name == "" {
+			continue
+		}
+		known := false
+		for _, n := range CollectorNames {
+			if n == name {
+				known = true
+				break
+			}
+		}
+		if !known {
+			return nil, fmt.Errorf("--only: unknown collector %q (one of: %s)", name, strings.Join(CollectorNames, ", "))
+		}
+		keep[name] = true
+	}
+	if len(keep) == 0 {
+		return nil, fmt.Errorf("--only needs at least one collector (one of: %s)", strings.Join(CollectorNames, ", "))
+	}
+	var skip []string
+	for _, n := range CollectorNames {
+		if !keep[n] {
+			skip = append(skip, n)
+		}
+	}
+	return skip, nil
+}
+
 // CollectAll runs all collectors (except those in skip) and returns a deduplicated inventory.
 // isContainer should be true when scanning an extracted container rootfs — on Windows this
 // re-enables the Linux OS package collectors (RPM, DPKG, APK) which are otherwise skipped.
@@ -88,6 +128,13 @@ func CollectAll(scanPath string, skip []string, verbose bool, isContainer bool) 
 	// a failure: 0 ran, 0 failed, nothing to warn about.
 	if activeCollectors > 0 && collectorErrors >= activeCollectors {
 		return nil, fmt.Errorf("all collectors failed")
+	}
+	// Skipping everything is allowed, but the SBOM is then empty, which is easy to
+	// mistake for a clean system: say so. It also catches an --only naming a
+	// collector that does not run here (windows on Linux, rpm on a Windows host).
+	if activeCollectors == 0 && len(skipSet) > 0 {
+		log.Printf("Warning: no collector ran. Every collector available for this scan was skipped; " +
+			"windows runs only on a Windows host scanning its root, and rpm, dpkg and apk only on Linux or for an image.")
 	}
 
 	if !isContainer {
