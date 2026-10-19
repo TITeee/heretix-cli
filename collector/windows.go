@@ -135,3 +135,25 @@ func windowsServerPackage(v windowsVersion) (p inventory.Package, ok bool, warni
 		Location:  windowsVersionKey,
 	}, true, ""
 }
+
+// WindowsServerPackageFromRegistry builds the OS package from registry values
+// read by something other than WindowsCollector, as a tool that works from a
+// saved copy of them does. ubr is nil when the value could not be read. The
+// returned warning explains a Windows Server that is left out (ok is false).
+func WindowsServerPackageFromRegistry(productName, installationType string, major, minor, build uint64, ubr *uint64) (p inventory.Package, ok bool, warning string) {
+	v := windowsVersion{
+		ProductName:      productName,
+		InstallationType: installationType,
+		Major:            major,
+		Minor:            minor,
+		Build:            build,
+	}
+	if ubr != nil {
+		v.UBR, v.HasUBR = *ubr, true
+	}
+	return windowsServerPackage(v)
+}
+
+// ParseWindowsFeatures reads a list of feature names, one per line, into the
+// sorted, de-duplicated list WindowsCollector puts on the package.
+func ParseWindowsFeatures(text string) []string { return parseWindowsFeatures(text) }
