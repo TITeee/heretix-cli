@@ -237,9 +237,15 @@ func detectOSInfoWindows() inventory.OSInfo {
 	if ver == "" {
 		return fallback
 	}
+	// The registry knows the product ("Windows Server 2022 Standard"); `ver`
+	// only has the build, which is all that is left when the registry cannot be read.
+	name := "Microsoft Windows " + ver
+	if v, err := readWindowsVersion(); err == nil {
+		name = WindowsOSName(v.ProductName, v.Build, ver)
+	}
 	return inventory.OSInfo{
 		ID:        "windows",
 		VersionID: ver,
-		Name:      "Microsoft Windows " + ver,
+		Name:      name,
 	}
 }

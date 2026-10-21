@@ -120,3 +120,27 @@ func TestParseWindowsFeatures(t *testing.T) {
 		t.Errorf("no output = %#v, want an empty, non-nil list (known to be none)", got)
 	}
 }
+
+func TestWindowsOSName(t *testing.T) {
+	tests := []struct {
+		name        string
+		productName string
+		build       uint64
+		want        string
+	}{
+		{"a server", "Windows Server 2022 Standard", 20348, "Windows Server 2022 Standard (10.0.20348.5761)"},
+		{"an evaluation server", "Windows Server 2022 Standard Evaluation", 20348, "Windows Server 2022 Standard Evaluation (10.0.20348.5761)"},
+		{"a padded product name", "  Windows Server 2019 Datacenter ", 17763, "Windows Server 2019 Datacenter (10.0.20348.5761)"},
+		{"Windows 10", "Windows 10 Pro", 19045, "Windows 10 Pro (10.0.20348.5761)"},
+		{"Windows 11 still says Windows 10", "Windows 10 Pro", 22631, "Windows 11 Pro (10.0.20348.5761)"},
+		{"a server build past 22000 is not renamed", "Windows Server 2025 Standard", 26100, "Windows Server 2025 Standard (10.0.20348.5761)"},
+		{"no product name", "", 20348, "Microsoft Windows 10.0.20348.5761"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := WindowsOSName(tt.productName, tt.build, "10.0.20348.5761"); got != tt.want {
+				t.Errorf("WindowsOSName() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

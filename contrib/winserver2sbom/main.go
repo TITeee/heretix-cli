@@ -106,7 +106,7 @@ func run(dir string, rest []string) error {
 		fmt.Fprintln(os.Stderr, "warning: no features.txt, so role findings cannot be set aside")
 	}
 
-	inv := inventory.New(hostname, osInfo(dir))
+	inv := inventory.New(hostname, osInfo(dir, v.ProductName, build))
 	inv.Packages = append(inv.Packages, p)
 
 	out := hostname + ".json"
@@ -122,8 +122,9 @@ func run(dir string, rest []string) error {
 
 var fourPartVersion = regexp.MustCompile(`\d+\.\d+\.\d+\.\d+`)
 
-// osInfo mirrors collector.detectOSInfoWindows, which reads `cmd /c ver`.
-func osInfo(dir string) inventory.OSInfo {
+// osInfo mirrors collector.detectOSInfoWindows: the version is the one `cmd /c ver`
+// prints, the name is built from the registry's product name.
+func osInfo(dir, productName string, build uint64) inventory.OSInfo {
 	fallback := inventory.OSInfo{ID: "windows", VersionID: "unknown", Name: "Microsoft Windows"}
 	ver, err := readText(dir, "ver.txt")
 	if err != nil {
@@ -133,5 +134,5 @@ func osInfo(dir string) inventory.OSInfo {
 	if m == "" {
 		return fallback
 	}
-	return inventory.OSInfo{ID: "windows", VersionID: m, Name: "Microsoft Windows " + m}
+	return inventory.OSInfo{ID: "windows", VersionID: m, Name: collector.WindowsOSName(productName, build, m)}
 }

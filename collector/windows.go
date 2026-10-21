@@ -157,3 +157,19 @@ func WindowsServerPackageFromRegistry(productName, installationType string, majo
 // ParseWindowsFeatures reads a list of feature names, one per line, into the
 // sorted, de-duplicated list WindowsCollector puts on the package.
 func ParseWindowsFeatures(text string) []string { return parseWindowsFeatures(text) }
+
+// WindowsOSName is how the OS reads in an asset list: the product name from
+// the registry with the full build in brackets ("Windows Server 2022 Standard
+// (10.0.20348.5761)"), or the build alone when there is no product name.
+// Windows 11 still reports "Windows 10 ..." as its ProductName, so a client
+// build from 22000 on is named for what it is.
+func WindowsOSName(productName string, build uint64, version string) string {
+	name := strings.TrimSpace(productName)
+	if name == "" {
+		return "Microsoft Windows " + version
+	}
+	if build >= 22000 && strings.HasPrefix(name, "Windows 10") {
+		name = "Windows 11" + strings.TrimPrefix(name, "Windows 10")
+	}
+	return name + " (" + version + ")"
+}
