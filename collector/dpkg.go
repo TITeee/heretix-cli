@@ -44,7 +44,7 @@ func (c *DPKGCollector) parseStatusFile(statusPath, scanPath string, verbose boo
 	ecosystem := detectDPKGEcosystem(scanPath)
 
 	var pkgs []inventory.Package
-	var currentPkg, currentVersion, currentStatus, currentSource, currentSourceVersion, currentSection string
+	var currentPkg, currentVersion, currentStatus, currentSource, currentSourceVersion, currentSection, currentBuiltUsing string
 
 	flush := func() {
 		if currentPkg != "" && currentVersion != "" && strings.Contains(currentStatus, "install ok installed") {
@@ -57,10 +57,11 @@ func (c *DPKGCollector) parseStatusFile(statusPath, scanPath string, verbose boo
 				License:    parseDpkgCopyrightLicense(scanPath, currentPkg),
 			}, currentSource, currentSection)
 			p.SourceVersion = currentSourceVersion
+			setSignedTemplateSource(&p, currentSource, currentBuiltUsing)
 			pkgs = append(pkgs, p)
 		}
 		currentPkg, currentVersion, currentStatus = "", "", ""
-		currentSource, currentSourceVersion, currentSection = "", "", ""
+		currentSource, currentSourceVersion, currentSection, currentBuiltUsing = "", "", "", ""
 	}
 
 	scanner := bufio.NewScanner(f)
@@ -82,6 +83,8 @@ func (c *DPKGCollector) parseStatusFile(statusPath, scanPath string, verbose boo
 			currentSourceVersion = parseDpkgSourceVersion(strings.TrimPrefix(line, "Source: "))
 		case strings.HasPrefix(line, "Section: "):
 			currentSection = parseDpkgSectionField(strings.TrimPrefix(line, "Section: "))
+		case strings.HasPrefix(line, "Built-Using: "):
+			currentBuiltUsing = strings.TrimPrefix(line, "Built-Using: ")
 		}
 	}
 	flush() // handle final record
@@ -107,7 +110,7 @@ func (c *DPKGCollector) collectViaDpkgQuery(verbose bool) ([]inventory.Package, 
 		return nil, nil
 	}
 
-	cmd := exec.Command("dpkg-query", "-W", "-f=${Package}\t${Version}\t${source:Package}\t${Section}\t${source:Version}\n")
+	cmd := exec.Command("dpkg-query", "-W", "-f=${Package}\t${Version}\t${source:Package}\t${Section}\t${source:Version}\t${Built-Using}\n")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("dpkg-query failed: %w", err)
@@ -122,7 +125,7 @@ func (c *DPKGCollector) collectViaDpkgQuery(verbose bool) ([]inventory.Package, 
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "\t", 5)
+		parts := strings.SplitN(line, "\t", 6)
 		if len(parts) < 2 {
 			if verbose {
 				log.Printf("[dpkg] skipping malformed line: %s", line)
@@ -157,6 +160,9 @@ func (c *DPKGCollector) collectViaDpkgQuery(verbose bool) ([]inventory.Package, 
 			License:    parseDpkgCopyrightLicense("/", name),
 		}, srcPkg, section)
 		p.SourceVersion = srcVersion
+		if len(parts) > 5 {
+			setSignedTemplateSource(&p, srcPkg, parts[5])
+		}
 		pkgs = append(pkgs, p)
 	}
 
@@ -175,6 +181,55 @@ func parseDpkgSourceField(v string) string {
 		v = v[:i]
 	}
 	return strings.TrimSpace(v)
+}
+
+// setSignedTemplateSource points a package built from a "-signed" template at
+// the source package that holds its code.
+//
+// Debian builds the signed binaries of the kernel, the boot loaders and the
+// firmware updater (linux-signed-amd64, shim-signed, grub-efi-amd64-signed,
+// fwupd-amd64-signed, ...) from a template source that carries no code: it
+// signs the binary an unsigned source already built, and names that source in
+// Built-Using ("linux (= 6.12.74-2)"). Debian files its advisories against the
+// unsigned source, so a signed kernel matched as "linux-signed-amd64" finds
+// none. Only the one-entry Built-Using of a "-signed" source is taken: other
+// packages use Built-Using for what they link in statically, which is not what
+// the advisories name them by. The version is set whenever the source is, as
+// it belongs to the source named.
+func setSignedTemplateSource(p *inventory.Package, source, builtUsing string) {
+	if source == "" {
+		source = p.Name
+	}
+	if !strings.Contains(source, "-signed") {
+		return
+	}
+	name, version, ok := parseSingleBuiltUsing(builtUsing)
+	if !ok {
+		return
+	}
+	p.SourcePackage = name
+	p.SourceVersion = version
+}
+
+// parseSingleBuiltUsing reads a Built-Using value that names exactly one
+// source package: "linux (= 6.12.74-2)".
+func parseSingleBuiltUsing(v string) (name, version string, ok bool) {
+	entries := strings.Split(v, ",")
+	if len(entries) != 1 {
+		return "", "", false
+	}
+	entry := strings.TrimSpace(entries[0])
+	open := strings.IndexByte(entry, '(')
+	end := strings.LastIndexByte(entry, ')')
+	if open <= 0 || end <= open {
+		return "", "", false
+	}
+	version = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(entry[open+1:end]), "="))
+	name = strings.TrimSpace(entry[:open])
+	if name == "" || version == "" {
+		return "", "", false
+	}
+	return name, version, true
 }
 
 // parseDpkgSourceVersion returns the source version a "Source:" value carries

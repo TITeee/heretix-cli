@@ -197,3 +197,106 @@ func TestParseDpkgSourceVersion(t *testing.T) {
 		}
 	}
 }
+
+// Debian files its advisories against the unsigned source (linux), not against
+// the template that signs its binary (linux-signed-amd64), which carries no code
+// and names the real source in Built-Using.
+func TestDPKGCollect_SignedTemplateSource(t *testing.T) {
+	dir := t.TempDir()
+	dpkgDir := filepath.Join(dir, "var", "lib", "dpkg")
+	if err := os.MkdirAll(dpkgDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	status := strings.Join([]string{
+		"Package: linux-image-6.12.74+deb13+1-cloud-amd64",
+		"Status: install ok installed",
+		"Section: kernel",
+		"Source: linux-signed-amd64 (6.12.74+2)",
+		"Version: 6.12.74-2",
+		"Built-Using: linux (= 6.12.74-2)",
+		"",
+		"Package: shim-signed",
+		"Status: install ok installed",
+		"Section: admin",
+		"Source: shim-signed (1.47)",
+		"Version: 1.47+15.8-1",
+		"Built-Using: shim (= 15.8-1)",
+		"",
+		// No "Source:" field: the template is the package itself.
+		"Package: grub-efi-amd64-signed",
+		"Status: install ok installed",
+		"Section: admin",
+		"Version: 1+2.12+9+deb13u1",
+		"Built-Using: grub2 (= 2.12-9+deb13u1)",
+		"",
+		// Built-Using of an ordinary package is what it links in statically.
+		"Package: libslang2",
+		"Status: install ok installed",
+		"Section: libs",
+		"Source: slang2 (2.3.3-5)",
+		"Version: 2.3.3-5+b2",
+		"Built-Using: unicode-data (= 15.1.0-1)",
+		"",
+		// More than one entry: not a template for a single source.
+		"Package: sqv",
+		"Status: install ok installed",
+		"Source: rust-sequoia-sqv (1.3.0-3)",
+		"Version: 1.3.0-3+b2",
+		"Built-Using: rust-buffered-reader (= 1.3.1-2), rust-nettle (= 7.3.0-1)",
+		"",
+		// A signed template without Built-Using keeps what it has.
+		"Package: linux-image-cloud-amd64",
+		"Status: install ok installed",
+		"Section: kernel",
+		"Source: linux-signed-amd64 (6.12.74+2)",
+		"Version: 6.12.74-2",
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(dpkgDir, "status"), []byte(status), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	pkgs, err := (&DPKGCollector{}).Collect(dir, false, true)
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	got := map[string]inventory.Package{}
+	for _, p := range pkgs {
+		got[p.Name] = p
+	}
+	want := map[string][2]string{
+		"linux-image-6.12.74+deb13+1-cloud-amd64": {"linux", "6.12.74-2"},
+		"shim-signed":             {"shim", "15.8-1"},
+		"grub-efi-amd64-signed":   {"grub2", "2.12-9+deb13u1"},
+		"libslang2":               {"slang2", "2.3.3-5"},
+		"sqv":                     {"rust-sequoia-sqv", "1.3.0-3"},
+		"linux-image-cloud-amd64": {"linux-signed-amd64", "6.12.74+2"},
+	}
+	for name, w := range want {
+		if g := [2]string{got[name].SourcePackage, got[name].SourceVersion}; g != w {
+			t.Errorf("%s: source = %v, want %v", name, g, w)
+		}
+	}
+	// What a package is classified as still goes by the source dpkg names.
+	if c := got["linux-image-6.12.74+deb13+1-cloud-amd64"].Category; c != CategoryKernel {
+		t.Errorf("signed kernel image: Category = %q, want %q", c, CategoryKernel)
+	}
+}
+
+func TestParseSingleBuiltUsing(t *testing.T) {
+	for in, want := range map[string][2]string{
+		"linux (= 6.12.74-2)":      {"linux", "6.12.74-2"},
+		"shim (= 15.8-1)":          {"shim", "15.8-1"},
+		"grub2 (= 2.12-9+deb13u1)": {"grub2", "2.12-9+deb13u1"},
+		"a (= 1), b (= 2)":         {"", ""},
+		"":                         {"", ""},
+		"linux":                    {"", ""},
+		"linux (= )":               {"", ""},
+		" (= 1.0)":                 {"", ""},
+	} {
+		name, version, ok := parseSingleBuiltUsing(in)
+		if got := [2]string{name, version}; got != want || ok != (want[0] != "") {
+			t.Errorf("parseSingleBuiltUsing(%q) = %q, %q, %v; want %v", in, name, version, ok, want)
+		}
+	}
+}
