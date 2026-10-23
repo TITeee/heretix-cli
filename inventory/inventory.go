@@ -29,6 +29,11 @@ type Package struct {
 	// one CVE affecting one upstream project be reported once instead of once
 	// per binary package it fans out into. Empty for non-OS ecosystems.
 	SourcePackage string `json:"sourcePackage,omitempty"`
+	// SourceVersion is the source package's version when it differs from the
+	// binary's own (dpkg "Source: lvm2 (2.03.31-2)" on dmsetup 2:1.02.205-2),
+	// empty when they are the same. Debian and Ubuntu advisories give source
+	// versions, so heretix-api compares this one with them.
+	SourceVersion string `json:"sourceVersion,omitempty"`
 	// Category marks a package that is present in the image but is not part of
 	// what it runs: "kernel" (kernel headers) or "build" (build toolchain) —
 	// see collector.classifyNonRuntime — or a language package whose files an
@@ -189,6 +194,9 @@ func mergePkg(a, b Package) Package {
 	// SourcePackage / Category: prefer non-empty
 	if a.SourcePackage == "" {
 		a.SourcePackage = b.SourcePackage
+	}
+	if a.SourceVersion == "" {
+		a.SourceVersion = b.SourceVersion
 	}
 	if a.Category == "" {
 		a.Category = b.Category

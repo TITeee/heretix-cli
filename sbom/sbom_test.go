@@ -595,3 +595,25 @@ func TestRoundTripPreservesRPMArchAndEpoch(t *testing.T) {
 		t.Errorf("round trip: Version=%q Arch=%q, want 1:3.0.7-24.el9 x86_64", got.Version, got.Arch)
 	}
 }
+
+// The source package and its version, when it differs from the binary's,
+// survive collect -> SBOM -> check: heretix-api matches Debian and Ubuntu
+// packages by them.
+func TestRoundTripPreservesSourceVersion(t *testing.T) {
+	inv := &inventory.Inventory{
+		Hostname: "host",
+		OS:       inventory.OSInfo{ID: "debian", VersionID: "13", Name: "Debian GNU/Linux 13 (trixie)"},
+		Packages: []inventory.Package{
+			{Name: "dmsetup", Version: "2:1.02.205-2", Ecosystem: "Debian:13", Source: "dpkg", SourcePackage: "lvm2", SourceVersion: "2.03.31-2"},
+			{Name: "mount", Version: "2.41-5", Ecosystem: "Debian:13", Source: "dpkg", SourcePackage: "util-linux"},
+		},
+	}
+	back := FromCycloneDX(GenerateCycloneDX(inv, "test"))
+	got := map[string][2]string{}
+	for _, p := range back.Packages {
+		got[p.Name] = [2]string{p.SourcePackage, p.SourceVersion}
+	}
+	if got["dmsetup"] != [2]string{"lvm2", "2.03.31-2"} || got["mount"] != [2]string{"util-linux", ""} {
+		t.Errorf("round trip lost the source: %v", got)
+	}
+}

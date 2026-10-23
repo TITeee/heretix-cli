@@ -44,21 +44,23 @@ func (c *DPKGCollector) parseStatusFile(statusPath, scanPath string, verbose boo
 	ecosystem := detectDPKGEcosystem(scanPath)
 
 	var pkgs []inventory.Package
-	var currentPkg, currentVersion, currentStatus, currentSource, currentSection string
+	var currentPkg, currentVersion, currentStatus, currentSource, currentSourceVersion, currentSection string
 
 	flush := func() {
 		if currentPkg != "" && currentVersion != "" && strings.Contains(currentStatus, "install ok installed") {
-			pkgs = append(pkgs, applyCategory(inventory.Package{
+			p := applyCategory(inventory.Package{
 				Name:       currentPkg,
 				Version:    currentVersion,
 				RawVersion: currentVersion,
 				Ecosystem:  ecosystem,
 				Source:     "dpkg",
 				License:    parseDpkgCopyrightLicense(scanPath, currentPkg),
-			}, currentSource, currentSection))
+			}, currentSource, currentSection)
+			p.SourceVersion = currentSourceVersion
+			pkgs = append(pkgs, p)
 		}
 		currentPkg, currentVersion, currentStatus = "", "", ""
-		currentSource, currentSection = "", ""
+		currentSource, currentSourceVersion, currentSection = "", "", ""
 	}
 
 	scanner := bufio.NewScanner(f)
@@ -77,6 +79,7 @@ func (c *DPKGCollector) parseStatusFile(statusPath, scanPath string, verbose boo
 			currentStatus = strings.TrimPrefix(line, "Status: ")
 		case strings.HasPrefix(line, "Source: "):
 			currentSource = parseDpkgSourceField(strings.TrimPrefix(line, "Source: "))
+			currentSourceVersion = parseDpkgSourceVersion(strings.TrimPrefix(line, "Source: "))
 		case strings.HasPrefix(line, "Section: "):
 			currentSection = parseDpkgSectionField(strings.TrimPrefix(line, "Section: "))
 		}
@@ -104,7 +107,7 @@ func (c *DPKGCollector) collectViaDpkgQuery(verbose bool) ([]inventory.Package, 
 		return nil, nil
 	}
 
-	cmd := exec.Command("dpkg-query", "-W", "-f=${Package}\t${Version}\t${source:Package}\t${Section}\n")
+	cmd := exec.Command("dpkg-query", "-W", "-f=${Package}\t${Version}\t${source:Package}\t${Section}\t${source:Version}\n")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("dpkg-query failed: %w", err)
@@ -119,7 +122,7 @@ func (c *DPKGCollector) collectViaDpkgQuery(verbose bool) ([]inventory.Package, 
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "\t", 4)
+		parts := strings.SplitN(line, "\t", 5)
 		if len(parts) < 2 {
 			if verbose {
 				log.Printf("[dpkg] skipping malformed line: %s", line)
@@ -131,23 +134,30 @@ func (c *DPKGCollector) collectViaDpkgQuery(verbose bool) ([]inventory.Package, 
 		if rawVersion == "" {
 			continue
 		}
-		// ${source:Package} and ${Section} are best-effort: an old dpkg that
-		// does not know a field substitutes an empty string for it.
-		var srcPkg, section string
+		// ${source:Package}, ${Section} and ${source:Version} are best-effort: an
+		// old dpkg that does not know a field substitutes an empty string for it.
+		var srcPkg, section, srcVersion string
 		if len(parts) > 2 {
 			srcPkg = parseDpkgSourceField(parts[2])
 		}
 		if len(parts) > 3 {
 			section = parseDpkgSectionField(parts[3])
 		}
-		pkgs = append(pkgs, applyCategory(inventory.Package{
+		// ${source:Version} is always filled in; kept, like the status file's
+		// "Source: name (version)", only when it differs from the binary's own.
+		if len(parts) > 4 && strings.TrimSpace(parts[4]) != rawVersion {
+			srcVersion = strings.TrimSpace(parts[4])
+		}
+		p := applyCategory(inventory.Package{
 			Name:       name,
 			Version:    rawVersion,
 			RawVersion: rawVersion,
 			Ecosystem:  ecosystem,
 			Source:     "dpkg",
 			License:    parseDpkgCopyrightLicense("/", name),
-		}, srcPkg, section))
+		}, srcPkg, section)
+		p.SourceVersion = srcVersion
+		pkgs = append(pkgs, p)
 	}
 
 	if verbose {
@@ -165,6 +175,21 @@ func parseDpkgSourceField(v string) string {
 		v = v[:i]
 	}
 	return strings.TrimSpace(v)
+}
+
+// parseDpkgSourceVersion returns the source version a "Source:" value carries
+// in parentheses ("lvm2 (2.03.31-2)" on dmsetup 2:1.02.205-2), or "" when it
+// has none, which means the source version is the binary's own. Debian and
+// Ubuntu advisories give source versions, and a binary's version can differ
+// from its source's in epoch or altogether, so this is what heretix-api
+// compares with them.
+func parseDpkgSourceVersion(v string) string {
+	open := strings.IndexByte(v, '(')
+	end := strings.LastIndexByte(v, ')')
+	if open == -1 || end <= open {
+		return ""
+	}
+	return strings.TrimSpace(v[open+1 : end])
 }
 
 // parseDpkgSectionField normalizes a "Section:" value, which carries an

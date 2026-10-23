@@ -119,3 +119,81 @@ func TestDPKGCollect_SourcePackageAndCategory(t *testing.T) {
 		}
 	}
 }
+
+// Debian and Ubuntu advisories give source versions, and a binary's version
+// can differ from its source's in epoch (bsdutils), in scheme (dmsetup, from
+// lvm2) or both (login, "+really"). dpkg writes the source version in
+// parentheses exactly when it differs; that is what has to reach heretix-api.
+func TestDPKGCollect_SourceVersion(t *testing.T) {
+	dir := t.TempDir()
+	dpkgDir := filepath.Join(dir, "var", "lib", "dpkg")
+	if err := os.MkdirAll(dpkgDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	status := strings.Join([]string{
+		"Package: bsdutils",
+		"Status: install ok installed",
+		"Source: util-linux (2.41-5)",
+		"Version: 1:2.41-5",
+		"",
+		"Package: login",
+		"Status: install ok installed",
+		"Source: util-linux (2.41-5)",
+		"Version: 1:4.16.0-2+really2.41-5",
+		"",
+		"Package: dmsetup",
+		"Status: install ok installed",
+		"Source: lvm2 (2.03.31-2)",
+		"Version: 2:1.02.205-2",
+		"",
+		"Package: mount",
+		"Status: install ok installed",
+		"Source: util-linux",
+		"Version: 2.41-5",
+		"",
+		"Package: curl",
+		"Status: install ok installed",
+		"Version: 8.14.1-2",
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(dpkgDir, "status"), []byte(status), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	pkgs, err := (&DPKGCollector{}).Collect(dir, false, true)
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	got := map[string][2]string{}
+	for _, p := range pkgs {
+		got[p.Name] = [2]string{p.SourcePackage, p.SourceVersion}
+	}
+	want := map[string][2]string{
+		"bsdutils": {"util-linux", "2.41-5"},
+		"login":    {"util-linux", "2.41-5"},
+		"dmsetup":  {"lvm2", "2.03.31-2"},
+		// No version in "Source:": the source version is the binary's own.
+		"mount": {"util-linux", ""},
+		"curl":  {"curl", ""},
+	}
+	for name, w := range want {
+		if got[name] != w {
+			t.Errorf("%s: source = %q, want %q", name, got[name], w)
+		}
+	}
+}
+
+func TestParseDpkgSourceVersion(t *testing.T) {
+	for in, want := range map[string]string{
+		"lvm2 (2.03.31-2)":  "2.03.31-2",
+		"linux (6.12.43-1)": "6.12.43-1",
+		"util-linux":        "",
+		"glibc ( 2.41-12 )": "2.41-12",
+		"broken (":          "",
+		"":                  "",
+	} {
+		if got := parseDpkgSourceVersion(in); got != want {
+			t.Errorf("parseDpkgSourceVersion(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

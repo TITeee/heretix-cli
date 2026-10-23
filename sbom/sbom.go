@@ -68,6 +68,9 @@ func GenerateCycloneDX(inv *inventory.Inventory, version string) *cdx.BOM {
 		if p.SourcePackage != "" {
 			props = append(props, cdx.Property{Name: "heretix:source-package", Value: p.SourcePackage})
 		}
+		if p.SourceVersion != "" {
+			props = append(props, cdx.Property{Name: "heretix:source-version", Value: p.SourceVersion})
+		}
 		if p.Category != "" {
 			props = append(props, cdx.Property{Name: "heretix:category", Value: p.Category})
 		}

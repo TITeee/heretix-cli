@@ -510,3 +510,36 @@ func TestCheck_DoesNotQueryOSManagedPackages(t *testing.T) {
 		t.Fatalf("Check returned an error: %v", err)
 	}
 }
+
+// heretix-api matches Debian, Ubuntu and Alpine packages by their source
+// package and source version, so both have to be in the batch request.
+func TestCheck_SendsSourcePackageAndVersion(t *testing.T) {
+	var got batchRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results": []}`))
+	}))
+	defer server.Close()
+
+	inv := &inventory.Inventory{Packages: []inventory.Package{
+		{Name: "dmsetup", Version: "2:1.02.205-2", Ecosystem: "Debian:13", Source: "dpkg", SourcePackage: "lvm2", SourceVersion: "2.03.31-2"},
+		{Name: "lodash", Version: "4.17.20", Ecosystem: "npm", Source: "npm"},
+	}}
+	if _, err := Check(context.Background(), inv, Options{APIURL: server.URL}); err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if len(got.Packages) != 2 {
+		t.Fatalf("got %d packages in the request, want 2", len(got.Packages))
+	}
+	if p := got.Packages[0]; p.SourcePackage != "lvm2" || p.SourceVersion != "2.03.31-2" {
+		t.Errorf("dmsetup sent as %+v, want sourcePackage lvm2 and sourceVersion 2.03.31-2", p)
+	}
+	// Omitted, not sent empty, when unknown.
+	raw, _ := json.Marshal(got.Packages[1])
+	if strings.Contains(string(raw), "source") {
+		t.Errorf("lodash sent with source fields: %s", raw)
+	}
+}

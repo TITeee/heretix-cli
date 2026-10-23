@@ -104,6 +104,12 @@ type batchPackage struct {
 	Package   string `json:"package"`
 	Version   string `json:"version"`
 	Ecosystem string `json:"ecosystem"`
+	// The source package an OS package was built from, and its version when it
+	// differs from the binary's (see inventory.Package). heretix-api matches
+	// Debian, Ubuntu and Alpine packages by them; an older heretix-api ignores
+	// fields it does not know.
+	SourcePackage string `json:"sourcePackage,omitempty"`
+	SourceVersion string `json:"sourceVersion,omitempty"`
 }
 
 // batchResponse is the response from the batch endpoint.
@@ -222,9 +228,11 @@ func sendBatch(ctx context.Context, client *http.Client, apiURL, apiKey string, 
 			continue
 		}
 		reqBody.Packages = append(reqBody.Packages, batchPackage{
-			Package:   p.Name,
-			Version:   p.Version,
-			Ecosystem: p.Ecosystem,
+			Package:       p.Name,
+			Version:       p.Version,
+			Ecosystem:     p.Ecosystem,
+			SourcePackage: p.SourcePackage,
+			SourceVersion: p.SourceVersion,
 		})
 	}
 	if len(reqBody.Packages) == 0 {

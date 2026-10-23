@@ -59,6 +59,7 @@ func FromCycloneDX(bom *cdx.BOM) *inventory.Inventory {
 			// what the collectors had worked out — dev-only npm/composer/gradle
 			// dependencies as well as non-runtime OS packages.
 			SourcePackage: componentProperty(&c, "heretix:source-package"),
+			SourceVersion: componentProperty(&c, "heretix:source-version"),
 			Category:      componentProperty(&c, "heretix:category"),
 		}
 		if c.Scope == cdx.ScopeExcluded {
