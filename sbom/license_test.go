@@ -23,15 +23,25 @@ func TestLicenseChoiceFor(t *testing.T) {
 		// "with advertising" are free text — every one must land in license.name,
 		// not license.expression, or the emitted document violates the CycloneDX
 		// schema's "A valid SPDX license expression" requirement on that field.
-		{"rpm-style lowercase 'and'", "GPLv2+ and MIT", cdx.LicenseChoice{License: &cdx.License{Name: "GPLv2+ and MIT"}}},
-		{"a non-SPDX identifier with a trailing '+'", "GPLv2+", cdx.LicenseChoice{License: &cdx.License{Name: "GPLv2+"}}},
-		{"a non-SPDX abbreviation", "ASL 2.0", cdx.LicenseChoice{License: &cdx.License{Name: "ASL 2.0"}}},
+		// Fedora's legacy names with a fixed meaning are converted (normalizeLicense).
+		{"rpm-style lowercase 'and'", "GPLv2+ and MIT", cdx.LicenseChoice{Expression: "GPL-2.0-or-later AND MIT"}},
+		{"a Fedora legacy identifier", "GPLv2+", cdx.LicenseChoice{License: &cdx.License{ID: "GPL-2.0-or-later"}}},
+		{"a Fedora legacy abbreviation", "ASL 2.0", cdx.LicenseChoice{License: &cdx.License{ID: "Apache-2.0"}}},
+		{"an ambiguous Fedora name stays free text", "LGPLv2+", cdx.LicenseChoice{License: &cdx.License{Name: "LGPLv2+"}}},
 		{"free text, no SPDX identifier at all", "Public Domain", cdx.LicenseChoice{License: &cdx.License{Name: "Public Domain"}}},
 		{"an SPDX id with non-SPDX free text appended", "BSD with advertising", cdx.LicenseChoice{License: &cdx.License{Name: "BSD with advertising"}}},
 		{"a descriptive name, not an SPDX id", "MIT License", cdx.LicenseChoice{License: &cdx.License{Name: "MIT License"}}},
 		// One real identifier plus one that isn't: the whole expression must be
 		// rejected — a partially-valid compound string is not itself valid SPDX.
-		{"mixed valid and invalid identifiers", "MIT AND GPLv2+", cdx.LicenseChoice{License: &cdx.License{Name: "MIT AND GPLv2+"}}},
+		{"mixed valid and invalid identifiers", "MIT AND Public Domain", cdx.LicenseChoice{License: &cdx.License{Name: "MIT AND Public Domain"}}},
+		// DEP-5 short names from Debian copyright files.
+		{"DEP-5 names joined by AND", "GPL-2+ and (BSD-3-clause or Expat)", cdx.LicenseChoice{Expression: "GPL-2.0-or-later AND (BSD-3-Clause OR MIT)"}},
+		{"an SPDX ID in another case", "zlib", cdx.LicenseChoice{License: &cdx.License{ID: "Zlib"}}},
+		{"a DEP-5 exception stays free text", "GPL-2+ with OpenSSL exception", cdx.LicenseChoice{License: &cdx.License{Name: "GPL-2+ with OpenSSL exception"}}},
+		// RHEL's kernel license is SPDX already, with exceptions.
+		{"an SPDX exception", "GPL-2.0-only WITH Linux-syscall-note", cdx.LicenseChoice{Expression: "GPL-2.0-only WITH Linux-syscall-note"}},
+		{"an exception inside an expression", "(GPL-2.0-only WITH Linux-syscall-note) OR MIT", cdx.LicenseChoice{Expression: "(GPL-2.0-only WITH Linux-syscall-note) OR MIT"}},
+		{"a LicenseRef", "MIT AND LicenseRef-Fedora-Public-Domain", cdx.LicenseChoice{Expression: "MIT AND LicenseRef-Fedora-Public-Domain"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

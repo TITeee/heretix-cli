@@ -56,6 +56,10 @@ type Generator struct {
 	// (development dependencies included), "post-build" a built image that may
 	// or may not be running. Omitted from the SBOM when empty.
 	Lifecycle cdx.LifecyclePhase
+	// Author is the organization responsible for the SBOM (CISA's "SBOM
+	// Author"), which is whoever ran the scan, not the tool. heretix-cli cannot
+	// know it, so it is written only when given (collect --author).
+	Author string
 }
 
 // BuildRevision is the short commit this binary was built from, or "unknown".
@@ -138,7 +142,15 @@ func GenerateCycloneDX(inv *inventory.Inventory, gen Generator) *cdx.BOM {
 			}
 		}
 
+		// CISA's "Component Producer": only what the package manager recorded
+		// (inventory.Package.Supplier); an unknown producer is left out.
+		var supplier *cdx.OrganizationalEntity
+		if p.Supplier != "" {
+			supplier = &cdx.OrganizationalEntity{Name: p.Supplier}
+		}
+
 		components = append(components, cdx.Component{
+			Supplier:   supplier,
 			BOMRef:     purl,
 			Type:       cdx.ComponentTypeLibrary,
 			Name:       displayName,
@@ -158,15 +170,25 @@ func GenerateCycloneDX(inv *inventory.Inventory, gen Generator) *cdx.BOM {
 
 	root := metadataComponent(inv)
 
-	// Build bom.Dependencies for all components (leaf nodes get an empty slice per CycloneDX spec).
+	// bom.dependencies lists what each package depends on, and CycloneDX reads an
+	// empty list as "depends on nothing". That is only true where the source
+	// records a dependency graph; elsewhere (OS packages, flat lockfiles) nobody
+	// looked, so those packages get no entry and are named in a composition with
+	// aggregate "unknown" instead -- CISA's 2026 minimum elements ask for unknowns
+	// to be stated, not left to look like facts.
 	depItems := make([]cdx.Dependency, 0, len(pkgs)+1)
+	var unknownDeps []cdx.BOMReference
 	var directRefs []string
 	directKnown := false
 	for _, p := range pkgs {
 		purl := PackagePURL(p, inv.OS.ID)
-		deps := make([]string, len(p.Deps))
-		copy(deps, p.Deps)
-		depItems = append(depItems, cdx.Dependency{Ref: purl, Dependencies: &deps})
+		if len(p.Deps) == 0 && !dependencyGraphSources[p.Source] {
+			unknownDeps = append(unknownDeps, cdx.BOMReference(purl))
+		} else {
+			deps := make([]string, len(p.Deps))
+			copy(deps, p.Deps)
+			depItems = append(depItems, cdx.Dependency{Ref: purl, Dependencies: &deps})
+		}
 		if p.Direct != nil {
 			directKnown = true
 			if *p.Direct {
@@ -206,9 +228,30 @@ func GenerateCycloneDX(inv *inventory.Inventory, gen Generator) *cdx.BOM {
 	if gen.Lifecycle != "" {
 		bom.Metadata.Lifecycles = &[]cdx.Lifecycle{{Phase: gen.Lifecycle}}
 	}
+	if gen.Author != "" {
+		bom.Metadata.Authors = &[]cdx.OrganizationalContact{{Name: gen.Author}}
+	}
 	bom.Components = &components
 	bom.Dependencies = &depItems
+	if len(unknownDeps) > 0 {
+		bom.Compositions = &[]cdx.Composition{{Aggregate: cdx.CompositionAggregateUnknown, Dependencies: &unknownDeps}}
+	}
 	return bom
+}
+
+// dependencyGraphSources are the sources whose collectors record each package's
+// dependencies (docs/sbom.md, the "deps" column), so that a package from one of
+// them with none really has none. package-lock.json v1, pnpm-lock.yaml v5/v6 and
+// a go.mod read without the go binary share a source name with the formats that
+// do record them, and are counted as known for that reason.
+var dependencyGraphSources = map[string]bool{
+	"package-lock.json": true,
+	"pnpm-lock.yaml":    true,
+	"uv.lock":           true,
+	"poetry.lock":       true,
+	"go.mod":            true,
+	"dist-info":         true,
+	"composer.lock":     true,
 }
 
 // uniqueByPURL collapses packages that resolve to the same PURL into a single

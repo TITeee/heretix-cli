@@ -44,7 +44,8 @@ func (c *DPKGCollector) parseStatusFile(statusPath, scanPath string, verbose boo
 	ecosystem := detectDPKGEcosystem(scanPath)
 
 	var pkgs []inventory.Package
-	var currentPkg, currentVersion, currentStatus, currentSource, currentSourceVersion, currentSection, currentBuiltUsing string
+	var archs []string
+	var currentPkg, currentVersion, currentStatus, currentSource, currentSourceVersion, currentSection, currentBuiltUsing, currentArch string
 
 	flush := func() {
 		if currentPkg != "" && currentVersion != "" && strings.Contains(currentStatus, "install ok installed") {
@@ -59,8 +60,9 @@ func (c *DPKGCollector) parseStatusFile(statusPath, scanPath string, verbose boo
 			p.SourceVersion = currentSourceVersion
 			setSignedTemplateSource(&p, currentSource, currentBuiltUsing)
 			pkgs = append(pkgs, p)
+			archs = append(archs, currentArch)
 		}
-		currentPkg, currentVersion, currentStatus = "", "", ""
+		currentPkg, currentVersion, currentStatus, currentArch = "", "", "", ""
 		currentSource, currentSourceVersion, currentSection, currentBuiltUsing = "", "", "", ""
 	}
 
@@ -85,6 +87,8 @@ func (c *DPKGCollector) parseStatusFile(statusPath, scanPath string, verbose boo
 			currentSection = parseDpkgSectionField(strings.TrimPrefix(line, "Section: "))
 		case strings.HasPrefix(line, "Built-Using: "):
 			currentBuiltUsing = strings.TrimPrefix(line, "Built-Using: ")
+		case strings.HasPrefix(line, "Architecture: "):
+			currentArch = strings.TrimPrefix(line, "Architecture: ")
 		}
 	}
 	flush() // handle final record
@@ -92,6 +96,7 @@ func (c *DPKGCollector) parseStatusFile(statusPath, scanPath string, verbose boo
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
+	applyAptLists(withArchs(pkgs, archs), scanPath)
 
 	if verbose {
 		log.Printf("[dpkg] collected %d packages from %s", len(pkgs), statusPath)
@@ -110,7 +115,7 @@ func (c *DPKGCollector) collectViaDpkgQuery(verbose bool) ([]inventory.Package, 
 		return nil, nil
 	}
 
-	cmd := exec.Command("dpkg-query", "-W", "-f=${Package}\t${Version}\t${source:Package}\t${Section}\t${source:Version}\t${Built-Using}\n")
+	cmd := exec.Command("dpkg-query", "-W", "-f=${Package}\t${Version}\t${source:Package}\t${Section}\t${source:Version}\t${Built-Using}\t${Architecture}\n")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("dpkg-query failed: %w", err)
@@ -119,13 +124,14 @@ func (c *DPKGCollector) collectViaDpkgQuery(verbose bool) ([]inventory.Package, 
 	ecosystem := detectDPKGEcosystem("/")
 
 	var pkgs []inventory.Package
+	var archs []string
 	scanner := bufio.NewScanner(strings.NewReader(string(out)))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "\t", 6)
+		parts := strings.SplitN(line, "\t", 7)
 		if len(parts) < 2 {
 			if verbose {
 				log.Printf("[dpkg] skipping malformed line: %s", line)
@@ -164,7 +170,13 @@ func (c *DPKGCollector) collectViaDpkgQuery(verbose bool) ([]inventory.Package, 
 			setSignedTemplateSource(&p, srcPkg, parts[5])
 		}
 		pkgs = append(pkgs, p)
+		arch := ""
+		if len(parts) > 6 {
+			arch = strings.TrimSpace(parts[6])
+		}
+		archs = append(archs, arch)
 	}
+	applyAptLists(withArchs(pkgs, archs), "/")
 
 	if verbose {
 		log.Printf("[dpkg] collected %d packages via dpkg-query", len(pkgs))
@@ -260,8 +272,13 @@ func parseDpkgSectionField(v string) string {
 // Debian package's copyright file (<scanPath>/usr/share/doc/{pkgName}/copyright).
 // Most packages use the DEP-5 machine-readable format, which declares one or more
 // "License:" fields; free-form copyright files without that field yield "".
-// Duplicate values are collapsed and multiple distinct ones joined with " OR ",
-// matching composer.go's convention for multi-license packages.
+// Duplicate values are collapsed and distinct ones joined with " and ".
+//
+// "and", not "or": a DEP-5 file gives each group of files its own License, so
+// the package as a whole is under all of them at once, not a choice between
+// them (composer.json's list is a choice, which is why composer.go uses OR).
+// A field that is itself a choice ("GPL-2+ or Artistic") is kept whole and
+// parenthesized. The sbom package converts the DEP-5 short names to SPDX IDs.
 func parseDpkgCopyrightLicense(scanPath, pkgName string) string {
 	path := filepath.Join(scanPath, "usr", "share", "doc", pkgName, "copyright")
 	f, err := os.Open(path)
@@ -288,7 +305,15 @@ func parseDpkgCopyrightLicense(scanPath, pkgName string) string {
 	if len(licenses) == 0 {
 		return ""
 	}
-	return strings.Join(licenses, " OR ")
+	if len(licenses) == 1 {
+		return licenses[0]
+	}
+	for i, lic := range licenses {
+		if strings.Contains(lic, " ") {
+			licenses[i] = "(" + lic + ")"
+		}
+	}
+	return strings.Join(licenses, " and ")
 }
 
 // detectDPKGEcosystem reads <scanPath>/etc/os-release to determine the ecosystem name

@@ -46,6 +46,7 @@ var (
 	collectFormat     string
 	collectName       string
 	collectLifecycle  string
+	collectAuthor     string
 )
 
 func init() {
@@ -60,6 +61,7 @@ func init() {
 	collectCmd.Flags().StringVar(&collectFormat, "format", "cyclonedx", "Output format: cyclonedx, the only one (the heretix inventory JSON, --format json, has been removed)")
 	collectCmd.Flags().StringVar(&collectName, "name", "", "Override hostname in output (useful to distinguish multiple projects on the same host)")
 	collectCmd.Flags().StringVar(&collectLifecycle, "lifecycle", "", "Lifecycle phase recorded in the SBOM: operations, pre-build, build, post-build, design or discovery (default: operations for a filesystem root, pre-build for a directory, post-build for an image)")
+	collectCmd.Flags().StringVar(&collectAuthor, "author", "", "Organization responsible for the SBOM, recorded as metadata.authors (default: none, since heretix-cli cannot know it)")
 	rootCmd.AddCommand(collectCmd)
 }
 
@@ -239,7 +241,7 @@ func writeSBOM(inv *inventory.Inventory, path string) error {
 	if phase == "" {
 		phase = inferLifecycle(collectScanPath, inv.Type == "docker_image")
 	}
-	bom := sbom.GenerateCycloneDX(inv, sbom.Generator{Name: "heretix-cli", Version: sbomVersion(), Lifecycle: phase})
+	bom := sbom.GenerateCycloneDX(inv, sbom.Generator{Name: "heretix-cli", Version: sbomVersion(), Lifecycle: phase, Author: collectAuthor})
 	if err := sbom.WriteToFile(bom, path); err != nil {
 		return fmt.Errorf("write cyclonedx output: %w", err)
 	}

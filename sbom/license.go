@@ -20,6 +20,7 @@ import (
 // (which already emits SPDX-shaped "MIT OR Apache-2.0" strings) reliably
 // produce real SPDX syntax.
 func licenseChoiceFor(license string) cdx.LicenseChoice {
+	license = normalizeLicense(license)
 	if _, ok := spdxLicenseIDs[license]; ok {
 		return cdx.LicenseChoice{License: &cdx.License{ID: license}}
 	}
@@ -31,17 +32,16 @@ func licenseChoiceFor(license string) cdx.LicenseChoice {
 
 // isSPDXExpression reports whether s parses as a compound SPDX license
 // expression: license IDs joined by the uppercase "AND"/"OR"/"WITH"
-// operators and optional parentheses, e.g. "MIT AND (Apache-2.0 OR ISC)".
-// Every identifier token must be a real SPDX license ID (spdxLicenseIDs); a
+// operators and optional parentheses, e.g. "MIT AND (Apache-2.0 OR ISC)" or
+// "GPL-2.0-only WITH Linux-syscall-note". Every identifier token must be a
+// real SPDX license or exception ID (spdxLicenseIDs) or a LicenseRef-; a
 // lowercase "and"/"or", or any identifier not on that list, fails the parse
-// and falls through to license.name in licenseChoiceFor. This intentionally
-// doesn't implement the "WITH <exception-id>" or trailing "+" legacy
-// operators — a real use of either is rare enough among the package
-// managers heretix-cli reads that under-classifying it as free text (safe:
-// still valid CycloneDX, just less specific) is preferable to a parser that
-// risks accepting non-SPDX text as valid syntax.
+// and falls through to license.name in licenseChoiceFor. The trailing "+"
+// legacy operator is not read: under-classifying it as free text (safe: still
+// valid CycloneDX, just less specific) is preferable to a parser that risks
+// accepting non-SPDX text as valid syntax.
 func isSPDXExpression(s string) bool {
-	if !strings.Contains(s, " AND ") && !strings.Contains(s, " OR ") {
+	if !strings.Contains(s, " AND ") && !strings.Contains(s, " OR ") && !strings.Contains(s, " WITH ") {
 		return false
 	}
 	tokens := strings.FieldsFunc(s, func(r rune) bool {
@@ -49,8 +49,11 @@ func isSPDXExpression(s string) bool {
 	})
 	sawOperator := false
 	for _, tok := range tokens {
-		if tok == "AND" || tok == "OR" {
+		if tok == "AND" || tok == "OR" || tok == "WITH" {
 			sawOperator = true
+			continue
+		}
+		if strings.HasPrefix(tok, "LicenseRef-") {
 			continue
 		}
 		if _, ok := spdxLicenseIDs[tok]; !ok {

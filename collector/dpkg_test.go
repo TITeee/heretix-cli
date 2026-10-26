@@ -300,3 +300,37 @@ func TestParseSingleBuiltUsing(t *testing.T) {
 		}
 	}
 }
+
+// TestParseDpkgCopyrightLicense covers how the License fields of a DEP-5 file
+// combine: every one applies to some of the files, so the package is under all
+// of them ("and"), and a field that offers a choice stays one group.
+func TestParseDpkgCopyrightLicense(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "usr", "share", "doc", "curl")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	copyright := `Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+
+Files: *
+License: curl
+
+Files: lib/md4.c
+License: GPL-2+ or BSD-3-clause
+
+Files: debian/*
+License: curl
+
+License: curl
+ Permission to use ...
+`
+	if err := os.WriteFile(filepath.Join(dir, "copyright"), []byte(copyright), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := parseDpkgCopyrightLicense(root, "curl"), "curl and (GPL-2+ or BSD-3-clause)"; got != want {
+		t.Errorf("license = %q, want %q", got, want)
+	}
+	if got := parseDpkgCopyrightLicense(root, "missing"); got != "" {
+		t.Errorf("no copyright file: license = %q, want empty", got)
+	}
+}

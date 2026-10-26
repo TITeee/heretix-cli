@@ -192,8 +192,13 @@ func TestGenerateCycloneDXMergesCollidingPURLs(t *testing.T) {
 	}
 	// The root (metadata.component) is a valid dependency ref too.
 	seen[bom.Metadata.Component.BOMRef] = true
-	if got, want := len(*bom.Dependencies), 3; got != want {
-		t.Errorf("got %d dependency entries, want %d (one per package component, plus the root)", got, want)
+	// slf4j-simple comes from pom.xml, which records no dependency graph, so it
+	// is in the "unknown" composition instead of having an empty entry.
+	if got, want := len(*bom.Dependencies), 2; got != want {
+		t.Errorf("got %d dependency entries, want %d (slf4j-api, which has an edge, plus the root)", got, want)
+	}
+	if bom.Compositions == nil || len(*(*bom.Compositions)[0].Dependencies) != 1 {
+		t.Errorf("compositions = %+v, want slf4j-simple as unknown", bom.Compositions)
 	}
 	for _, d := range *bom.Dependencies {
 		if !seen[d.Ref] {
@@ -655,5 +660,74 @@ func TestGenerateCycloneDXSaysHowItWasMade(t *testing.T) {
 	}
 	if GenerateCycloneDX(inv, Generator{Name: "heretix-cli", Version: "test"}).Metadata.Lifecycles != nil {
 		t.Error("lifecycles written without a phase")
+	}
+
+	if first.Metadata.Authors != nil {
+		t.Error("an author was written although none was given")
+	}
+	withAuthor := GenerateCycloneDX(inv, Generator{Name: "heretix-cli", Version: "test", Author: "Example Corp"})
+	if a := withAuthor.Metadata.Authors; a == nil || len(*a) != 1 || (*a)[0].Name != "Example Corp" {
+		t.Errorf("authors = %+v, want Example Corp", a)
+	}
+}
+
+// TestGenerateCycloneDXStatesUnknownDependencies: an OS package's dependencies
+// are not collected, so it must not get an empty dependency entry (which reads
+// as "depends on nothing") but be listed in an "unknown" composition. A package
+// from a source with a dependency graph keeps its entry, even when empty.
+func TestGenerateCycloneDXStatesUnknownDependencies(t *testing.T) {
+	inv := &inventory.Inventory{
+		Hostname: "host1",
+		OS:       inventory.OSInfo{ID: "debian", VersionID: "13"},
+		Packages: []inventory.Package{
+			{Name: "curl", Version: "8.14.1-2", Ecosystem: "Debian:13", Source: "dpkg"},
+			{Name: "left-pad", Version: "1.3.0", Ecosystem: "npm", Source: "package-lock.json"},
+		},
+	}
+	bom := GenerateCycloneDX(inv, testGenerator)
+	curl := PackagePURL(inv.Packages[0], "debian")
+	leftPad := PackagePURL(inv.Packages[1], "debian")
+
+	refs := map[string]bool{}
+	for _, d := range *bom.Dependencies {
+		refs[d.Ref] = true
+	}
+	if refs[curl] {
+		t.Error("the dpkg package has a dependency entry; its dependencies are unknown")
+	}
+	if !refs[leftPad] {
+		t.Error("the package-lock.json package lost its (empty) dependency entry")
+	}
+	if bom.Compositions == nil || len(*bom.Compositions) != 1 {
+		t.Fatalf("compositions = %+v, want one", bom.Compositions)
+	}
+	c := (*bom.Compositions)[0]
+	if c.Aggregate != cdx.CompositionAggregateUnknown || c.Dependencies == nil || len(*c.Dependencies) != 1 || string((*c.Dependencies)[0]) != curl {
+		t.Errorf("composition = %+v, want unknown for %s only", c, curl)
+	}
+}
+
+// TestGenerateCycloneDXWritesSupplier: the producer the package manager
+// recorded becomes the component's supplier; an unknown one is left out.
+func TestGenerateCycloneDXWritesSupplier(t *testing.T) {
+	inv := &inventory.Inventory{
+		Hostname: "host1",
+		OS:       inventory.OSInfo{ID: "rhel", VersionID: "9.8"},
+		Packages: []inventory.Package{
+			{Name: "bash", Version: "5.1.8-9.el9", Ecosystem: "Red Hat:9", Source: "rpm", Arch: "x86_64", Supplier: "Red Hat, Inc."},
+			{Name: "requests", Version: "2.31.0", Ecosystem: "PyPI", Source: "requirements.txt"},
+		},
+	}
+	for _, c := range libraryComponents(GenerateCycloneDX(inv, testGenerator)) {
+		switch c.Name {
+		case "bash":
+			if c.Supplier == nil || c.Supplier.Name != "Red Hat, Inc." {
+				t.Errorf("bash supplier = %+v, want Red Hat, Inc.", c.Supplier)
+			}
+		case "requests":
+			if c.Supplier != nil {
+				t.Errorf("requests supplier = %+v, want none (unknown)", c.Supplier)
+			}
+		}
 	}
 }

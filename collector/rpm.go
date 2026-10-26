@@ -74,6 +74,7 @@ func (c *RPMCollector) Collect(scanPath string, verbose bool, isContainer bool) 
 			Source:     "rpm",
 			License:    e.License,
 			Arch:       e.Arch,
+			Supplier:   e.Vendor,
 		}, sourceNameFromSourceRPM(e.SourceRpm), ""))
 	}
 

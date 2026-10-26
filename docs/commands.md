@@ -40,6 +40,7 @@ heretix-cli collect --image myapp:latest --dockerfile ./Dockerfile --output full
 | `--skip` | (none) | Sources to skip (e.g. `--skip npm`) |
 | `--only` | (none) | Collect only these sources (e.g. `--only windows`, or `--only pypi,npm`); every other source is skipped. Cannot be combined with `--skip` (exit code 2). A name that is not a source is an error. A source that does not run on this system (`windows` on Linux, `rpm` on a Windows host) collects nothing, with a warning |
 | `--lifecycle` | inferred | Lifecycle phase recorded in the SBOM (`metadata.lifecycles`): `operations`, `pre-build`, `build`, `post-build`, `design` or `discovery`. Defaults to `operations` for a filesystem root, `pre-build` for any other directory, `post-build` for an image. Set it when the default is wrong, e.g. `operations` for a deployed application directory |
+| `--author` | (none) | Organization responsible for the SBOM, recorded as `metadata.authors`. heretix-cli cannot know it, so none is written unless given |
 | `--verbose` | `false` | Enable verbose logging |
 | `--image` | (none) | Docker image reference to scan (e.g. `nginx:latest`) |
 | `--dockerfile` | (none) | Dockerfile path: also chain-scans the FROM base image |

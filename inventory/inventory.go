@@ -44,6 +44,12 @@ type Package struct {
 	// the package identity: per-arch Rocky/Oracle Linux advisory data can
 	// only be matched against a package whose PURL carries its exact arch.
 	Arch string `json:"arch,omitempty"`
+	// Supplier is who publishes the package, where the package manager records
+	// it: rpm's Vendor tag ("Red Hat, Inc."), the Origin of the apt repository
+	// a deb came from ("Debian"), Microsoft for Windows. "" means unknown --
+	// never a guess from the distribution, since a third-party package on a
+	// distribution is not the distribution's.
+	Supplier string `json:"supplier,omitempty"`
 	// Features lists the optional features installed on a Windows Server
 	// (DISM names, "DNS-Server-Full-Role"), on the package for the OS itself.
 	// heretix-api names the features a role's CVEs need, so a consumer can set
@@ -169,6 +175,9 @@ func mergePkg(a, b Package) Package {
 	// License: prefer non-empty
 	if a.License == "" {
 		a.License = b.License
+	}
+	if a.Supplier == "" {
+		a.Supplier = b.Supplier
 	}
 	// Deps: prefer non-empty
 	if len(a.Deps) == 0 {

@@ -133,6 +133,7 @@ func windowsServerPackage(v windowsVersion) (p inventory.Package, ok bool, warni
 		Ecosystem: "advisory",
 		Source:    "windows-registry",
 		Location:  windowsVersionKey,
+		Supplier:  "Microsoft Corporation",
 	}, true, ""
 }
 
