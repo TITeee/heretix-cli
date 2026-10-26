@@ -7,10 +7,12 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"runtime/debug"
 	"strings"
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
 	"github.com/TITeee/heretix-cli/inventory"
+	"github.com/google/uuid"
 )
 
 var ecosystemToPURLType = map[string]string{
@@ -41,7 +43,36 @@ var ecosystemToPURLType = map[string]string{
 
 // GenerateCycloneDX converts an Inventory to a CycloneDX BOM.
 // version is the heretix-cli version string recorded in metadata.tools.
-func GenerateCycloneDX(inv *inventory.Inventory, version string) *cdx.BOM {
+// Generator is what an SBOM says about how it was made: the tool and its version
+// (CISA's 2026 minimum elements "SBOM Tool Name" and "SBOM Tool Version") and the
+// stage of the software's life the data comes from ("SBOM Generation Context").
+type Generator struct {
+	// Name is the program that wrote the SBOM: heretix-cli, or a contrib tool
+	// built on this package such as rpmqa2sbom.
+	Name    string
+	Version string
+	// Lifecycle tells a reader how to take the list: "operations" is what a
+	// running system has installed, "pre-build" what a build would pull in
+	// (development dependencies included), "post-build" a built image that may
+	// or may not be running. Omitted from the SBOM when empty.
+	Lifecycle cdx.LifecyclePhase
+}
+
+// BuildRevision is the short commit this binary was built from, or "unknown".
+// A release build carries its version instead; this is for "dev" builds and
+// the contrib tools, which have no version of their own.
+func BuildRevision() string {
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, s := range info.Settings {
+			if s.Key == "vcs.revision" && len(s.Value) >= 7 {
+				return s.Value[:7]
+			}
+		}
+	}
+	return "unknown"
+}
+
+func GenerateCycloneDX(inv *inventory.Inventory, gen Generator) *cdx.BOM {
 	pkgs := uniqueByPURL(inv)
 
 	components := make([]cdx.Component, 0, len(pkgs))
@@ -156,13 +187,24 @@ func GenerateCycloneDX(inv *inventory.Inventory, version string) *cdx.BOM {
 		depItems = append(depItems, cdx.Dependency{Ref: root.BOMRef, Dependencies: &directRefs})
 	}
 
-	legacyTools := []cdx.Tool{{Vendor: "heretix", Name: "heretix-cli", Version: version}}
+	// tools.components is the CycloneDX 1.5+ form; the older tools[] array is
+	// deprecated, and CISA's 2026 minimum elements ask for no deprecated format.
+	tools := []cdx.Component{{Type: cdx.ComponentTypeApplication, Group: "heretix", Name: gen.Name, Version: gen.Version}}
 	bom := cdx.NewBOM()
 	bom.SpecVersion = cdx.SpecVersion1_6
+	// Every run describes the system as it is at that moment, so it is a new
+	// SBOM, not a revision of an earlier one: a new random serial number and
+	// version 1. heretix-cli keeps no state between runs, so it could not count
+	// revisions honestly; SBOMs of the same host are tied together by
+	// metadata.component, not by the serial number.
+	bom.SerialNumber = uuid.New().URN()
 	bom.Metadata = &cdx.Metadata{
 		Timestamp: inv.ScannedAt,
-		Tools:     &cdx.ToolsChoice{Tools: &legacyTools},
+		Tools:     &cdx.ToolsChoice{Components: &tools},
 		Component: root,
+	}
+	if gen.Lifecycle != "" {
+		bom.Metadata.Lifecycles = &[]cdx.Lifecycle{{Phase: gen.Lifecycle}}
 	}
 	bom.Components = &components
 	bom.Dependencies = &depItems

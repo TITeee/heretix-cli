@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 
+	cdx "github.com/CycloneDX/cyclonedx-go"
 	"github.com/TITeee/heretix-cli/collector"
 	"github.com/TITeee/heretix-cli/container"
 	"github.com/TITeee/heretix-cli/inventory"
@@ -44,6 +45,7 @@ var (
 	collectDockerfile string
 	collectFormat     string
 	collectName       string
+	collectLifecycle  string
 )
 
 func init() {
@@ -57,6 +59,7 @@ func init() {
 	collectCmd.Flags().StringVar(&collectDockerfile, "dockerfile", "", "Dockerfile path: also scan the base image from its FROM instruction")
 	collectCmd.Flags().StringVar(&collectFormat, "format", "cyclonedx", "Output format: cyclonedx, the only one (the heretix inventory JSON, --format json, has been removed)")
 	collectCmd.Flags().StringVar(&collectName, "name", "", "Override hostname in output (useful to distinguish multiple projects on the same host)")
+	collectCmd.Flags().StringVar(&collectLifecycle, "lifecycle", "", "Lifecycle phase recorded in the SBOM: operations, pre-build, build, post-build, design or discovery (default: operations for a filesystem root, pre-build for a directory, post-build for an image)")
 	rootCmd.AddCommand(collectCmd)
 }
 
@@ -73,6 +76,9 @@ func runCollect(cmd *cobra.Command, args []string) error {
 	skip, err := collectorSkip(collectOnly, collectSkip)
 	if err != nil {
 		return err
+	}
+	if collectLifecycle != "" && !validLifecycle(collectLifecycle) {
+		return fmt.Errorf("--lifecycle %q: use one of %s", collectLifecycle, strings.Join(lifecyclePhases, ", "))
 	}
 
 	if collectImage != "" {
@@ -180,8 +186,60 @@ func resolveOutputPath() string {
 	return "sbom.json"
 }
 
+// lifecyclePhases are the CycloneDX phases --lifecycle accepts ("decommission"
+// describes software being retired, which collect never looks at).
+var lifecyclePhases = []string{"operations", "pre-build", "build", "post-build", "design", "discovery"}
+
+func validLifecycle(phase string) bool {
+	for _, p := range lifecyclePhases {
+		if p == phase {
+			return true
+		}
+	}
+	return false
+}
+
+// inferLifecycle is the phase an SBOM gets when --lifecycle is not given. A
+// filesystem root is a running system ("operations"): its OS packages are
+// installed, and the lockfiles found on it belong to deployed applications. Any
+// other directory is taken for a project checkout ("pre-build"); a deployed
+// application directory such as /opt/app is "operations" too, which heretix-cli
+// cannot tell apart, so --lifecycle overrides it. An image is a built artifact
+// that may or may not be running ("post-build").
+func inferLifecycle(scanPath string, image bool) cdx.LifecyclePhase {
+	if image {
+		return cdx.LifecyclePhasePostBuild
+	}
+	if isFilesystemRoot(scanPath) {
+		return cdx.LifecyclePhaseOperations
+	}
+	return cdx.LifecyclePhasePreBuild
+}
+
+// isFilesystemRoot reports whether path is "/" or a drive root such as "C:".
+func isFilesystemRoot(path string) bool {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	return filepath.Dir(abs) == abs
+}
+
+// sbomVersion is heretix-cli's version, with the commit added to a "dev" build
+// so that an SBOM from a local build still says which code wrote it.
+func sbomVersion() string {
+	if rootCmd.Version == "dev" {
+		return "dev (" + sbom.BuildRevision() + ")"
+	}
+	return rootCmd.Version
+}
+
 func writeSBOM(inv *inventory.Inventory, path string) error {
-	bom := sbom.GenerateCycloneDX(inv, rootCmd.Version)
+	phase := cdx.LifecyclePhase(collectLifecycle)
+	if phase == "" {
+		phase = inferLifecycle(collectScanPath, inv.Type == "docker_image")
+	}
+	bom := sbom.GenerateCycloneDX(inv, sbom.Generator{Name: "heretix-cli", Version: sbomVersion(), Lifecycle: phase})
 	if err := sbom.WriteToFile(bom, path); err != nil {
 		return fmt.Errorf("write cyclonedx output: %w", err)
 	}

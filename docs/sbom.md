@@ -20,6 +20,9 @@
 - **`bom.dependencies`** section with full dependency graph (npm package-lock.json, pnpm-lock.yaml, uv.lock, poetry.lock, composer.lock, `go list`, PyPI site-packages)
 - **`metadata.component`** with OCI PURL and image digest for container scans
 - An **`operating-system` component** (os-release `ID` / `VERSION_ID`, pretty name as description) when an OS was detected
+- A **`serialNumber`** (`urn:uuid:`, new on every run) and **`version: 1`**. Each run describes the system as it is then, so it is a new SBOM, not a revision of an earlier one; SBOMs of the same host are tied together by `metadata.component`
+- **`metadata.tools.components`** naming the program that wrote the SBOM and its version (`heretix-cli` and its release, `dev (<commit>)` for a local build; `rpmqa2sbom` / `winserver2sbom` and their commit for the contrib tools). This is the CycloneDX 1.5+ form; 0.5.3 and earlier wrote the deprecated `metadata.tools` array
+- **`metadata.lifecycles`**: the stage of the software's life the data comes from. `operations` for a filesystem root (a running system; the lockfiles found on it belong to deployed applications), `pre-build` for any other directory (taken for a project checkout), `post-build` for an image. `--lifecycle` overrides it, e.g. `--lifecycle operations` for a deployed application directory such as `/opt/app`. The contrib tools write `operations`
 
 ## Coverage by lockfile
 

@@ -1,6 +1,7 @@
 package sbom
 
 import (
+	"strings"
 	"testing"
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
@@ -149,7 +150,7 @@ func TestGenerateCycloneDXMergesCollidingPURLs(t *testing.T) {
 		},
 	}
 
-	bom := GenerateCycloneDX(inv, "test")
+	bom := GenerateCycloneDX(inv, testGenerator)
 
 	if bom.Components == nil {
 		t.Fatal("BOM has no components")
@@ -221,7 +222,7 @@ func TestGenerateCycloneDXLeavesInventoryUnchanged(t *testing.T) {
 		},
 	}
 
-	GenerateCycloneDX(inv, "test")
+	GenerateCycloneDX(inv, testGenerator)
 
 	if got, want := len(inv.Packages), 2; got != want {
 		t.Errorf("inventory has %d packages after SBOM generation, want %d — "+
@@ -262,7 +263,7 @@ func TestRoundTripThroughCycloneDX(t *testing.T) {
 		},
 	}
 
-	bom := GenerateCycloneDX(inv, "test")
+	bom := GenerateCycloneDX(inv, testGenerator)
 	got := FromCycloneDX(bom)
 
 	if got.Hostname != inv.Hostname {
@@ -348,7 +349,7 @@ func TestRoundTripPreservesScopeAndCategory(t *testing.T) {
 		},
 	}
 
-	got := FromCycloneDX(GenerateCycloneDX(inv, "test"))
+	got := FromCycloneDX(GenerateCycloneDX(inv, testGenerator))
 	if len(got.Packages) != len(inv.Packages) {
 		t.Fatalf("got %d packages, want %d", len(got.Packages), len(inv.Packages))
 	}
@@ -378,7 +379,7 @@ func TestGenerateCycloneDXKeepsNonRuntimeComponents(t *testing.T) {
 				SourcePackage: "linux", Category: "kernel", Scope: "excluded"},
 		},
 	}
-	bom := GenerateCycloneDX(inv, "test")
+	bom := GenerateCycloneDX(inv, testGenerator)
 	pkgs := libraryComponents(bom)
 	if len(pkgs) != 1 {
 		t.Fatalf("expected the kernel-header component to still be present in the BOM, got %v", bom.Components)
@@ -421,7 +422,7 @@ func TestGenerateCycloneDXEmitsStandardOSAndDirectEdges(t *testing.T) {
 			{Name: "openssl-libs", Version: "1:3.0.7-24.el9", Ecosystem: "Rocky Linux:9", Source: "rpm"},
 		},
 	}
-	bom := GenerateCycloneDX(inv, "test")
+	bom := GenerateCycloneDX(inv, testGenerator)
 
 	var os *cdx.Component
 	for i, c := range *bom.Components {
@@ -469,7 +470,7 @@ func TestGenerateCycloneDXOmitsWhatIsUnknown(t *testing.T) {
 			{Name: "requests", Version: "2.31.0", Ecosystem: "PyPI", Source: "requirements.txt"},
 		},
 	}
-	bom := GenerateCycloneDX(inv, "test")
+	bom := GenerateCycloneDX(inv, testGenerator)
 	for _, c := range *bom.Components {
 		if c.Type == cdx.ComponentTypeOS {
 			t.Errorf("unexpected operating-system component %q with no OS detected", c.Name)
@@ -544,7 +545,7 @@ func TestWindowsServerPURLAndRoundTrip(t *testing.T) {
 		t.Errorf("PackagePURL() = %q, want %q", got, want)
 	}
 
-	got := FromCycloneDX(GenerateCycloneDX(inv, "test")).Packages
+	got := FromCycloneDX(GenerateCycloneDX(inv, testGenerator)).Packages
 	if len(got) != 1 || got[0].Name != inv.Packages[0].Name || got[0].Version != inv.Packages[0].Version ||
 		got[0].Ecosystem != "advisory" || got[0].Source != "windows-registry" || got[0].Location != inv.Packages[0].Location {
 		t.Errorf("round trip = %+v, want %+v", got, inv.Packages[0])
@@ -565,7 +566,7 @@ func TestRoundTripPreservesWindowsFeatures(t *testing.T) {
 		inv := &inventory.Inventory{Packages: []inventory.Package{
 			{Name: "Windows Server 2022", Version: "10.0.20348.5761", Ecosystem: "advisory", Source: "windows-registry", Features: tc.features},
 		}}
-		got := FromCycloneDX(GenerateCycloneDX(inv, "test")).Packages[0].Features
+		got := FromCycloneDX(GenerateCycloneDX(inv, testGenerator)).Packages[0].Features
 		if (got == nil) != (tc.features == nil) || len(got) != len(tc.features) {
 			t.Errorf("%s: Features = %#v, want %#v", tc.name, got, tc.features)
 			continue
@@ -585,7 +586,7 @@ func TestRoundTripPreservesRPMArchAndEpoch(t *testing.T) {
 			{Name: "openssl-libs", Version: "1:3.0.7-24.el9", Ecosystem: "Rocky Linux:9", Source: "rpm", Arch: "x86_64"},
 		},
 	}
-	bom := GenerateCycloneDX(inv, "test")
+	bom := GenerateCycloneDX(inv, testGenerator)
 	pkgs := libraryComponents(bom)
 	if len(pkgs) != 1 || pkgs[0].Version != "1:3.0.7-24.el9" {
 		t.Fatalf("component version = %v, want the epoch kept as rpm displays it", pkgs)
@@ -608,12 +609,51 @@ func TestRoundTripPreservesSourceVersion(t *testing.T) {
 			{Name: "mount", Version: "2.41-5", Ecosystem: "Debian:13", Source: "dpkg", SourcePackage: "util-linux"},
 		},
 	}
-	back := FromCycloneDX(GenerateCycloneDX(inv, "test"))
+	back := FromCycloneDX(GenerateCycloneDX(inv, testGenerator))
 	got := map[string][2]string{}
 	for _, p := range back.Packages {
 		got[p.Name] = [2]string{p.SourcePackage, p.SourceVersion}
 	}
 	if got["dmsetup"] != [2]string{"lvm2", "2.03.31-2"} || got["mount"] != [2]string{"util-linux", ""} {
 		t.Errorf("round trip lost the source: %v", got)
+	}
+}
+
+var testGenerator = Generator{Name: "heretix-cli", Version: "test", Lifecycle: cdx.LifecyclePhaseOperations}
+
+// TestGenerateCycloneDXSaysHowItWasMade covers CISA's 2026 minimum elements
+// for the SBOM itself: its version, the tool that wrote it, and the lifecycle
+// phase its data comes from.
+func TestGenerateCycloneDXSaysHowItWasMade(t *testing.T) {
+	inv := &inventory.Inventory{Hostname: "host1", OS: inventory.OSInfo{ID: "debian", VersionID: "13"}}
+	gen := Generator{Name: "rpmqa2sbom", Version: "abc1234", Lifecycle: cdx.LifecyclePhaseOperations}
+	first, second := GenerateCycloneDX(inv, gen), GenerateCycloneDX(inv, gen)
+
+	if !strings.HasPrefix(first.SerialNumber, "urn:uuid:") {
+		t.Errorf("serialNumber = %q, want a urn:uuid", first.SerialNumber)
+	}
+	if first.SerialNumber == second.SerialNumber {
+		t.Error("two runs share a serialNumber; each run is a new SBOM")
+	}
+	if first.Version != 1 {
+		t.Errorf("version = %d, want 1", first.Version)
+	}
+
+	tools := first.Metadata.Tools
+	if tools.Tools != nil {
+		t.Error("the deprecated tools[] array is still written")
+	}
+	if tools.Components == nil || len(*tools.Components) != 1 {
+		t.Fatalf("tools.components = %+v, want one", tools.Components)
+	}
+	if c := (*tools.Components)[0]; c.Name != "rpmqa2sbom" || c.Version != "abc1234" || c.Group != "heretix" || c.Type != cdx.ComponentTypeApplication {
+		t.Errorf("tool = %+v, want application heretix/rpmqa2sbom abc1234", c)
+	}
+
+	if l := first.Metadata.Lifecycles; l == nil || len(*l) != 1 || (*l)[0].Phase != cdx.LifecyclePhaseOperations {
+		t.Errorf("lifecycles = %+v, want [operations]", l)
+	}
+	if GenerateCycloneDX(inv, Generator{Name: "heretix-cli", Version: "test"}).Metadata.Lifecycles != nil {
+		t.Error("lifecycles written without a phase")
 	}
 }

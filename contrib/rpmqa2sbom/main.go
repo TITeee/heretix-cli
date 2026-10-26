@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	cdx "github.com/CycloneDX/cyclonedx-go"
 	"github.com/TITeee/heretix-cli/collector"
 	"github.com/TITeee/heretix-cli/inventory"
 	"github.com/TITeee/heretix-cli/sbom"
@@ -99,7 +100,7 @@ func run(dir string, rest []string) error {
 	if len(rest) == 1 {
 		out = rest[0]
 	}
-	if err := sbom.WriteToFile(sbom.GenerateCycloneDX(inv, "rpmqa2sbom"), out); err != nil {
+	if err := sbom.WriteToFile(sbom.GenerateCycloneDX(inv, sbom.Generator{Name: "rpmqa2sbom", Version: sbom.BuildRevision(), Lifecycle: cdx.LifecyclePhaseOperations}), out); err != nil {
 		return err
 	}
 	kernel, _ := read("uname.txt")

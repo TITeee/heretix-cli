@@ -106,7 +106,7 @@ func TestLoadSBOM(t *testing.T) {
 			Packages: []inventory.Package{{Name: "curl", Version: "8.5.0", Ecosystem: "apk"}},
 		}
 		path := filepath.Join(t.TempDir(), "sbom.json")
-		if err := sbom.WriteToFile(sbom.GenerateCycloneDX(original, "0.0.0-test"), path); err != nil {
+		if err := sbom.WriteToFile(sbom.GenerateCycloneDX(original, sbom.Generator{Name: "heretix-cli", Version: "0.0.0-test"}), path); err != nil {
 			t.Fatal(err)
 		}
 
