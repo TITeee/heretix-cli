@@ -749,3 +749,25 @@ func TestBuildRevision(t *testing.T) {
 		}
 	}
 }
+
+// TestGenerateCycloneDXDependsOnHasNoDuplicates: the CycloneDX schema rejects a
+// repeated dependsOn entry, and a package can name one dependency twice.
+func TestGenerateCycloneDXDependsOnHasNoDuplicates(t *testing.T) {
+	inv := &inventory.Inventory{
+		Hostname: "host1",
+		Packages: []inventory.Package{
+			{Name: "pyjwt", Version: "2.10.1", Ecosystem: "PyPI", Source: "dist-info",
+				Deps: []string{"pkg:pypi/cryptography@43.0.0", "pkg:pypi/cryptography@43.0.0", "pkg:pypi/idna@3.10"}},
+			{Name: "cryptography", Version: "43.0.0", Ecosystem: "PyPI", Source: "dist-info"},
+			{Name: "idna", Version: "3.10", Ecosystem: "PyPI", Source: "dist-info"},
+		},
+	}
+	for _, d := range *GenerateCycloneDX(inv, testGenerator).Dependencies {
+		if d.Dependencies == nil || !strings.Contains(d.Ref, "pyjwt") {
+			continue
+		}
+		if got := *d.Dependencies; len(got) != 2 || got[0] != "pkg:pypi/cryptography@43.0.0" || got[1] != "pkg:pypi/idna@3.10" {
+			t.Errorf("dependsOn = %v, want cryptography and idna once each, in order", got)
+		}
+	}
+}

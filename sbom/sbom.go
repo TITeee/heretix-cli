@@ -207,8 +207,16 @@ func GenerateCycloneDX(inv *inventory.Inventory, gen Generator) *cdx.BOM {
 		if len(p.Deps) == 0 && !dependencyGraphSources[p.Source] {
 			unknownDeps = append(unknownDeps, cdx.BOMReference(purl))
 		} else {
-			deps := make([]string, len(p.Deps))
-			copy(deps, p.Deps)
+			// The schema forbids a repeated dependsOn entry, and a package can
+			// name the same dependency twice (a Requires-Dist per extra or marker).
+			deps := make([]string, 0, len(p.Deps))
+			seen := make(map[string]bool, len(p.Deps))
+			for _, d := range p.Deps {
+				if !seen[d] {
+					seen[d] = true
+					deps = append(deps, d)
+				}
+			}
 			depItems = append(depItems, cdx.Dependency{Ref: purl, Dependencies: &deps})
 		}
 		if p.Direct != nil {
