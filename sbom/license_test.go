@@ -41,6 +41,9 @@ func TestLicenseChoiceFor(t *testing.T) {
 		{"a deprecated SPDX ID", "LGPL-2.1+", cdx.LicenseChoice{License: &cdx.License{ID: "LGPL-2.1-or-later"}}},
 		{"a deprecated SPDX ID in an expression", "MIT AND GPL-2.0", cdx.LicenseChoice{Expression: "MIT AND GPL-2.0-only"}},
 		{"a DEP-5 exception stays free text", "GPL-2+ with OpenSSL exception", cdx.LicenseChoice{License: &cdx.License{Name: "GPL-2+ with OpenSSL exception"}}},
+		// IDs added to the SPDX list after 3.17; RHEL 10 writes them (glibc's license).
+		{"an ID newer than SPDX 3.17", "SunPro", cdx.LicenseChoice{License: &cdx.License{ID: "SunPro"}}},
+		{"newer IDs and an exception in an expression", "LGPL-2.1-or-later AND Unicode-3.0 AND GPL-3.0-or-later WITH Texinfo-exception", cdx.LicenseChoice{Expression: "LGPL-2.1-or-later AND Unicode-3.0 AND GPL-3.0-or-later WITH Texinfo-exception"}},
 		// RHEL's kernel license is SPDX already, with exceptions.
 		{"an SPDX exception", "GPL-2.0-only WITH Linux-syscall-note", cdx.LicenseChoice{Expression: "GPL-2.0-only WITH Linux-syscall-note"}},
 		{"an exception inside an expression", "(GPL-2.0-only WITH Linux-syscall-note) OR MIT", cdx.LicenseChoice{Expression: "(GPL-2.0-only WITH Linux-syscall-note) OR MIT"}},
