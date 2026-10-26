@@ -65,15 +65,37 @@ type Generator struct {
 // BuildRevision is the short commit this binary was built from, or "unknown".
 // A release build carries its version instead; this is for "dev" builds and
 // the contrib tools, which have no version of their own.
+//
+// A build from a working tree with uncommitted changes says so ("e0db3d4,
+// modified"): it is not that commit, and an SBOM tested against it would
+// otherwise be read as the commit's output.
 func BuildRevision() string {
-	if info, ok := debug.ReadBuildInfo(); ok {
-		for _, s := range info.Settings {
-			if s.Key == "vcs.revision" && len(s.Value) >= 7 {
-				return s.Value[:7]
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "unknown"
+	}
+	return buildRevision(info.Settings)
+}
+
+func buildRevision(settings []debug.BuildSetting) string {
+	revision, modified := "", false
+	for _, s := range settings {
+		switch s.Key {
+		case "vcs.revision":
+			if len(s.Value) >= 7 {
+				revision = s.Value[:7]
 			}
+		case "vcs.modified":
+			modified = s.Value == "true"
 		}
 	}
-	return "unknown"
+	if revision == "" {
+		return "unknown"
+	}
+	if modified {
+		return revision + ", modified"
+	}
+	return revision
 }
 
 func GenerateCycloneDX(inv *inventory.Inventory, gen Generator) *cdx.BOM {

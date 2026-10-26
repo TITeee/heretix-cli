@@ -1,6 +1,7 @@
 package sbom
 
 import (
+	"runtime/debug"
 	"strings"
 	"testing"
 
@@ -728,6 +729,23 @@ func TestGenerateCycloneDXWritesSupplier(t *testing.T) {
 			if c.Supplier != nil {
 				t.Errorf("requests supplier = %+v, want none (unknown)", c.Supplier)
 			}
+		}
+	}
+}
+
+func TestBuildRevision(t *testing.T) {
+	rev := debug.BuildSetting{Key: "vcs.revision", Value: "e0db3d4aabbccdd"}
+	cases := []struct {
+		settings []debug.BuildSetting
+		want     string
+	}{
+		{[]debug.BuildSetting{rev, {Key: "vcs.modified", Value: "false"}}, "e0db3d4"},
+		{[]debug.BuildSetting{rev, {Key: "vcs.modified", Value: "true"}}, "e0db3d4, modified"},
+		{nil, "unknown"},
+	}
+	for _, c := range cases {
+		if got := buildRevision(c.settings); got != c.want {
+			t.Errorf("buildRevision(%v) = %q, want %q", c.settings, got, c.want)
 		}
 	}
 }

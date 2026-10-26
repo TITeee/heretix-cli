@@ -96,7 +96,7 @@ func (c *DPKGCollector) parseStatusFile(statusPath, scanPath string, verbose boo
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
-	applyAptLists(withArchs(pkgs, archs), scanPath)
+	applyAptLists(withArchs(pkgs, archs), scanPath, verbose)
 
 	if verbose {
 		log.Printf("[dpkg] collected %d packages from %s", len(pkgs), statusPath)
@@ -176,7 +176,7 @@ func (c *DPKGCollector) collectViaDpkgQuery(verbose bool) ([]inventory.Package, 
 		}
 		archs = append(archs, arch)
 	}
-	applyAptLists(withArchs(pkgs, archs), "/")
+	applyAptLists(withArchs(pkgs, archs), "/", verbose)
 
 	if verbose {
 		log.Printf("[dpkg] collected %d packages via dpkg-query", len(pkgs))

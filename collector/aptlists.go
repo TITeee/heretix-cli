@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"compress/gzip"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,19 +45,24 @@ func aptKey(name, version, arch string) string { return name + "\x00" + version 
 // same file leave it out too. Uncompressed and gzip lists are read; apt's
 // default is uncompressed, and lz4/xz lists (an Acquire::GzipIndexes-style
 // setting) are skipped.
-func readAptLists(scanPath string, want map[string]bool) map[string]aptEntry {
+//
+// It also returns how many Packages lists it read: none is the usual case on a
+// cloud image or in a container, whose lists are emptied until "apt update".
+func readAptLists(scanPath string, want map[string]bool) (map[string]aptEntry, int) {
 	dir := filepath.Join(scanPath, "var", "lib", "apt", "lists")
 	files, err := os.ReadDir(dir)
 	if err != nil {
-		return nil
+		return nil, 0
 	}
 	found := map[string]aptEntry{}
 	conflict := map[string]bool{}
+	read := 0
 	for _, f := range files {
 		name := f.Name()
 		if f.IsDir() || !(strings.HasSuffix(name, "_Packages") || strings.HasSuffix(name, "_Packages.gz")) {
 			continue
 		}
+		read++
 		origin := releaseOrigin(dir, name)
 		readPackagesIndex(filepath.Join(dir, name), func(pkg, version, arch, sha256 string) {
 			if !want[pkg] || sha256 == "" {
@@ -78,7 +84,7 @@ func readAptLists(scanPath string, want map[string]bool) map[string]aptEntry {
 	for k := range conflict {
 		delete(found, k)
 	}
-	return found
+	return found, read
 }
 
 // readPackagesIndex calls fn for every stanza of a Packages index.
@@ -167,20 +173,28 @@ func withArchs(pkgs []inventory.Package, archs []string) []inventoryPackageRef {
 }
 
 // applyAptLists gives each package the .deb digest and the publisher apt's
-// lists record for its exact version, where they record one.
-func applyAptLists(pkgs []inventoryPackageRef, scanPath string) {
+// lists record for its exact version, where they record one. With verbose it
+// says how many matched, since none at all (no lists, or a host far behind on
+// updates) is otherwise indistinguishable from a bug.
+func applyAptLists(pkgs []inventoryPackageRef, scanPath string, verbose bool) {
 	want := make(map[string]bool, len(pkgs))
 	for _, p := range pkgs {
 		want[p.pkg.Name] = true
 	}
-	index := readAptLists(scanPath, want)
-	if len(index) == 0 {
-		return
-	}
+	index, lists := readAptLists(scanPath, want)
+	matched := 0
 	for _, p := range pkgs {
 		if e, ok := index[aptKey(p.pkg.Name, p.pkg.Version, p.arch)]; ok {
 			p.pkg.Integrity = "sha256:" + e.SHA256
 			p.pkg.Supplier = e.Origin
+			matched++
+		}
+	}
+	if verbose {
+		if lists == 0 {
+			log.Printf("[dpkg] no apt package lists under %s (run apt update): .deb hashes and suppliers are left out", filepath.Join(scanPath, "var", "lib", "apt", "lists"))
+		} else {
+			log.Printf("[dpkg] apt package lists: %d read, %d of %d packages matched by exact version (the rest are not the version the repositories offer now)", lists, matched, len(pkgs))
 		}
 	}
 }

@@ -35,6 +35,15 @@ var licenseAliases = map[string]string{
 	"Artistic 2.0": "Artistic-2.0",
 	"Boost":        "BSL-1.0",
 	"CC0":          "CC0-1.0",
+	// SPDX IDs the SPDX list itself has deprecated in favour of an explicit
+	// -only / -or-later. They are still on the list, so without these an exact
+	// match would keep them ("LGPL-2.1+" in a Debian copyright file).
+	"GPL-1.0+": "GPL-1.0-or-later", "GPL-2.0+": "GPL-2.0-or-later", "GPL-3.0+": "GPL-3.0-or-later",
+	"LGPL-2.0+": "LGPL-2.0-or-later", "LGPL-3.0+": "LGPL-3.0-or-later", // "LGPL-2.1+" is the DEP-5 name above
+	"GPL-1.0": "GPL-1.0-only", "GPL-2.0": "GPL-2.0-only", "GPL-3.0": "GPL-3.0-only",
+	"LGPL-2.0": "LGPL-2.0-only", "LGPL-3.0": "LGPL-3.0-only",
+	"AGPL-1.0": "AGPL-1.0-only", "AGPL-3.0": "AGPL-3.0-only",
+	"GFDL-1.1": "GFDL-1.1-only",
 }
 
 // spdxIDsByLower finds an SPDX ID written in another case ("BSD-3-clause", "zlib").
@@ -47,12 +56,13 @@ var spdxIDsByLower = func() map[string]string {
 }()
 
 // spdxIDFor returns the SPDX ID a license name stands for, or "" when it has none.
+// The aliases come first, so a deprecated SPDX ID is replaced by its current one.
 func spdxIDFor(name string) string {
-	if _, ok := spdxLicenseIDs[name]; ok {
-		return name
-	}
 	if id, ok := licenseAliases[name]; ok {
 		return id
+	}
+	if _, ok := spdxLicenseIDs[name]; ok {
+		return name
 	}
 	return spdxIDsByLower[strings.ToLower(name)]
 }

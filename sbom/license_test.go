@@ -37,6 +37,9 @@ func TestLicenseChoiceFor(t *testing.T) {
 		// DEP-5 short names from Debian copyright files.
 		{"DEP-5 names joined by AND", "GPL-2+ and (BSD-3-clause or Expat)", cdx.LicenseChoice{Expression: "GPL-2.0-or-later AND (BSD-3-Clause OR MIT)"}},
 		{"an SPDX ID in another case", "zlib", cdx.LicenseChoice{License: &cdx.License{ID: "Zlib"}}},
+		// Deprecated SPDX IDs are still on the list; they become the current ones.
+		{"a deprecated SPDX ID", "LGPL-2.1+", cdx.LicenseChoice{License: &cdx.License{ID: "LGPL-2.1-or-later"}}},
+		{"a deprecated SPDX ID in an expression", "MIT AND GPL-2.0", cdx.LicenseChoice{Expression: "MIT AND GPL-2.0-only"}},
 		{"a DEP-5 exception stays free text", "GPL-2+ with OpenSSL exception", cdx.LicenseChoice{License: &cdx.License{Name: "GPL-2+ with OpenSSL exception"}}},
 		// RHEL's kernel license is SPDX already, with exceptions.
 		{"an SPDX exception", "GPL-2.0-only WITH Linux-syscall-note", cdx.LicenseChoice{Expression: "GPL-2.0-only WITH Linux-syscall-note"}},

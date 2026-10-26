@@ -67,7 +67,7 @@ SHA256: ffff
 		{Name: "libfoo", Version: "1.0"},      // two lists, two digests
 		{Name: "curl-old", Version: "8.0-1"},  // not wanted by any list
 	}
-	applyAptLists(withArchs(pkgs, []string{"amd64", "all", "amd64", "amd64", "amd64", "amd64"}), root)
+	applyAptLists(withArchs(pkgs, []string{"amd64", "all", "amd64", "amd64", "amd64", "amd64"}), root, false)
 
 	want := []struct{ integrity, supplier string }{
 		{"sha256:aaaa", "Debian"},
@@ -86,7 +86,7 @@ SHA256: ffff
 
 func TestApplyAptListsWithoutLists(t *testing.T) {
 	pkgs := []inventory.Package{{Name: "curl", Version: "8.14.1-2"}}
-	applyAptLists(withArchs(pkgs, []string{"amd64"}), t.TempDir())
+	applyAptLists(withArchs(pkgs, []string{"amd64"}), t.TempDir(), false)
 	if pkgs[0].Integrity != "" || pkgs[0].Supplier != "" {
 		t.Errorf("no lists: got %+v", pkgs[0])
 	}
