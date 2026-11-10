@@ -45,7 +45,9 @@ func (c *DPKGCollector) parseStatusFile(statusPath, scanPath string, verbose boo
 
 	var pkgs []inventory.Package
 	var archs []string
+	var records []osDepRecord
 	var currentPkg, currentVersion, currentStatus, currentSource, currentSourceVersion, currentSection, currentBuiltUsing, currentArch string
+	var currentDepends, currentPreDepends, currentProvides string
 
 	flush := func() {
 		if currentPkg != "" && currentVersion != "" && strings.Contains(currentStatus, "install ok installed") {
@@ -61,9 +63,11 @@ func (c *DPKGCollector) parseStatusFile(statusPath, scanPath string, verbose boo
 			setSignedTemplateSource(&p, currentSource, currentBuiltUsing)
 			pkgs = append(pkgs, p)
 			archs = append(archs, currentArch)
+			records = append(records, dpkgDepRecord(currentDepends, currentPreDepends, currentProvides))
 		}
 		currentPkg, currentVersion, currentStatus, currentArch = "", "", "", ""
 		currentSource, currentSourceVersion, currentSection, currentBuiltUsing = "", "", "", ""
+		currentDepends, currentPreDepends, currentProvides = "", "", ""
 	}
 
 	scanner := bufio.NewScanner(f)
@@ -89,6 +93,12 @@ func (c *DPKGCollector) parseStatusFile(statusPath, scanPath string, verbose boo
 			currentBuiltUsing = strings.TrimPrefix(line, "Built-Using: ")
 		case strings.HasPrefix(line, "Architecture: "):
 			currentArch = strings.TrimPrefix(line, "Architecture: ")
+		case strings.HasPrefix(line, "Depends: "):
+			currentDepends = strings.TrimPrefix(line, "Depends: ")
+		case strings.HasPrefix(line, "Pre-Depends: "):
+			currentPreDepends = strings.TrimPrefix(line, "Pre-Depends: ")
+		case strings.HasPrefix(line, "Provides: "):
+			currentProvides = strings.TrimPrefix(line, "Provides: ")
 		}
 	}
 	flush() // handle final record
@@ -96,6 +106,7 @@ func (c *DPKGCollector) parseStatusFile(statusPath, scanPath string, verbose boo
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
+	linkOSDependencies(pkgs, records, detectOSInfo(scanPath).ID)
 	applyAptLists(withArchs(pkgs, archs), scanPath, verbose)
 
 	if verbose {
@@ -115,7 +126,7 @@ func (c *DPKGCollector) collectViaDpkgQuery(verbose bool) ([]inventory.Package, 
 		return nil, nil
 	}
 
-	cmd := exec.Command("dpkg-query", "-W", "-f=${Package}\t${Version}\t${source:Package}\t${Section}\t${source:Version}\t${Built-Using}\t${Architecture}\n")
+	cmd := exec.Command("dpkg-query", "-W", "-f=${Package}\t${Version}\t${source:Package}\t${Section}\t${source:Version}\t${Built-Using}\t${Architecture}\t${Depends}\t${Pre-Depends}\t${Provides}\n")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("dpkg-query failed: %w", err)
@@ -125,13 +136,14 @@ func (c *DPKGCollector) collectViaDpkgQuery(verbose bool) ([]inventory.Package, 
 
 	var pkgs []inventory.Package
 	var archs []string
+	var records []osDepRecord
 	scanner := bufio.NewScanner(strings.NewReader(string(out)))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "\t", 7)
+		parts := strings.SplitN(line, "\t", 10)
 		if len(parts) < 2 {
 			if verbose {
 				log.Printf("[dpkg] skipping malformed line: %s", line)
@@ -175,13 +187,75 @@ func (c *DPKGCollector) collectViaDpkgQuery(verbose bool) ([]inventory.Package, 
 			arch = strings.TrimSpace(parts[6])
 		}
 		archs = append(archs, arch)
+		var depends, preDepends, provides string
+		if len(parts) > 9 {
+			depends, preDepends, provides = parts[7], parts[8], parts[9]
+		}
+		records = append(records, dpkgDepRecord(depends, preDepends, provides))
 	}
+	linkOSDependencies(pkgs, records, detectOSInfo("/").ID)
 	applyAptLists(withArchs(pkgs, archs), "/", verbose)
 
 	if verbose {
 		log.Printf("[dpkg] collected %d packages via dpkg-query", len(pkgs))
 	}
 	return pkgs, nil
+}
+
+// dpkgDepRecord reads a package's Depends, Pre-Depends and Provides fields.
+// Pre-Depends is a dependency like any other for this purpose: it only says
+// the dependency had to be installed first.
+func dpkgDepRecord(depends, preDepends, provides string) osDepRecord {
+	return osDepRecord{
+		Requires: append(parseDpkgDependencies(depends), parseDpkgDependencies(preDepends)...),
+		Provides: parseDpkgNames(provides),
+	}
+}
+
+// parseDpkgDependencies reads a Depends-style field, "libc6 (>= 2.34),
+// python3:any, default-mta | mail-transport-agent": one dependency per comma,
+// alternatives within it separated by "|".
+func parseDpkgDependencies(v string) []osDependency {
+	var deps []osDependency
+	for _, group := range strings.Split(v, ",") {
+		var dep osDependency
+		for _, alt := range strings.Split(group, "|") {
+			if name := dpkgDependencyName(alt); name != "" {
+				dep = append(dep, name)
+			}
+		}
+		if len(dep) > 0 {
+			deps = append(deps, dep)
+		}
+	}
+	return deps
+}
+
+// parseDpkgNames reads a comma-separated list of package names with optional
+// versions, as in Provides: "mail-transport-agent, libfoo1 (= 1.2-3)".
+func parseDpkgNames(v string) []string {
+	var names []string
+	for _, entry := range strings.Split(v, ",") {
+		if name := dpkgDependencyName(entry); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// dpkgDependencyName strips what may follow a package name in a dependency:
+// a version in parentheses, an architecture list in brackets, build profiles
+// in angle brackets, and an architecture qualifier after a colon
+// ("python3:any", "libc6:amd64").
+func dpkgDependencyName(s string) string {
+	if i := strings.IndexAny(s, "([<"); i != -1 {
+		s = s[:i]
+	}
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, ':'); i != -1 {
+		s = s[:i]
+	}
+	return s
 }
 
 // parseDpkgSourceField normalizes a "Source:" value. dpkg appends the source

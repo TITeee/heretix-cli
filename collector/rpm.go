@@ -57,7 +57,20 @@ func (c *RPMCollector) Collect(scanPath string, verbose bool, isContainer bool) 
 
 	ecosystem := detectRPMEcosystem(scanPath)
 
+	// The file paths some package requires ("/bin/sh"): only the files that
+	// answer one of them are worth indexing, out of the hundreds of thousands
+	// a host's packages own.
+	requiredPaths := make(map[string]bool)
+	for _, e := range entries {
+		for _, r := range e.Requires {
+			if strings.HasPrefix(r, "/") {
+				requiredPaths[r] = true
+			}
+		}
+	}
+
 	var pkgs []inventory.Package
+	var records []osDepRecord
 	for _, e := range entries {
 		// gpg-pubkey entries record an imported signing key, not an installed
 		// package — they have no real version/release and never appear in any
@@ -76,12 +89,40 @@ func (c *RPMCollector) Collect(scanPath string, verbose bool, isContainer bool) 
 			Arch:       e.Arch,
 			Supplier:   e.Vendor,
 		}, sourceNameFromSourceRPM(e.SourceRpm), ""))
+		files, _ := e.InstalledFileNames()
+		records = append(records, rpmDepRecord(e.Requires, e.Provides, files, requiredPaths))
 	}
+	linkOSDependencies(pkgs, records, detectOSInfo(scanPath).ID)
 
 	if verbose {
 		log.Printf("[rpm] collected %d packages from %s", len(pkgs), dbPath)
 	}
 	return pkgs, nil
+}
+
+// rpmDepRecord reads a package's Requires and Provides. rpm states both as
+// capabilities: package names, shared libraries ("libc.so.6(GLIBC_2.34)(64bit)"),
+// "config(bash)", file paths ("/bin/sh") and features of rpm itself. The
+// database stores the version a dependency asks for apart from its name, and
+// only the names are read. Left out of Requires: "rpmlib(...)" names a feature
+// of rpm, not a package, and a boolean dependency, "(foo if bar)", is not
+// evaluated. A file path is matched against the files the installed packages
+// own, so a package's owned files count as provided when some package requires
+// them.
+func rpmDepRecord(requires, provides, files []string, requiredPaths map[string]bool) osDepRecord {
+	rec := osDepRecord{Provides: provides}
+	for _, r := range requires {
+		if r == "" || strings.HasPrefix(r, "rpmlib(") || strings.HasPrefix(r, "(") {
+			continue
+		}
+		rec.Requires = append(rec.Requires, osDependency{r})
+	}
+	for _, f := range files {
+		if requiredPaths[f] {
+			rec.Provides = append(rec.Provides, f)
+		}
+	}
+	return rec
 }
 
 // findRPMDatabase locates the RPM database under root, trying each

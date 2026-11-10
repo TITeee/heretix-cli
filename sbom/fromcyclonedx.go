@@ -49,11 +49,15 @@ func FromCycloneDX(bom *cdx.BOM) *inventory.Inventory {
 		if c.Type == cdx.ComponentTypeOS {
 			continue
 		}
+		// A package with a dependencies entry, even an empty one, had its
+		// dependencies resolved; one without is among the SBOM's unknowns.
+		deps, resolved := depsByRef[c.BOMRef]
 		p := inventory.Package{
-			Version:   c.Version,
-			Ecosystem: componentProperty(&c, "heretix:ecosystem"),
-			Source:    componentProperty(&c, "heretix:source"),
-			Deps:      depsByRef[c.BOMRef],
+			Version:      c.Version,
+			Ecosystem:    componentProperty(&c, "heretix:ecosystem"),
+			Source:       componentProperty(&c, "heretix:source"),
+			Deps:         deps,
+			DepsResolved: resolved,
 			// Scope has been written since SBOM generation existed but was
 			// never read back, so every "check <sbom.json>" silently discarded
 			// what the collectors had worked out — dev-only npm/composer/gradle

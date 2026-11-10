@@ -334,3 +334,144 @@ License: curl
 		t.Errorf("no copyright file: license = %q, want empty", got)
 	}
 }
+
+// TestDPKGCollect_Dependencies: Depends and Pre-Depends are resolved to the
+// installed packages, through Provides for a virtual name, taking the first
+// installed alternative, dropping version constraints, architecture
+// qualifiers and names nothing installed provides; a package that is only
+// configured, not installed, provides nothing.
+func TestDPKGCollect_Dependencies(t *testing.T) {
+	dir := t.TempDir()
+	dpkgDir := filepath.Join(dir, "var", "lib", "dpkg")
+	if err := os.MkdirAll(dpkgDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "etc"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "etc", "os-release"), []byte("ID=debian\nVERSION_ID=\"13\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	status := strings.Join([]string{
+		"Package: curl",
+		"Status: install ok installed",
+		"Architecture: amd64",
+		"Version: 8.14.1-2",
+		"Depends: libc6 (>= 2.34), libcurl4t64 (= 8.14.1-2)",
+		"",
+		"Package: libcurl4t64",
+		"Status: install ok installed",
+		"Architecture: amd64",
+		"Source: curl",
+		"Version: 8.14.1-2",
+		"Depends: libc6 (>= 2.34), libssl3t64 (>= 3.0.0)",
+		"",
+		"Package: libc6",
+		"Status: install ok installed",
+		"Architecture: amd64",
+		"Source: glibc",
+		"Version: 2.41-12",
+		"Pre-Depends: libgcc-s1 [amd64]",
+		"",
+		"Package: libgcc-s1",
+		"Status: install ok installed",
+		"Architecture: amd64",
+		"Source: gcc-14",
+		"Version: 14.2.0-19",
+		"Depends: gcc-14-base (= 14.2.0-19)",
+		"",
+		"Package: mailutils",
+		"Status: install ok installed",
+		"Architecture: amd64",
+		"Version: 1:3.17-1",
+		"Depends: default-mta | mail-transport-agent, python3:any",
+		"",
+		"Package: exim4-daemon-light",
+		"Status: install ok installed",
+		"Architecture: amd64",
+		"Source: exim4",
+		"Version: 4.98-3",
+		"Provides: mail-transport-agent",
+		"",
+		"Package: postfix",
+		"Status: deinstall ok config-files",
+		"Architecture: amd64",
+		"Version: 3.10.1-1",
+		"Provides: default-mta, mail-transport-agent",
+		"",
+		"Package: python3",
+		"Status: install ok installed",
+		"Architecture: amd64",
+		"Source: python3-defaults",
+		"Version: 3.13.5-1",
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(dpkgDir, "status"), []byte(status), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	pkgs, err := (&DPKGCollector{}).Collect(dir, false, true)
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	byName := map[string]inventory.Package{}
+	for _, p := range pkgs {
+		byName[p.Name] = p
+	}
+	if _, ok := byName["postfix"]; ok {
+		t.Fatal("postfix is not installed and should not be collected")
+	}
+
+	purl := func(name, version string) string {
+		return "pkg:deb/debian/" + name + "@" + version + "?distro=debian-13"
+	}
+	tests := []struct {
+		name       string
+		wantDeps   []string
+		wantDirect bool
+	}{
+		{"curl", []string{purl("libc6", "2.41-12"), purl("libcurl4t64", "8.14.1-2")}, true},
+		// libssl3t64 is not installed: dropped.
+		{"libcurl4t64", []string{purl("libc6", "2.41-12")}, false},
+		// Pre-Depends, with an architecture list.
+		{"libc6", []string{purl("libgcc-s1", "14.2.0-19")}, false},
+		{"libgcc-s1", []string{}, false},
+		// default-mta is provided only by the removed postfix; the installed
+		// alternative is exim4 through its Provides. ":any" is not part of a name.
+		{"mailutils", []string{purl("exim4-daemon-light", "4.98-3"), purl("python3", "3.13.5-1")}, true},
+		{"exim4-daemon-light", []string{}, false},
+		{"python3", []string{}, false},
+	}
+	for _, tc := range tests {
+		p, ok := byName[tc.name]
+		if !ok {
+			t.Errorf("%s was not collected", tc.name)
+			continue
+		}
+		if !p.DepsResolved {
+			t.Errorf("%s: DepsResolved = false, want true", tc.name)
+		}
+		if strings.Join(p.Deps, " ") != strings.Join(tc.wantDeps, " ") {
+			t.Errorf("%s: Deps = %q, want %q", tc.name, p.Deps, tc.wantDeps)
+		}
+		if p.Direct == nil || *p.Direct != tc.wantDirect {
+			t.Errorf("%s: Direct = %v, want %v", tc.name, p.Direct, tc.wantDirect)
+		}
+	}
+}
+
+func TestDpkgDependencyName(t *testing.T) {
+	tests := map[string]string{
+		"libgmp10 (>= 2:6.2.1+dfsg1)": "libgmp10",
+		" python3:any":                "python3",
+		"libc6:amd64 (>= 2.34)":       "libc6",
+		"foo [i386]":                  "foo",
+		"bar <!nocheck>":              "bar",
+		"":                            "",
+	}
+	for in, want := range tests {
+		if got := dpkgDependencyName(in); got != want {
+			t.Errorf("dpkgDependencyName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

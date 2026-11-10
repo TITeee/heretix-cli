@@ -771,3 +771,45 @@ func TestGenerateCycloneDXDependsOnHasNoDuplicates(t *testing.T) {
 		}
 	}
 }
+
+// TestGenerateCycloneDXStatesOSDependenciesWhenResolved: an OS package whose
+// collector read the package database gets a dependencies entry, even an
+// empty one, since "no dependencies" is then a fact; one from a source that
+// only listed packages (a contrib converter) stays among the unknowns.
+func TestGenerateCycloneDXStatesOSDependenciesWhenResolved(t *testing.T) {
+	inv := &inventory.Inventory{
+		Hostname: "host",
+		OS:       inventory.OSInfo{ID: "almalinux", VersionID: "9.3", Name: "AlmaLinux 9.3"},
+		Packages: []inventory.Package{
+			{Name: "basesystem", Version: "11-13.el9", Ecosystem: "AlmaLinux:9", Source: "rpm", Arch: "noarch", DepsResolved: true, Direct: inventory.BoolPtr(true)},
+			{Name: "zlib", Version: "1.2.11-40.el9", Ecosystem: "AlmaLinux:9", Source: "rpm", Arch: "x86_64"},
+		},
+	}
+	bom := GenerateCycloneDX(inv, testGenerator)
+	const base = "pkg:rpm/almalinux/basesystem@11-13.el9?arch=noarch&distro=almalinux-9"
+	const zlib = "pkg:rpm/almalinux/zlib@1.2.11-40.el9?arch=x86_64&distro=almalinux-9"
+	entries := map[string][]string{}
+	for _, d := range *bom.Dependencies {
+		entries[d.Ref] = *d.Dependencies
+	}
+	if deps, ok := entries[base]; !ok || len(deps) != 0 {
+		t.Errorf("basesystem dependencies entry = %v, %v; want an empty entry", deps, ok)
+	}
+	if _, ok := entries[zlib]; ok {
+		t.Errorf("zlib has a dependencies entry, but nobody resolved its dependencies")
+	}
+	if root := entries[bom.Metadata.Component.BOMRef]; len(root) != 1 || root[0] != base {
+		t.Errorf("root dependsOn = %v, want [%s]", root, base)
+	}
+	if bom.Compositions == nil || len(*(*bom.Compositions)[0].Dependencies) != 1 || string((*(*bom.Compositions)[0].Dependencies)[0]) != zlib {
+		t.Errorf("compositions = %+v, want zlib alone as unknown", bom.Compositions)
+	}
+
+	// Read back, the distinction survives.
+	got := FromCycloneDX(bom)
+	for _, p := range got.Packages {
+		if want := p.Name == "basesystem"; p.DepsResolved != want {
+			t.Errorf("%s: DepsResolved after round trip = %v, want %v", p.Name, p.DepsResolved, want)
+		}
+	}
+}

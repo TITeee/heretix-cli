@@ -202,6 +202,15 @@ func TestRPMCollect_ParsesRealDatabase(t *testing.T) {
 	if base.Arch != "noarch" {
 		t.Errorf("basesystem Arch = %q, want %q", base.Arch, "noarch")
 	}
+	// The dependencies were read: basesystem requires filesystem and setup,
+	// neither of which is in this trimmed database, so it has none here, and
+	// nothing in it depends on basesystem.
+	if !base.DepsResolved || len(base.Deps) != 0 {
+		t.Errorf("basesystem DepsResolved = %v, Deps = %q, want resolved with none", base.DepsResolved, base.Deps)
+	}
+	if base.Direct == nil || !*base.Direct {
+		t.Errorf("basesystem Direct = %v, want true (nothing depends on it)", base.Direct)
+	}
 }
 
 // TestSourceNameFromSourceRPM covers deriving the source package name from the
@@ -226,6 +235,35 @@ func TestSourceNameFromSourceRPM(t *testing.T) {
 	for input, want := range tests {
 		if got := sourceNameFromSourceRPM(input); got != want {
 			t.Errorf("sourceNameFromSourceRPM(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+// TestRpmDepRecord: of an RPM's Requires, rpm's own features and boolean
+// dependencies are left out; of its files, only those some package requires
+// are counted as provided.
+func TestRpmDepRecord(t *testing.T) {
+	requires := []string{"libc.so.6(GLIBC_2.34)(64bit)", "/bin/sh", "rpmlib(PayloadIsZstd)", "(foo if bar)", "", "config(bash)"}
+	provides := []string{"bash", "config(bash)"}
+	files := []string{"/bin/sh", "/usr/bin/bash", "/usr/share/doc/bash/README"}
+	rec := rpmDepRecord(requires, provides, files, map[string]bool{"/bin/sh": true, "/usr/bin/python3": true})
+
+	wantRequires := []osDependency{{"libc.so.6(GLIBC_2.34)(64bit)"}, {"/bin/sh"}, {"config(bash)"}}
+	if len(rec.Requires) != len(wantRequires) {
+		t.Fatalf("Requires = %q, want %q", rec.Requires, wantRequires)
+	}
+	for i := range wantRequires {
+		if rec.Requires[i][0] != wantRequires[i][0] {
+			t.Errorf("Requires[%d] = %q, want %q", i, rec.Requires[i], wantRequires[i])
+		}
+	}
+	wantProvides := []string{"bash", "config(bash)", "/bin/sh"}
+	if len(rec.Provides) != len(wantProvides) {
+		t.Fatalf("Provides = %q, want %q", rec.Provides, wantProvides)
+	}
+	for i := range wantProvides {
+		if rec.Provides[i] != wantProvides[i] {
+			t.Errorf("Provides[%d] = %q, want %q", i, rec.Provides[i], wantProvides[i])
 		}
 	}
 }

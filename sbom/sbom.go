@@ -193,18 +193,19 @@ func GenerateCycloneDX(inv *inventory.Inventory, gen Generator) *cdx.BOM {
 	root := metadataComponent(inv)
 
 	// bom.dependencies lists what each package depends on, and CycloneDX reads an
-	// empty list as "depends on nothing". That is only true where the source
-	// records a dependency graph; elsewhere (OS packages, flat lockfiles) nobody
-	// looked, so those packages get no entry and are named in a composition with
-	// aggregate "unknown" instead -- CISA's 2026 minimum elements ask for unknowns
-	// to be stated, not left to look like facts.
+	// empty list as "depends on nothing". That is only true where the collector
+	// resolved a dependency graph; elsewhere (flat lockfiles, OS packages from a
+	// list rather than a package database) nobody looked, so those packages get
+	// no entry and are named in a composition with aggregate "unknown" instead
+	// -- CISA's 2026 minimum elements ask for unknowns to be stated, not left to
+	// look like facts.
 	depItems := make([]cdx.Dependency, 0, len(pkgs)+1)
 	var unknownDeps []cdx.BOMReference
 	var directRefs []string
 	directKnown := false
 	for _, p := range pkgs {
 		purl := PackagePURL(p, inv.OS.ID)
-		if len(p.Deps) == 0 && !dependencyGraphSources[p.Source] {
+		if len(p.Deps) == 0 && !dependencyGraphSources[p.Source] && !p.DepsResolved {
 			unknownDeps = append(unknownDeps, cdx.BOMReference(purl))
 		} else {
 			// The schema forbids a repeated dependsOn entry, and a package can
@@ -230,8 +231,9 @@ func GenerateCycloneDX(inv *inventory.Inventory, gen Generator) *cdx.BOM {
 	// is an edge from the root (metadata.component) to each of them — the
 	// heretix:direct property above is heretix-specific, so tools other than
 	// heretix read directness from this edge instead. It is omitted entirely
-	// when no collector determined directness (OS-only scans), since an empty
-	// dependsOn would claim "depends on nothing" rather than "unknown".
+	// when no collector determined directness (a scan that found only flat
+	// lockfiles), since an empty dependsOn would claim "depends on nothing"
+	// rather than "unknown".
 	if directKnown {
 		if directRefs == nil {
 			directRefs = []string{}
@@ -269,11 +271,14 @@ func GenerateCycloneDX(inv *inventory.Inventory, gen Generator) *cdx.BOM {
 	return bom
 }
 
-// dependencyGraphSources are the sources whose collectors record each package's
-// dependencies (docs/sbom.md, the "deps" column), so that a package from one of
-// them with none really has none. package-lock.json v1, pnpm-lock.yaml v5/v6 and
-// a go.mod read without the go binary share a source name with the formats that
-// do record them, and are counted as known for that reason.
+// dependencyGraphSources are the sources whose collectors always record each
+// package's dependencies (docs/sbom.md, the "deps" column), so that a package
+// from one of them with none really has none. package-lock.json v1,
+// pnpm-lock.yaml v5/v6 and a go.mod read without the go binary share a source
+// name with the formats that do record them, and are counted as known for that
+// reason. The OS sources are not here: their collectors resolve dependencies
+// when they read a package database and say so per package (DepsResolved),
+// while an SBOM built from a package list by a contrib converter has none.
 var dependencyGraphSources = map[string]bool{
 	"package-lock.json": true,
 	"pnpm-lock.yaml":    true,

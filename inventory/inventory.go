@@ -19,11 +19,18 @@ type Package struct {
 	Ecosystem  string   `json:"ecosystem"`
 	Source     string   `json:"source"`
 	Location   string   `json:"location,omitempty"`
-	Direct     *bool    `json:"direct,omitempty"`    // nil=unknown, true=direct dep, false=indirect dep
-	Deps       []string `json:"deps,omitempty"`      // PURLs of this package's direct dependencies
-	Integrity  string   `json:"integrity,omitempty"` // raw integrity string from lockfile (SRI or sha256:hex)
-	License    string   `json:"license,omitempty"`   // SPDX expression (e.g. "MIT", "Apache-2.0 OR MIT")
-	Scope      string   `json:"scope,omitempty"`     // ""=unknown/required, "excluded"=dev-only (unreachable in a prod build), mirrors CycloneDX component.scope
+	Direct     *bool    `json:"direct,omitempty"` // nil=unknown, true=direct dep, false=indirect dep
+	Deps       []string `json:"deps,omitempty"`   // PURLs of this package's direct dependencies
+	// DepsResolved records that the collector worked out this package's
+	// dependencies, so that an empty Deps means it has none rather than that
+	// nobody looked. The OS collectors set it when they read a package
+	// database (dpkg Depends, rpm Requires, apk D:); a lockfile source that
+	// always records dependencies needs no flag (sbom's dependencyGraphSources).
+	// Without either, the SBOM states the package's dependencies as unknown.
+	DepsResolved bool   `json:"depsResolved,omitempty"`
+	Integrity    string `json:"integrity,omitempty"` // raw integrity string from lockfile (SRI or sha256:hex)
+	License      string `json:"license,omitempty"`   // SPDX expression (e.g. "MIT", "Apache-2.0 OR MIT")
+	Scope        string `json:"scope,omitempty"`     // ""=unknown/required, "excluded"=dev-only (unreachable in a prod build), mirrors CycloneDX component.scope
 	// SourcePackage is the upstream source package this binary package was
 	// built from (dpkg "Source:", rpm SourceRpm, apk "o:"). It is what lets
 	// one CVE affecting one upstream project be reported once instead of once
@@ -183,6 +190,7 @@ func mergePkg(a, b Package) Package {
 	if len(a.Deps) == 0 {
 		a.Deps = b.Deps
 	}
+	a.DepsResolved = a.DepsResolved || b.DepsResolved
 	// Location: prefer non-empty
 	if a.Location == "" {
 		a.Location = b.Location
