@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"runtime/debug"
+	"strconv"
 	"strings"
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
@@ -135,6 +136,17 @@ func GenerateCycloneDX(inv *inventory.Inventory, gen Generator) *cdx.BOM {
 		// installed" and "not read" mean different things to a consumer.
 		if p.Features != nil {
 			props = append(props, cdx.Property{Name: "heretix:windows-features", Value: strings.Join(p.Features, ",")})
+		}
+		// What running processes were doing with the package when collect ran
+		// (collector/runtime.go). Absent means not determined, never "not used".
+		if p.InUse != nil {
+			props = append(props, cdx.Property{Name: "heretix:in-use", Value: strconv.FormatBool(*p.InUse)})
+		}
+		if p.NeedsRestart {
+			props = append(props, cdx.Property{Name: "heretix:needs-restart", Value: "true"})
+		}
+		if len(p.UsedBy) > 0 {
+			props = append(props, cdx.Property{Name: "heretix:used-by", Value: strings.Join(p.UsedBy, ",")})
 		}
 
 		var evidence *cdx.Evidence

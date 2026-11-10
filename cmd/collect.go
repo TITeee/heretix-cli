@@ -47,6 +47,7 @@ var (
 	collectName       string
 	collectLifecycle  string
 	collectAuthor     string
+	collectRuntime    string
 )
 
 func init() {
@@ -62,6 +63,7 @@ func init() {
 	collectCmd.Flags().StringVar(&collectName, "name", "", "Override hostname in output (useful to distinguish multiple projects on the same host)")
 	collectCmd.Flags().StringVar(&collectLifecycle, "lifecycle", "", "Lifecycle phase recorded in the SBOM: operations, pre-build, build, post-build, design or discovery (default: operations for a filesystem root, pre-build for a directory, post-build for an image)")
 	collectCmd.Flags().StringVar(&collectAuthor, "author", "", "Organization responsible for the SBOM, recorded as metadata.authors (default: none, since heretix-cli cannot know it)")
+	collectCmd.Flags().StringVar(&collectRuntime, "runtime", "on", runtimeFlagHelp)
 	rootCmd.AddCommand(collectCmd)
 }
 
@@ -82,6 +84,9 @@ func runCollect(cmd *cobra.Command, args []string) error {
 	if collectLifecycle != "" && !validLifecycle(collectLifecycle) {
 		return fmt.Errorf("--lifecycle %q: use one of %s", collectLifecycle, strings.Join(lifecyclePhases, ", "))
 	}
+	if err := validRuntimeMode(collectRuntime); err != nil {
+		return err
+	}
 
 	if collectImage != "" {
 		return runCollectWithImage(skip)
@@ -93,6 +98,9 @@ func runCollect(cmd *cobra.Command, args []string) error {
 	inv, err := collector.CollectAll(collectScanPath, skip, collectVerbose, false)
 	if err != nil {
 		return fmt.Errorf("collection failed: %w", err)
+	}
+	if err := applyRuntimeFacts(inv, collectScanPath, collectRuntime, collectVerbose); err != nil {
+		return err
 	}
 
 	if collectName != "" {

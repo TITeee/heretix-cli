@@ -41,6 +41,7 @@ heretix-cli collect --image myapp:latest --dockerfile ./Dockerfile --output full
 | `--only` | (none) | Collect only these sources (e.g. `--only windows`, or `--only pypi,npm`); every other source is skipped. Cannot be combined with `--skip` (exit code 2). A name that is not a source is an error. A source that does not run on this system (`windows` on Linux, `rpm` on a Windows host) collects nothing, with a warning |
 | `--lifecycle` | inferred | Lifecycle phase recorded in the SBOM (`metadata.lifecycles`): `operations`, `pre-build`, `build`, `post-build`, `design` or `discovery`. Defaults to `operations` for a filesystem root, `pre-build` for any other directory, `post-build` for an image. Set it when the default is wrong, e.g. `operations` for a deployed application directory |
 | `--author` | (none) | Organization responsible for the SBOM, recorded as `metadata.authors`. heretix-cli cannot know it, so none is written unless given |
+| `--runtime` | `on` | Read `/proc` for what the running processes do with the OS packages: which are loaded (`heretix:in-use`), by which services (`heretix:used-by`), and which run a file that has since been replaced (`heretix:needs-restart`). A host scan needs root for this and stops with an error without it; `off` leaves the facts out. An image or a directory has no processes and is never read. See [Runtime facts](sbom.md#runtime-facts) |
 | `--verbose` | `false` | Enable verbose logging |
 | `--image` | (none) | Docker image reference to scan (e.g. `nginx:latest`) |
 | `--dockerfile` | (none) | Dockerfile path: also chain-scans the FROM base image |
@@ -109,6 +110,7 @@ This command takes `collect`'s `--scan-path`, `--skip`, `--only` and `--verbose`
 | `--skip-local` | `false` | Skip local security checks (GlassWorm, Dependency Confusion, Malicious Install, CI/CD Poisoning, Lock File Integrity) |
 | `--check-registry` | `false` | Query npmjs.org to classify unknown npm scopes (requires network) |
 | `--runtime-only` | `false` | Report only runtime packages (see [Non-runtime packages](package-detection.md#non-runtime-packages)) |
+| `--runtime` | `on` | As for `collect`: read `/proc` for the in-use, used-by and needs-restart facts of a host scan, which needs root; `off` leaves them out |
 
 ## Upload to heretix-management (`upload`)
 

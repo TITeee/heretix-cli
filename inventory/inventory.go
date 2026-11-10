@@ -1,6 +1,7 @@
 package inventory
 
 import (
+	"sort"
 	"time"
 )
 
@@ -57,6 +58,19 @@ type Package struct {
 	// never a guess from the distribution, since a third-party package on a
 	// distribution is not the distribution's.
 	Supplier string `json:"supplier,omitempty"`
+	// InUse records whether a running process had one of this package's
+	// executables or shared libraries loaded when collect ran, read from
+	// /proc/<pid>/maps on the host. nil means not determined: an image or a
+	// directory scan, a package with no executable or library of its own, or
+	// a run with --runtime=off. See collector/runtime.go.
+	InUse *bool `json:"inUse,omitempty"`
+	// NeedsRestart: a running process still has a file of this package loaded
+	// that has since been replaced on disk (the package was upgraded), so it
+	// runs the old code until it is restarted.
+	NeedsRestart bool `json:"needsRestart,omitempty"`
+	// UsedBy names the systemd units (outside one, the commands) of the
+	// processes that had this package loaded, sorted. Empty unless InUse.
+	UsedBy []string `json:"usedBy,omitempty"`
 	// Features lists the optional features installed on a Windows Server
 	// (DISM names, "DNS-Server-Full-Role"), on the package for the OS itself.
 	// heretix-api names the features a role's CVEs need, so a consumer can set
@@ -218,7 +232,32 @@ func mergePkg(a, b Package) Package {
 	if a.Category == "" {
 		a.Category = b.Category
 	}
+	// Runtime facts: seen in use by any copy is in use; the processes merge.
+	a.InUse = mergeDirectPtr(a.InUse, b.InUse)
+	a.NeedsRestart = a.NeedsRestart || b.NeedsRestart
+	a.UsedBy = mergeSorted(a.UsedBy, b.UsedBy)
 	return a
+}
+
+// mergeSorted returns the union of two sorted lists, sorted, or nil when both
+// are empty.
+func mergeSorted(a, b []string) []string {
+	if len(b) == 0 {
+		return a
+	}
+	if len(a) == 0 {
+		return b
+	}
+	seen := make(map[string]bool, len(a)+len(b))
+	var out []string
+	for _, s := range append(append([]string{}, a...), b...) {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // mergeWithOSManaged merges two copies of a package where exactly one is

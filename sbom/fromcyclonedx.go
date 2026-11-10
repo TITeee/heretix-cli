@@ -74,12 +74,20 @@ func FromCycloneDX(bom *cdx.BOM) *inventory.Inventory {
 		}
 		if c.Properties != nil {
 			for _, prop := range *c.Properties {
-				if prop.Name != "heretix:windows-features" {
-					continue
-				}
-				p.Features = []string{}
-				if prop.Value != "" {
-					p.Features = strings.Split(prop.Value, ",")
+				switch prop.Name {
+				case "heretix:windows-features":
+					p.Features = []string{}
+					if prop.Value != "" {
+						p.Features = strings.Split(prop.Value, ",")
+					}
+				case "heretix:in-use":
+					p.InUse = inventory.BoolPtr(prop.Value == "true")
+				case "heretix:needs-restart":
+					p.NeedsRestart = prop.Value == "true"
+				case "heretix:used-by":
+					if prop.Value != "" {
+						p.UsedBy = strings.Split(prop.Value, ",")
+					}
 				}
 			}
 		}

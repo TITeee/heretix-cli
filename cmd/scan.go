@@ -40,6 +40,7 @@ var (
 	scanDockerfile    string
 	scanCheckRegistry bool
 	scanRuntimeOnly   bool
+	scanRuntime       string
 )
 
 func init() {
@@ -61,6 +62,7 @@ func init() {
 	scanCmd.Flags().StringVar(&scanDockerfile, "dockerfile", "", "Dockerfile path: also scan the base image from its FROM instruction")
 	scanCmd.Flags().BoolVar(&scanCheckRegistry, "check-registry", false, "Query npmjs.org to classify unknown scopes (requires network)")
 	scanCmd.Flags().BoolVar(&scanRuntimeOnly, "runtime-only", false, "Report only runtime packages (hide kernel headers and build toolchain findings)")
+	scanCmd.Flags().StringVar(&scanRuntime, "runtime", "on", runtimeFlagHelp)
 	rootCmd.AddCommand(scanCmd)
 }
 
@@ -88,6 +90,9 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 	skip, err := collectorSkip(scanOnly, scanSkip)
 	if err != nil {
+		return err
+	}
+	if err := validRuntimeMode(scanRuntime); err != nil {
 		return err
 	}
 
@@ -164,7 +169,14 @@ func runScan(cmd *cobra.Command, args []string) error {
 func collectFromFilesystem(skip []string) (*inventory.Inventory, error) {
 	fmt.Fprintf(os.Stderr, "Scanning packages (scan-path: %s)...\n", scanScanPath)
 	describeCollectors(scanOnly, scanSkip)
-	return collector.CollectAll(scanScanPath, skip, scanVerbose, false)
+	inv, err := collector.CollectAll(scanScanPath, skip, scanVerbose, false)
+	if err != nil {
+		return nil, err
+	}
+	if err := applyRuntimeFacts(inv, scanScanPath, scanRuntime, scanVerbose); err != nil {
+		return nil, err
+	}
+	return inv, nil
 }
 
 func collectFromImages(ctx context.Context, skip []string) (*inventory.Inventory, []detector.Finding, error) {

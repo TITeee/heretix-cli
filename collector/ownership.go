@@ -74,30 +74,56 @@ func rootRelative(path, scanPath string) string {
 // as recorded by its package database under scanPath.
 func osOwnedFiles(scanPath string, verbose bool) map[string]bool {
 	owned := map[string]bool{}
-	add := func(p string) {
+	for p := range osFileOwners(scanPath, verbose) {
+		owned[p] = true
+	}
+	return owned
+}
+
+// osFileOwners maps every file the OS packages own to the package that owns
+// it, as an ownerKey. A file two packages list (rare: a directory, a shared
+// documentation file) keeps the first.
+func osFileOwners(scanPath string, verbose bool) map[string]string {
+	owners := map[string]string{}
+	add := func(p, owner string) {
 		if p == "" {
 			return
 		}
 		if !strings.HasPrefix(p, "/") {
 			p = "/" + p
 		}
-		owned[p] = true
+		if _, dup := owners[p]; !dup {
+			owners[p] = owner
+		}
 		// On a merged-/usr system /lib, /bin, /sbin and /lib64 are symlinks
 		// into /usr, and the filesystem walk only ever reaches the /usr side —
 		// but a package built before the merge still lists the old path.
 		for _, dir := range []string{"/lib/", "/lib64/", "/bin/", "/sbin/"} {
 			if strings.HasPrefix(p, dir) {
-				owned["/usr"+p] = true
+				if _, dup := owners["/usr"+p]; !dup {
+					owners["/usr"+p] = owner
+				}
 			}
 		}
 	}
 	addRPMFiles(scanPath, add, verbose)
 	addDpkgFiles(scanPath, add, verbose)
 	addAPKFiles(scanPath, add, verbose)
-	return owned
+	return owners
 }
 
-func addRPMFiles(scanPath string, add func(string), verbose bool) {
+// ownerKey identifies an installed OS package the way its package database's
+// file list does: by source and name, plus the version for rpm, where several
+// versions of one name can be installed at once (kernels). It is what
+// osFileOwners records and what a Package is looked up by.
+func ownerKey(source, name, version string) string {
+	if source == "rpm" {
+		return source + "\x00" + name + "\x00" + version
+	}
+	return source + "\x00" + name
+}
+
+func addRPMFiles(scanPath string, add func(path, owner string), verbose bool) {
 	dbPath := findRPMDatabase(scanPath)
 	if dbPath == "" {
 		return
@@ -122,8 +148,9 @@ func addRPMFiles(scanPath string, add func(string), verbose bool) {
 		if err != nil {
 			continue
 		}
+		owner := ownerKey("rpm", e.Name, rpmEvr(e.Epoch, e.Version, e.Release))
 		for _, f := range files {
-			add(f)
+			add(f, owner)
 		}
 	}
 }
@@ -135,7 +162,7 @@ func addRPMFiles(scanPath string, add func(string), verbose bool) {
 // in file names), so architecture-specific packages' files go unowned there.
 // Language libraries are nearly all Architecture: all (python3-*, node-*,
 // ruby-*, lib*-java), whose lists carry no suffix.
-func addDpkgFiles(scanPath string, add func(string), verbose bool) {
+func addDpkgFiles(scanPath string, add func(path, owner string), verbose bool) {
 	lists, _ := filepath.Glob(filepath.Join(scanPath, "var", "lib", "dpkg", "info", "*.list"))
 	for _, list := range lists {
 		f, err := os.Open(list)
@@ -145,9 +172,13 @@ func addDpkgFiles(scanPath string, add func(string), verbose bool) {
 			}
 			continue
 		}
+		// "libc6:amd64.list" is the package libc6; the architecture is not
+		// part of the name the status file (and the Package) carries.
+		name, _, _ := strings.Cut(strings.TrimSuffix(filepath.Base(list), ".list"), ":")
+		owner := ownerKey("dpkg", name, "")
 		scanner := bufio.NewScanner(f)
 		for scanner.Scan() {
-			add(strings.TrimSpace(scanner.Text()))
+			add(strings.TrimSpace(scanner.Text()), owner)
 		}
 		f.Close()
 	}
@@ -155,13 +186,13 @@ func addDpkgFiles(scanPath string, add func(string), verbose bool) {
 
 // addAPKFiles reads /lib/apk/db/installed, where each package lists its files
 // as an "F:<dir>" line followed by one "R:<file>" line per file in it.
-func addAPKFiles(scanPath string, add func(string), verbose bool) {
+func addAPKFiles(scanPath string, add func(path, owner string), verbose bool) {
 	f, err := os.Open(filepath.Join(scanPath, "lib", "apk", "db", "installed"))
 	if err != nil {
 		return
 	}
 	defer f.Close()
-	dir := ""
+	dir, owner := "", ""
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		k, v, ok := strings.Cut(scanner.Text(), ":")
@@ -172,10 +203,11 @@ func addAPKFiles(scanPath string, add func(string), verbose bool) {
 		switch k {
 		case "P":
 			dir = ""
+			owner = ownerKey("apk-db", v, "")
 		case "F":
 			dir = v
 		case "R":
-			add(dir + "/" + v)
+			add(dir+"/"+v, owner)
 		}
 	}
 	if err := scanner.Err(); err != nil && verbose {
