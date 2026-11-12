@@ -189,6 +189,13 @@ func applyRuntimeFacts(pkgs []inventory.Package, owners map[string]string, procs
 	}
 
 	usedBy := map[int]map[string]bool{}
+	restartBy := map[int]map[string]bool{}
+	note := func(m map[int]map[string]bool, i int, unit string) {
+		if m[i] == nil {
+			m[i] = map[string]bool{}
+		}
+		m[i][unit] = true
+	}
 	for _, proc := range procs {
 		for _, file := range proc.files {
 			owner := fileOwner(owners, file)
@@ -197,23 +204,21 @@ func applyRuntimeFacts(pkgs []inventory.Package, owners map[string]string, procs
 			}
 			for _, i := range byOwner[owner] {
 				pkgs[i].InUse = inventory.BoolPtr(true)
+				note(usedBy, i, proc.unit)
+				// Only the processes that hold the replaced file need a restart;
+				// one started after the upgrade has the new file already.
 				if proc.deleted[file] {
 					pkgs[i].NeedsRestart = true
+					note(restartBy, i, proc.unit)
 				}
-				if usedBy[i] == nil {
-					usedBy[i] = map[string]bool{}
-				}
-				usedBy[i][proc.unit] = true
 			}
 		}
 	}
 	for i, units := range usedBy {
-		list := make([]string, 0, len(units))
-		for u := range units {
-			list = append(list, u)
-		}
-		sort.Strings(list)
-		pkgs[i].UsedBy = list
+		pkgs[i].UsedBy = sortedKeys(units)
+	}
+	for i, units := range restartBy {
+		pkgs[i].RestartNeededBy = sortedKeys(units)
 	}
 
 	for i, p := range pkgs {
@@ -240,6 +245,15 @@ func applyRuntimeFacts(pkgs []inventory.Package, owners map[string]string, procs
 		}
 	}
 	return n
+}
+
+func sortedKeys(set map[string]bool) []string {
+	list := make([]string, 0, len(set))
+	for k := range set {
+		list = append(list, k)
+	}
+	sort.Strings(list)
+	return list
 }
 
 // fileOwner looks a mapped file up among the owned ones, on either side of a

@@ -813,3 +813,31 @@ func TestGenerateCycloneDXStatesOSDependenciesWhenResolved(t *testing.T) {
 		}
 	}
 }
+
+// TestRuntimeFactsRoundTrip: the four runtime facts survive writing the SBOM
+// and reading it back, and are absent from a package that has none.
+func TestRuntimeFactsRoundTrip(t *testing.T) {
+	inv := &inventory.Inventory{
+		Hostname: "web-1",
+		OS:       inventory.OSInfo{ID: "debian", VersionID: "13", Name: "Debian GNU/Linux 13"},
+		Packages: []inventory.Package{
+			{Name: "libssl3t64", Version: "3.5.1-1", Ecosystem: "Debian:13", Source: "dpkg",
+				InUse: inventory.BoolPtr(true), UsedBy: []string{"nginx.service", "ssh.service"},
+				NeedsRestart: true, RestartNeededBy: []string{"ssh.service"}},
+			{Name: "tzdata", Version: "2025b-4", Ecosystem: "Debian:13", Source: "dpkg"},
+		},
+	}
+	got := map[string]inventory.Package{}
+	for _, p := range FromCycloneDX(GenerateCycloneDX(inv, testGenerator)).Packages {
+		got[p.Name] = p
+	}
+	ssl := got["libssl3t64"]
+	if ssl.InUse == nil || !*ssl.InUse || !ssl.NeedsRestart ||
+		strings.Join(ssl.UsedBy, ",") != "nginx.service,ssh.service" || strings.Join(ssl.RestartNeededBy, ",") != "ssh.service" {
+		t.Errorf("libssl3t64 after round trip = %+v", ssl)
+	}
+	tz := got["tzdata"]
+	if tz.InUse != nil || tz.NeedsRestart || tz.UsedBy != nil || tz.RestartNeededBy != nil {
+		t.Errorf("tzdata gained runtime facts it never had: %+v", tz)
+	}
+}

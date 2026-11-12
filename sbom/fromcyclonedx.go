@@ -88,6 +88,10 @@ func FromCycloneDX(bom *cdx.BOM) *inventory.Inventory {
 					if prop.Value != "" {
 						p.UsedBy = strings.Split(prop.Value, ",")
 					}
+				case "heretix:restart-needed-by":
+					if prop.Value != "" {
+						p.RestartNeededBy = strings.Split(prop.Value, ",")
+					}
 				}
 			}
 		}

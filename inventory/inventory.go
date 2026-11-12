@@ -71,6 +71,9 @@ type Package struct {
 	// UsedBy names the systemd units (outside one, the commands) of the
 	// processes that had this package loaded, sorted. Empty unless InUse.
 	UsedBy []string `json:"usedBy,omitempty"`
+	// RestartNeededBy names those of them that still run a replaced file of
+	// the package, sorted: the ones to restart. Empty unless NeedsRestart.
+	RestartNeededBy []string `json:"restartNeededBy,omitempty"`
 	// Features lists the optional features installed on a Windows Server
 	// (DISM names, "DNS-Server-Full-Role"), on the package for the OS itself.
 	// heretix-api names the features a role's CVEs need, so a consumer can set
@@ -236,6 +239,7 @@ func mergePkg(a, b Package) Package {
 	a.InUse = mergeDirectPtr(a.InUse, b.InUse)
 	a.NeedsRestart = a.NeedsRestart || b.NeedsRestart
 	a.UsedBy = mergeSorted(a.UsedBy, b.UsedBy)
+	a.RestartNeededBy = mergeSorted(a.RestartNeededBy, b.RestartNeededBy)
 	return a
 }
 

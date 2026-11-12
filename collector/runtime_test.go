@@ -144,6 +144,15 @@ func TestApplyRuntimeFacts(t *testing.T) {
 		if !reflect.DeepEqual(p.UsedBy, w.usedBy) {
 			t.Errorf("%s: UsedBy = %q, want %q", p.Name, p.UsedBy, w.usedBy)
 		}
+		// Only cron.service holds the replaced libc; bash, started after the
+		// upgrade, has the new one and needs no restart.
+		wantRestart := []string(nil)
+		if p.Name == "libc6" {
+			wantRestart = []string{"cron.service"}
+		}
+		if !reflect.DeepEqual(p.RestartNeededBy, wantRestart) {
+			t.Errorf("%s: RestartNeededBy = %q, want %q", p.Name, p.RestartNeededBy, wantRestart)
+		}
 	}
 }
 

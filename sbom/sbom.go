@@ -148,6 +148,9 @@ func GenerateCycloneDX(inv *inventory.Inventory, gen Generator) *cdx.BOM {
 		if len(p.UsedBy) > 0 {
 			props = append(props, cdx.Property{Name: "heretix:used-by", Value: strings.Join(p.UsedBy, ",")})
 		}
+		if len(p.RestartNeededBy) > 0 {
+			props = append(props, cdx.Property{Name: "heretix:restart-needed-by", Value: strings.Join(p.RestartNeededBy, ",")})
+		}
 
 		var evidence *cdx.Evidence
 		if p.Location != "" {
