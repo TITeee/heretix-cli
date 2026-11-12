@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 450" width="1080" height="450" role="img" aria-labelledby="t d" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'Hiragino Sans', 'Yu Gothic', 'Noto Sans JP', sans-serif">
+<title id="t">heretix-cli の構成</title><desc id="d">heretix-cli は、サーバー、コンテナイメージ、ディレクトリにインストールされたパッケージを読み取ります。heretix-api で照合し、SBOM を heretix-management にアップロードし、GitHub に送って Dependabot に通知させ、結果をターミナルや CI に出力します。</desc>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#475569"/></marker></defs>
+<rect x="1" y="1" width="1078" height="448" rx="14" fill="#ffffff" stroke="#e2e8f0"/>
+<rect x="30" y="160" width="210" height="130" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+<text x="135" y="208" font-size="15" font-weight="600" fill="#0f172a" text-anchor="middle">サーバー、コンテナ、</text>
+<text x="135" y="228" font-size="15" font-weight="600" fill="#0f172a" text-anchor="middle">ディレクトリ</text>
+<text x="135" y="260" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">インストール済みのパッケージ</text>
+<path d="M240 225 L322 225" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#ah)"/>
+<text x="281" y="217" font-size="11" font-weight="500" fill="#475569" text-anchor="middle">読み取り</text>
+<rect x="330" y="80" width="270" height="290" rx="10" fill="#eff6ff" stroke="#3b82f6" stroke-width="2.2"/>
+<text x="465" y="120" font-size="18" font-weight="700" fill="#1d4ed8" text-anchor="middle">heretix-cli</text>
+<text x="465" y="140" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">このリポジトリ</text>
+<rect x="352" y="170" width="226" height="40" rx="10" fill="#ffffff" stroke="#93c5fd" stroke-width="1.2"/>
+<text x="465" y="195" font-size="13" font-weight="600" fill="#0f172a" text-anchor="middle">collect: CycloneDX の SBOM</text>
+<rect x="352" y="228" width="226" height="40" rx="10" fill="#ffffff" stroke="#93c5fd" stroke-width="1.2"/>
+<text x="465" y="253" font-size="13" font-weight="600" fill="#0f172a" text-anchor="middle">check / scan</text>
+<rect x="352" y="286" width="226" height="40" rx="10" fill="#ffffff" stroke="#93c5fd" stroke-width="1.2"/>
+<text x="465" y="311" font-size="13" font-weight="600" fill="#0f172a" text-anchor="middle">detect: オフライン検査</text>
+<rect x="700" y="40" width="350" height="78" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+<text x="875" y="74" font-size="15" font-weight="600" fill="#0f172a" text-anchor="middle">heretix-api</text>
+<text x="875" y="96" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">このバージョンは脆弱か</text>
+<path d="M600 150 L646 150 L646 79.0 L692 79.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#ah)"/>
+<text x="650" y="73.0" font-size="11" font-weight="500" fill="#475569" text-anchor="middle"></text>
+<text x="672" y="72.0" font-size="11" font-weight="500" fill="#475569" text-anchor="middle">検索</text>
+<rect x="700" y="135" width="350" height="78" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+<text x="875" y="169" font-size="15" font-weight="600" fill="#0f172a" text-anchor="middle">heretix-management</text>
+<text x="875" y="191" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">検出結果を継続して管理</text>
+<path d="M600 200 L646 200 L646 174.0 L692 174.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#ah)"/>
+<text x="650" y="168.0" font-size="11" font-weight="500" fill="#475569" text-anchor="middle"></text>
+<text x="672" y="167.0" font-size="11" font-weight="500" fill="#475569" text-anchor="middle">送信</text>
+<rect x="700" y="230" width="350" height="78" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+<text x="875" y="264" font-size="15" font-weight="600" fill="#0f172a" text-anchor="middle">GitHub</text>
+<text x="875" y="286" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">Dependabot のアラート</text>
+<path d="M600 250 L646 250 L646 269.0 L692 269.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#ah)"/>
+<text x="650" y="244" font-size="11" font-weight="500" fill="#475569" text-anchor="middle"></text>
+<text x="672" y="262.0" font-size="11" font-weight="500" fill="#475569" text-anchor="middle">submit</text>
+<rect x="700" y="325" width="350" height="78" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+<text x="875" y="359" font-size="15" font-weight="600" fill="#0f172a" text-anchor="middle">ターミナル / CI</text>
+<text x="875" y="381" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">レポートと終了コード</text>
+<path d="M600 300 L646 300 L646 364.0 L692 364.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#ah)"/>
+</svg>
