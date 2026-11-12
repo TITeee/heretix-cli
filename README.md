@@ -43,7 +43,8 @@ Where it sits in heretix:
 ## Features
 
 - **Hosts, directories and container images.** An image is read from the local Docker daemon if present, otherwise pulled straight from the registry; Docker itself is not required.
-- **CycloneDX 1.6 SBOM** with PURLs, a dependency graph, licenses, hashes and direct/indirect dependencies.
+- **CycloneDX 1.6 SBOM** with PURLs, a dependency graph, licenses, hashes and direct/indirect dependencies. OS packages get theirs from the package database (dpkg, rpm, apk), so a host's SBOM has its dependency graph too.
+- **What the running host does with each package.** A host scan records which OS packages running processes have loaded and which services those are, and which services still run an old copy of a package that has since been upgraded and need a restart ([Runtime facts](docs/sbom.md#runtime-facts)).
 - **Less noise in image scans.** A vulnerability in several binary packages built from one source package is reported once. Kernel headers and build toolchain are tagged as non-runtime, and language packages a distro package installed (e.g. `python3-urllib3`'s files) are checked through the OS package rather than at their upstream version.
 - **Local supply-chain checks, offline**: GlassWorm (invisible characters), dependency confusion, malicious install scripts (Shai-Hulud, RedC2), CI/CD pipeline poisoning and lockfile integrity.
 - **Made for CI**: exit code 1 on findings, JSON output, and submission to GitHub's dependency graph for Dependabot.
@@ -136,19 +137,22 @@ GOOS=windows GOARCH=amd64 go build -o heretix-cli.exe .
 ```bash
 export HERETIX_API_KEY=<your key>
 
-# Scan this host and report vulnerabilities
-heretix-cli scan
+# Scan this host and report vulnerabilities (as root: see below)
+sudo -E heretix-cli scan
 
 # Scan a container image
 heretix-cli scan --image nginx:latest
 
 # Or in two steps: write an SBOM (offline), then check it
-heretix-cli collect --output sbom.json
+sudo heretix-cli collect --output sbom.json
 heretix-cli check sbom.json
 
 # Local security checks only (offline)
 heretix-cli detect --scan-path /srv/myapp
 ```
+
+A scan of the whole host (`/`, the default scan path on Linux) runs as root: it reads `/proc` for which packages the running processes have loaded, and stops with an error without root rather than record that for only some of them. `--runtime=off` leaves those facts out and needs no root. An image or a directory (`--scan-path /srv/myapp`) has no processes and needs neither. `sudo -E` keeps `HERETIX_API_KEY` in the environment.
+
 
 To track findings over time instead, send the SBOM to heretix-management. It needs an access token with the `import` scope (heretix-management: **Settings → Access Tokens**):
 

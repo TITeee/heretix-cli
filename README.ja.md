@@ -43,7 +43,8 @@ heretix 全体の構成は次のとおりです。
 ## 特徴
 
 - **ホスト、ディレクトリ、コンテナイメージに対応**: イメージは、ローカルの Docker デーモンにあればそこから読み、なければレジストリから直接取得します。Docker 自体は必須ではありません。
-- **CycloneDX 1.6 形式の SBOM**: PURL、依存関係グラフ、ライセンス、ハッシュ、直接依存か間接依存かを出力します。
+- **CycloneDX 1.6 形式の SBOM**: PURL、依存関係グラフ、ライセンス、ハッシュ、直接依存か間接依存かを出力します。OS パッケージの依存関係もパッケージデータベース（dpkg、rpm、apk）から読むため、ホストの SBOM にも依存関係グラフが入ります。
+- **実行中のホストでのパッケージの使われ方**: ホストのスキャンでは、実行中のプロセスがどの OS パッケージを読み込んでいるか、それがどのサービスか、そして更新後も古い版を動かしていて再起動が必要なサービスはどれかを記録します（[Runtime facts](docs/sbom.md#runtime-facts)）。
 - **イメージスキャンのノイズを抑制**: 同じソースパッケージから作られた複数のバイナリパッケージに共通する脆弱性は、1 件にまとめて報告します。カーネルヘッダーやビルドツールチェーンは「実行時に使われないパッケージ」として区別します。また、ディストリビューションのパッケージがインストールした言語パッケージ（例: `python3-urllib3` が置いたファイル）は、上流のバージョンではなく OS パッケージとして照合します。
 - **オフラインで動くサプライチェーン攻撃の検知**: GlassWorm（不可視文字）、Dependency Confusion、悪意のあるインストールスクリプト（Shai-Hulud、RedC2）、CI/CD パイプラインの汚染、ロックファイルの整合性を検査します。
 - **CI での利用を想定**: 検出があれば終了コード 1 を返し、JSON 形式でも出力できます。GitHub の依存関係グラフに送信して Dependabot に通知させることもできます。
@@ -136,19 +137,22 @@ GOOS=windows GOARCH=amd64 go build -o heretix-cli.exe .
 ```bash
 export HERETIX_API_KEY=<API キー>
 
-# このホストをスキャンして脆弱性を表示する
-heretix-cli scan
+# このホストをスキャンして脆弱性を表示する（root で実行。下記を参照）
+sudo -E heretix-cli scan
 
 # コンテナイメージをスキャンする
 heretix-cli scan --image nginx:latest
 
 # 2 段階に分ける場合: SBOM を書き出し（オフライン）、あとで照合する
-heretix-cli collect --output sbom.json
+sudo heretix-cli collect --output sbom.json
 heretix-cli check sbom.json
 
 # ローカルのセキュリティ検査だけを行う（オフライン）
 heretix-cli detect --scan-path /srv/myapp
 ```
+
+ホスト全体（Linux の標準のスキャンパス `/`）のスキャンは root で実行します。実行中のプロセスがどのパッケージを読み込んでいるかを `/proc` から読むためで、root でない場合は、一部のプロセスの分だけを記録することはせず、エラーで止まります。`--runtime=off` を付けるとこの情報を省き、root は不要です。イメージやディレクトリ（`--scan-path /srv/myapp`）のスキャンは、プロセスがないので、どちらも不要です。`sudo -E` は環境変数 `HERETIX_API_KEY` を引き継ぐための指定です。
+
 
 検出結果を継続的に追跡したい場合は、SBOM を heretix-management に送ります。送信には、`import` スコープを持つアクセストークンが必要です（heretix-management の **Settings → Access Tokens** で作成します）。
 
