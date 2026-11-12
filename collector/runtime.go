@@ -115,10 +115,17 @@ func readProcess(dir string) (process, bool) {
 		}
 	}
 	// address perms offset dev inode [path]; the path may hold spaces.
+	//
+	// Only executable mappings count. A process also maps data files: locale
+	// definitions (/usr/lib/locale/C.utf8/LC_CTYPE, locale-archive), the kernel
+	// module indexes udevd reads (modules.alias.bin), caches. Their packages
+	// (glibc-common, kernel-modules-core) run no code in the process, and taking
+	// them for "in use" put the kernel's findings on systemd-udevd. Every program
+	// and shared library has its code mapped executable, so nothing is missed.
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		fields := strings.SplitN(scanner.Text(), " ", 6)
-		if len(fields) == 6 {
+		if len(fields) == 6 && strings.Contains(fields[1], "x") {
 			add(strings.TrimSpace(fields[5]))
 		}
 	}
@@ -279,20 +286,30 @@ func isCodePath(file string) bool {
 func kernelPackage(p inventory.Package, release string) (running, isKernel bool) {
 	switch p.Source {
 	case "dpkg":
-		if !strings.HasPrefix(p.Name, "linux-image-") {
-			return false, false
+		// The kernel image and its modules are named after the release they
+		// belong to: linux-image-6.12.43+deb13-amd64, linux-modules-7.0.0-1014-aws.
+		// Longer prefixes first, so linux-modules-extra- is not read as
+		// linux-modules- with "extra-..." as the release.
+		for _, prefix := range []string{"linux-image-unsigned-", "linux-image-", "linux-modules-extra-", "linux-modules-"} {
+			rest, ok := strings.CutPrefix(p.Name, prefix)
+			if !ok {
+				continue
+			}
+			if rest == "" || rest[0] < '0' || rest[0] > '9' {
+				// linux-image-amd64, linux-modules-extra-aws and the like are metapackages.
+				return false, false
+			}
+			return rest == release, true
 		}
-		rest := strings.TrimPrefix(p.Name, "linux-image-")
-		if rest == "" || rest[0] < '0' || rest[0] > '9' {
-			// linux-image-amd64 and the like are metapackages.
-			return false, false
-		}
-		return rest == release, true
+		return false, false
 	case "rpm":
-		if p.Name != "kernel-core" && p.Name != "kernel" {
-			return false, false
+		// The kernel and its modules come in subpackages of one version,
+		// uname -r being <version>-<release>.<arch>.
+		switch p.Name {
+		case "kernel", "kernel-core", "kernel-modules", "kernel-modules-core", "kernel-modules-extra":
+			return p.Version+"."+p.Arch == release, true
 		}
-		return p.Version+"."+p.Arch == release, true
+		return false, false
 	}
 	return false, false
 }

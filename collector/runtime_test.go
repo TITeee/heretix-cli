@@ -30,10 +30,15 @@ func TestReadProcesses(t *testing.T) {
 	fakeProc(t, root, "100",
 		strings.Join([]string{
 			"aaaa-bbbb r-xp 00000000 fd:01 1234                       /usr/bin/sleep",
-			"cccc-dddd r--p 00000000 fd:01 5678                       /usr/lib/x86_64-linux-gnu/libc.so.6 (deleted)",
+			// A library maps several segments; its code is the executable one.
+			"cccc-cccd r--p 00000000 fd:01 5678                       /usr/lib/x86_64-linux-gnu/libc.so.6 (deleted)",
+			"cccd-ccce r-xp 00028000 fd:01 5678                       /usr/lib/x86_64-linux-gnu/libc.so.6 (deleted)",
 			"eeee-ffff rw-p 00000000 00:00 0                          [heap]",
 			"1111-2222 rw-p 00000000 00:00 0 ",
-			"3333-4444 r--p 00000000 fd:01 9999                       /usr/share/with space/file",
+			"3333-4444 r-xp 00000000 fd:01 9999                       /usr/lib/with space/libx.so",
+			// Data files: mapped, but no code of theirs runs. Not counted, replaced or not.
+			"5555-6666 r--p 00000000 fd:01 7777                       /usr/lib/locale/C.utf8/LC_CTYPE",
+			"7777-8888 r--s 00000000 fd:01 8888                       /usr/lib/modules/6.12.43-1-amd64/modules.alias.bin (deleted)",
 		}, "\n")+"\n",
 		"/usr/bin/sleep", "0::/system.slice/cron.service\n", "sleep")
 	// A static binary: maps name no library, exe names it.
@@ -51,12 +56,12 @@ func TestReadProcesses(t *testing.T) {
 		t.Fatalf("got %d processes, want 2 (the kernel thread is skipped): %+v", len(procs), procs)
 	}
 	sleep, server := procs[0], procs[1]
-	wantFiles := []string{"/usr/bin/sleep", "/usr/lib/x86_64-linux-gnu/libc.so.6", "/usr/share/with space/file"}
+	wantFiles := []string{"/usr/bin/sleep", "/usr/lib/x86_64-linux-gnu/libc.so.6", "/usr/lib/with space/libx.so"}
 	if !reflect.DeepEqual(sleep.files, wantFiles) {
 		t.Errorf("files = %q, want %q", sleep.files, wantFiles)
 	}
-	if !sleep.deleted["/usr/lib/x86_64-linux-gnu/libc.so.6"] || sleep.deleted["/usr/bin/sleep"] {
-		t.Errorf("deleted = %v, want only libc", sleep.deleted)
+	if !sleep.deleted["/usr/lib/x86_64-linux-gnu/libc.so.6"] || sleep.deleted["/usr/bin/sleep"] || len(sleep.deleted) != 1 {
+		t.Errorf("deleted = %v, want only libc (a replaced data file is not code left running)", sleep.deleted)
 	}
 	if sleep.unit != "cron.service" {
 		t.Errorf("unit = %q, want cron.service", sleep.unit)
@@ -165,6 +170,48 @@ func TestKernelPackage_RPM(t *testing.T) {
 	}
 	if _, k := kernelPackage(other, release); k {
 		t.Error("kernel-tools is not a kernel")
+	}
+	// The modules ship in subpackages of the same version: the running kernel's
+	// are in use, an older kernel's are not.
+	for _, name := range []string{"kernel", "kernel-modules", "kernel-modules-core", "kernel-modules-extra"} {
+		if r, k := kernelPackage(inventory.Package{Name: name, Version: running.Version, Arch: "x86_64", Source: "rpm"}, release); !r || !k {
+			t.Errorf("running %s: (%v, %v), want (true, true)", name, r, k)
+		}
+		if r, k := kernelPackage(inventory.Package{Name: name, Version: older.Version, Arch: "x86_64", Source: "rpm"}, release); r || !k {
+			t.Errorf("older %s: (%v, %v), want (false, true)", name, r, k)
+		}
+	}
+}
+
+func TestKernelPackage_Dpkg(t *testing.T) {
+	release := "7.0.0-1014-aws"
+	tests := []struct {
+		name            string
+		running, kernel bool
+	}{
+		{"linux-image-7.0.0-1014-aws", true, true},
+		{"linux-image-unsigned-7.0.0-1014-aws", true, true},
+		{"linux-modules-7.0.0-1014-aws", true, true},
+		{"linux-modules-extra-7.0.0-1014-aws", true, true},
+		{"linux-modules-6.8.0-147-generic", false, true},
+		{"linux-image-6.8.0-147-generic", false, true},
+		// Metapackages name no release.
+		{"linux-image-aws", false, false},
+		{"linux-modules-extra-aws", false, false},
+		// Neither the image nor its modules.
+		{"linux-headers-7.0.0-1014-aws", false, false},
+		{"linux-tools-7.0.0-1014-aws", false, false},
+		{"linux-base", false, false},
+	}
+	for _, tc := range tests {
+		r, k := kernelPackage(inventory.Package{Name: tc.name, Source: "dpkg"}, release)
+		if r != tc.running || k != tc.kernel {
+			t.Errorf("%s: (%v, %v), want (%v, %v)", tc.name, r, k, tc.running, tc.kernel)
+		}
+	}
+	// Debian has no modules packages; its image carries the release with a "+".
+	if r, k := kernelPackage(inventory.Package{Name: "linux-image-6.12.43+deb13-amd64", Source: "dpkg"}, "6.12.43+deb13-amd64"); !r || !k {
+		t.Errorf("Debian image: (%v, %v), want (true, true)", r, k)
 	}
 }
 
