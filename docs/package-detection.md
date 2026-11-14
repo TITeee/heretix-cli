@@ -29,6 +29,8 @@ Every collector skips directories named `testdata` below the scan path: they hol
 
 On a Windows host scanning a whole drive (the default `--scan-path`, `C:\`), the file-based collectors also skip the drive's `Windows`, `$Recycle.Bin` and `System Volume Information` directories. They hold the OS and its bookkeeping, not installed applications, and walking them made a default scan take far longer; the OS itself comes from the `windows` collector, which reads the registry. A `--scan-path` below the drive root is walked in full.
 
+While collecting, each source prints a line to stderr when it starts and when it finishes, with the packages it found and the time it took, so a long filesystem walk is not mistaken for a hang.
+
 ## Windows Server (beta)
 
 On a Windows Server host, the OS itself is reported as one package, read from `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion`:

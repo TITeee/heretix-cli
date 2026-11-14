@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/TITeee/heretix-cli/inventory"
 )
@@ -102,6 +103,7 @@ func CollectAll(scanPath string, skip []string, verbose bool, isContainer bool) 
 	collectorErrors := 0
 	activeCollectors := 0
 
+	var toRun []Collector
 	for _, c := range collectors {
 		if skipSet[c.Name()] {
 			if verbose {
@@ -109,14 +111,24 @@ func CollectAll(scanPath string, skip []string, verbose bool, isContainer bool) 
 			}
 			continue
 		}
+		toRun = append(toRun, c)
+	}
+
+	// A collector can walk the whole filesystem for minutes, so say which one is
+	// running and what it found: without this a long scan looks hung.
+	for i, c := range toRun {
 		activeCollectors++
+		fmt.Fprintf(os.Stderr, "  [%d/%d] %s...\n", i+1, len(toRun), c.Name())
+		start := time.Now()
 
 		pkgs, err := c.Collect(scanPath, verbose, isContainer)
+		elapsed := time.Since(start).Round(100 * time.Millisecond)
 		if err != nil {
-			log.Printf("Warning: %s collector failed: %v", c.Name(), err)
+			log.Printf("Warning: %s collector failed after %s: %v", c.Name(), elapsed, err)
 			collectorErrors++
 			continue
 		}
+		fmt.Fprintf(os.Stderr, "  [%d/%d] %s: %d packages in %s\n", i+1, len(toRun), c.Name(), len(pkgs), elapsed)
 		allPkgs = append(allPkgs, pkgs...)
 	}
 
