@@ -31,6 +31,31 @@ func TestIsTestdataDir(t *testing.T) {
 	}
 }
 
+func TestIsWindowsSystemDir(t *testing.T) {
+	// The drive root of this machine: "C:\" on Windows, "/" elsewhere.
+	root := filepath.VolumeName(t.TempDir()) + string(filepath.Separator)
+	project := filepath.Join(root, "srv", "app")
+	tests := map[string]struct {
+		goos, path, scanPath string
+		want                 bool
+	}{
+		"Windows under the scanned drive root":     {"windows", filepath.Join(root, "Windows"), root, true},
+		"matched without regard to case":           {"windows", filepath.Join(root, "WINDOWS"), root, true},
+		"the recycle bin":                          {"windows", filepath.Join(root, "$Recycle.Bin"), root, true},
+		"System Volume Information":                {"windows", filepath.Join(root, "System Volume Information"), root, true},
+		"an application directory":                 {"windows", filepath.Join(root, "Program Files"), root, false},
+		"a Windows directory deeper down":          {"windows", filepath.Join(root, "Users", "dev", "Windows"), root, false},
+		"a scan path below the root (a project)":   {"windows", filepath.Join(project, "Windows"), project, false},
+		"a scan path below the root (its own dir)": {"windows", project, project, false},
+		"a host other than Windows":                {"linux", filepath.Join(root, "Windows"), root, false},
+	}
+	for name, tc := range tests {
+		if got := isWindowsSystemDir(tc.goos, tc.path, tc.scanPath); got != tc.want {
+			t.Errorf("%s: isWindowsSystemDir(%q, %q, %q) = %v, want %v", name, tc.goos, tc.path, tc.scanPath, got, tc.want)
+		}
+	}
+}
+
 // TestPyPICollect_SkipsTestdataUnlessItIsTheScanRoot is the regression test
 // for a requirements.txt fixture under detector/testdata showing up as a real
 // PyPI dependency (and alert) when heretix-cli scanned its own repository.

@@ -43,7 +43,7 @@ func (c *GoBinaryCollector) Collect(scanPath string, verbose bool, isContainer b
 			return nil
 		}
 		if d.IsDir() {
-			if goBinaryExcludeDirs[d.Name()] || isTestdataDir(path, scanPath) {
+			if goBinaryExcludeDirs[d.Name()] || skipWalkDir(path, scanPath) {
 				return fs.SkipDir
 			}
 			return nil

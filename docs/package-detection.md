@@ -27,6 +27,8 @@ How `collect` finds packages in each ecosystem, and how it tags packages that ar
 
 Every collector skips directories named `testdata` below the scan path: they hold test fixtures (the Go toolchain never builds them, and the local security checks skip them too), so a manifest there is not a real dependency. A `testdata` directory given as `--scan-path` itself is still scanned.
 
+On a Windows host scanning a whole drive (the default `--scan-path`, `C:\`), the file-based collectors also skip the drive's `Windows`, `$Recycle.Bin` and `System Volume Information` directories. They hold the OS and its bookkeeping, not installed applications, and walking them made a default scan take far longer; the OS itself comes from the `windows` collector, which reads the registry. A `--scan-path` below the drive root is walked in full.
+
 ## Windows Server (beta)
 
 On a Windows Server host, the OS itself is reported as one package, read from `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion`:

@@ -28,7 +28,7 @@ func (c *GradleCollector) Collect(scanPath string, verbose bool, isContainer boo
 			return nil
 		}
 		if d.IsDir() {
-			if d.Name() == "build" || d.Name() == ".gradle" || d.Name() == ".git" || isTestdataDir(path, scanPath) {
+			if d.Name() == "build" || d.Name() == ".gradle" || d.Name() == ".git" || skipWalkDir(path, scanPath) {
 				return fs.SkipDir
 			}
 			return nil

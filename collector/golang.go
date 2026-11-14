@@ -35,7 +35,7 @@ func (c *GoCollector) Collect(scanPath string, verbose bool, isContainer bool) (
 			return nil
 		}
 		if d.IsDir() {
-			if goExcludeDirs[d.Name()] || isTestdataDir(path, scanPath) {
+			if goExcludeDirs[d.Name()] || skipWalkDir(path, scanPath) {
 				return fs.SkipDir
 			}
 			return nil

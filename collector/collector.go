@@ -2,9 +2,48 @@ package collector
 
 import (
 	"path/filepath"
+	"runtime"
+	"strings"
 
 	"github.com/TITeee/heretix-cli/inventory"
 )
+
+// skipWalkDir reports whether a collector's directory walk should leave a
+// directory out: a testdata directory, or Windows' own system directories on
+// a whole-drive Windows scan.
+func skipWalkDir(path, scanPath string) bool {
+	return isTestdataDir(path, scanPath) || isWindowsSystemDir(runtime.GOOS, path, scanPath)
+}
+
+// windowsSystemDirs are the top-level directories of a Windows drive that
+// hold the OS and its bookkeeping, not installed applications. C:\Windows
+// alone is several hundred thousand entries (WinSxS keeps every component
+// version), and every collector walks the drive on its own, so walking them
+// made a default scan of a Windows server take tens of minutes. The OS itself
+// is covered by the windows collector, which reads the registry.
+var windowsSystemDirs = []string{"Windows", "$Recycle.Bin", "System Volume Information"}
+
+// isWindowsSystemDir reports whether path is one of windowsSystemDirs directly
+// under a drive root that is itself the scan path, on a Windows host. A scan
+// path below the root (a project directory, an extracted image) is walked in
+// full, as is a directory of the same name anywhere deeper.
+func isWindowsSystemDir(goos, path, scanPath string) bool {
+	if goos != "windows" {
+		return false
+	}
+	name := filepath.Base(path)
+	matched := false
+	for _, d := range windowsSystemDirs {
+		if strings.EqualFold(name, d) {
+			matched = true
+			break
+		}
+	}
+	if !matched || !isFilesystemRoot(scanPath) {
+		return false
+	}
+	return filepath.Clean(filepath.Dir(path)) == filepath.Clean(scanPath)
+}
 
 // isTestdataDir reports whether a directory is named "testdata". Its contents
 // are test fixtures — the Go toolchain never builds or ships them, and every

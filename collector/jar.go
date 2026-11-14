@@ -58,7 +58,7 @@ func (c *JARCollector) Collect(scanPath string, verbose bool, isContainer bool) 
 			return nil
 		}
 		if d.IsDir() {
-			if jarExcludeDirs[d.Name()] || isTestdataDir(p, scanPath) {
+			if jarExcludeDirs[d.Name()] || skipWalkDir(p, scanPath) {
 				return fs.SkipDir
 			}
 			return nil
