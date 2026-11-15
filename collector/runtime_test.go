@@ -247,3 +247,79 @@ func TestIsCodePath(t *testing.T) {
 		}
 	}
 }
+
+// An RPM upgrade installs a library under its new full version and removes
+// the old file, which processes started before still map. Seen on RHEL 9 after
+// upgrading openssl-libs 3.5.5 to 3.5.9 under a running PostgreSQL.
+func TestApplyRuntimeFacts_RPMRenamedLibrary(t *testing.T) {
+	const ssl = "1:3.5.9-1.el9_9"
+	pkgs := []inventory.Package{
+		{Name: "openssl-libs", Version: ssl, Source: "rpm", Ecosystem: "Red Hat:9"},
+		{Name: "openssl-devel", Version: ssl, Source: "rpm", Ecosystem: "Red Hat:9"},
+		{Name: "postgresql-server", Version: "13.22-1.el9", Source: "rpm", Ecosystem: "Red Hat:9"},
+	}
+	libs := ownerKey("rpm", "openssl-libs", ssl)
+	owners := map[string]string{
+		"/usr/lib64/libssl.so.3.5.9":    libs,
+		"/usr/lib64/libssl.so.3":        libs,
+		"/usr/lib64/libcrypto.so.3.5.9": libs,
+		"/usr/lib64/libcrypto.so.3":     libs,
+		// The development symlink belongs to another package; it must not
+		// make the prefix ambiguous.
+		"/usr/lib64/libssl.so": ownerKey("rpm", "openssl-devel", ssl),
+		"/usr/bin/postgres":    ownerKey("rpm", "postgresql-server", "13.22-1.el9"),
+	}
+	procs := []process{
+		{
+			unit:    "postgresql.service",
+			files:   []string{"/usr/bin/postgres", "/usr/lib64/libssl.so.3.5.5", "/usr/lib64/libcrypto.so.3.5.5"},
+			deleted: map[string]bool{"/usr/lib64/libssl.so.3.5.5": true, "/usr/lib64/libcrypto.so.3.5.5": true},
+		},
+		// Started after the upgrade: has the new file, needs no restart.
+		{unit: "sshd.service", files: []string{"/usr/lib64/libssl.so.3.5.9"}, deleted: map[string]bool{}},
+		// An unowned file that was not replaced is still ignored.
+		{unit: "app.service", files: []string{"/opt/app/lib/libfoo.so.1.2"}, deleted: map[string]bool{}},
+	}
+	applyRuntimeFacts(pkgs, owners, procs, "")
+
+	p := pkgs[0]
+	if p.InUse == nil || !*p.InUse || !p.NeedsRestart {
+		t.Fatalf("openssl-libs: InUse = %s, NeedsRestart = %v, want true, true", fmtBool(p.InUse), p.NeedsRestart)
+	}
+	if want := []string{"postgresql.service", "sshd.service"}; !reflect.DeepEqual(p.UsedBy, want) {
+		t.Errorf("openssl-libs: UsedBy = %q, want %q", p.UsedBy, want)
+	}
+	if want := []string{"postgresql.service"}; !reflect.DeepEqual(p.RestartNeededBy, want) {
+		t.Errorf("openssl-libs: RestartNeededBy = %q, want %q", p.RestartNeededBy, want)
+	}
+	if pkgs[1].NeedsRestart || pkgs[1].UsedBy != nil {
+		t.Errorf("openssl-devel: NeedsRestart = %v, UsedBy = %q, want false, none", pkgs[1].NeedsRestart, pkgs[1].UsedBy)
+	}
+}
+
+func TestReplacedLibraryOwner(t *testing.T) {
+	owners := map[string]string{
+		"/usr/lib64/libssl.so.3.5.9":   "openssl-libs",
+		"/usr/lib64/libssl.so.3":       "openssl-libs",
+		"/usr/lib64/libxml2.so.2.9.13": "libxml2",
+		// Two packages under one prefix: no guess.
+		"/usr/lib64/libdup.so.1.0": "a",
+		"/usr/lib64/libdup.so.1.1": "b",
+	}
+	index := libraryOwnersBySoname(owners)
+	for file, want := range map[string]string{
+		"/usr/lib64/libssl.so.3.5.5":     "openssl-libs",
+		"/lib64/libssl.so.3.5.5":         "openssl-libs", // through the /lib64 symlink
+		"/usr/lib64/libxml2.so.2.9.10":   "libxml2",
+		"/usr/lib64/libssl.so.1.1.1k":    "", // not all numeric
+		"/usr/lib64/libssl.so.1.1":       "", // another major version
+		"/usr/lib64/libdup.so.1.2":       "",
+		"/usr/lib64/libssl.so":           "",
+		"/usr/bin/postgres":              "",
+		"/usr/lib64/other/libssl.so.3.1": "", // another directory
+	} {
+		if got := replacedLibraryOwner(index, file); got != want {
+			t.Errorf("replacedLibraryOwner(%q) = %q, want %q", file, got, want)
+		}
+	}
+}

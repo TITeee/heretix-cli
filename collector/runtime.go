@@ -196,9 +196,16 @@ func applyRuntimeFacts(pkgs []inventory.Package, owners map[string]string, procs
 		}
 		m[i][unit] = true
 	}
+	var renamed map[string]string // built on first need, see replacedLibraryOwner
 	for _, proc := range procs {
 		for _, file := range proc.files {
 			owner := fileOwner(owners, file)
+			if owner == "" && proc.deleted[file] {
+				if renamed == nil {
+					renamed = libraryOwnersBySoname(owners)
+				}
+				owner = replacedLibraryOwner(renamed, file)
+			}
 			if owner == "" {
 				continue
 			}
@@ -254,6 +261,61 @@ func sortedKeys(set map[string]bool) []string {
 	}
 	sort.Strings(list)
 	return list
+}
+
+// sonamePrefix splits a versioned shared library path into the part that stays
+// the same across upgrades of the same library: "/usr/lib64/libssl.so.3.5.5"
+// gives "/usr/lib64/libssl.so.3". It returns "" for any other name, and for a
+// path through a symlinked /lib64 or /lib the /usr side, as fileOwner does.
+func sonamePrefix(file string) string {
+	dir, base := path.Split(file)
+	i := strings.Index(base, ".so.")
+	if i < 0 {
+		return ""
+	}
+	parts := strings.Split(base[i+len(".so."):], ".")
+	for _, p := range parts {
+		if p == "" || strings.Trim(p, "0123456789") != "" {
+			return ""
+		}
+	}
+	if !strings.HasPrefix(dir, "/usr/") {
+		dir = "/usr" + dir
+	}
+	return dir + base[:i+len(".so.")] + parts[0]
+}
+
+// libraryOwnersBySoname indexes the owned shared libraries by sonamePrefix,
+// keeping a prefix only when one package owns every file under it.
+func libraryOwnersBySoname(owners map[string]string) map[string]string {
+	index := map[string]string{}
+	for file, owner := range owners {
+		key := sonamePrefix(file)
+		if key == "" {
+			continue
+		}
+		if prev, ok := index[key]; !ok {
+			index[key] = owner
+		} else if prev != owner {
+			index[key] = "" // ambiguous: owned by more than one package
+		}
+	}
+	return index
+}
+
+// replacedLibraryOwner finds the package of a shared library that an upgrade
+// replaced under a new name. RPM-based distributions install a library under
+// its full version (libssl.so.3.5.5, with libssl.so.3 a symlink to it), so the
+// file a process still maps after an upgrade is owned by no package any more:
+// the package now owns libssl.so.3.5.9 in the same directory. Without this,
+// the process would count neither as using the package nor as needing a
+// restart. dpkg-based distributions keep the name and never get here.
+func replacedLibraryOwner(index map[string]string, file string) string {
+	key := sonamePrefix(file)
+	if key == "" {
+		return ""
+	}
+	return index[key]
 }
 
 // fileOwner looks a mapped file up among the owned ones, on either side of a
