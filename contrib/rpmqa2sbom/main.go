@@ -10,12 +10,20 @@
 //
 // Then:
 //
-//	go run ./contrib/rpmqa2sbom <dir> [output.json]
+//	go run ./contrib/rpmqa2sbom [--compat] <dir> [output.json]
 //
 // The output defaults to <hostname>.json in the current directory. Packages
 // are built the way heretix-cli's rpm collector builds them, so the SBOM
 // matches what `heretix-cli collect` writes on the host (licenses aside).
 // uname.txt is only printed: the SBOM has no field for the running kernel.
+//
+// --compat writes the SBOM the way other CycloneDX scanners read an RPM host,
+// to <hostname>.compat.json by default. Those take the OS from the only
+// operating-system component and the distro from each package's PURL, and
+// name RHEL "redhat", AlmaLinux "alma" and Oracle Linux "oracle". So the
+// scanned host becomes an application, the OS component and the PURLs use
+// that name, and the PURL's distro is the name and the full VERSION_ID
+// (redhat-9.8). Keep the default output for heretix-management.
 package main
 
 import (
@@ -31,17 +39,26 @@ import (
 )
 
 func main() {
-	if len(os.Args) < 2 || len(os.Args) > 3 {
-		fmt.Fprintln(os.Stderr, "usage: rpmqa2sbom <dir> [output.json]")
+	compat := false
+	var args []string
+	for _, a := range os.Args[1:] {
+		if a == "--compat" {
+			compat = true
+			continue
+		}
+		args = append(args, a)
+	}
+	if len(args) < 1 || len(args) > 2 {
+		fmt.Fprintln(os.Stderr, "usage: rpmqa2sbom [--compat] <dir> [output.json]")
 		os.Exit(2)
 	}
-	if err := run(os.Args[1], os.Args[2:]); err != nil {
+	if err := run(args[0], args[1:], compat); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
 }
 
-func run(dir string, rest []string) error {
+func run(dir string, rest []string, compat bool) error {
 	read := func(name string) (string, error) {
 		b, err := os.ReadFile(filepath.Join(dir, name))
 		return strings.TrimSpace(string(b)), err
@@ -97,15 +114,112 @@ func run(dir string, rest []string) error {
 	inv.Packages = inventory.Deduplicate(inv.Packages)
 
 	out := hostname + ".json"
+	if compat {
+		out = hostname + ".compat.json"
+	}
 	if len(rest) == 1 {
 		out = rest[0]
 	}
-	if err := sbom.WriteToFile(sbom.GenerateCycloneDX(inv, sbom.Generator{Name: "rpmqa2sbom", Version: sbom.BuildRevision(), Lifecycle: cdx.LifecyclePhaseOperations}), out); err != nil {
+	bom := sbom.GenerateCycloneDX(inv, sbom.Generator{Name: "rpmqa2sbom", Version: sbom.BuildRevision(), Lifecycle: cdx.LifecyclePhaseOperations})
+	if compat {
+		if note := applyCompat(bom, osInfo); note != "" {
+			fmt.Fprintln(os.Stderr, note)
+		}
+	}
+	if err := sbom.WriteToFile(bom, out); err != nil {
 		return err
 	}
 	kernel, _ := read("uname.txt")
 	fmt.Fprintf(os.Stderr, "%s (%s): %d packages -> %s; running kernel %s\n", hostname, ecosystem, len(inv.Packages), out, kernel)
 	return nil
+}
+
+// compatNames maps os-release's ID to the name other CycloneDX scanners give the
+// distro, in the OS component and in the PURL's namespace and distro.
+var compatNames = map[string]string{
+	"rhel":      "redhat",
+	"almalinux": "alma",
+	"rocky":     "rocky",
+	"centos":    "centos",
+	"ol":        "oracle",
+}
+
+// applyCompat rewrites bom in place for scanners that read the OS from the one
+// operating-system component and each package's distro from its PURL (see the
+// package comment). It returns a note for the user when it left the names alone.
+//
+// The bom-refs of packages are their PURLs, so they and the dependency entries
+// that name them follow the PURL; nothing else changes, heretix's own
+// properties included.
+func applyCompat(bom *cdx.BOM, osInfo inventory.OSInfo) string {
+	name, ok := compatNames[osInfo.ID]
+	if !ok {
+		return fmt.Sprintf("--compat: no common name known for os-release ID %q; names are left as they are", osInfo.ID)
+	}
+	if bom.Metadata != nil && bom.Metadata.Component != nil {
+		bom.Metadata.Component.Type = cdx.ComponentTypeApplication
+	}
+	renamed := map[string]string{}
+	if bom.Components != nil {
+		for i := range *bom.Components {
+			c := &(*bom.Components)[i]
+			if c.Type == cdx.ComponentTypeOS {
+				c.Name = name
+				continue
+			}
+			purl := compatPURL(c.PackageURL, name, osInfo.VersionID)
+			if purl == c.PackageURL {
+				continue
+			}
+			if c.BOMRef == c.PackageURL {
+				renamed[c.BOMRef] = purl
+				c.BOMRef = purl
+			}
+			c.PackageURL = purl
+		}
+	}
+	if bom.Dependencies != nil {
+		for i := range *bom.Dependencies {
+			d := &(*bom.Dependencies)[i]
+			if to, ok := renamed[d.Ref]; ok {
+				d.Ref = to
+			}
+			if d.Dependencies != nil {
+				for j, ref := range *d.Dependencies {
+					if to, ok := renamed[ref]; ok {
+						(*d.Dependencies)[j] = to
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// compatPURL gives an rpm PURL the namespace name and the distro name-VERSION_ID:
+// pkg:rpm/rhel/bash@5.1?distro=redhat-9 becomes pkg:rpm/redhat/bash@5.1?distro=redhat-9.8.
+// Any other PURL comes back as it was.
+func compatPURL(purl, name, versionID string) string {
+	base, query, hasQuery := strings.Cut(purl, "?")
+	rest, ok := strings.CutPrefix(base, "pkg:rpm/")
+	if !ok {
+		return purl
+	}
+	_, tail, ok := strings.Cut(rest, "/")
+	if !ok {
+		return purl
+	}
+	base = "pkg:rpm/" + name + "/" + tail
+	if !hasQuery {
+		return base
+	}
+	qualifiers := strings.Split(query, "&")
+	for i, q := range qualifiers {
+		if strings.HasPrefix(q, "distro=") {
+			qualifiers[i] = "distro=" + name + "-" + versionID
+		}
+	}
+	return base + "?" + strings.Join(qualifiers, "&")
 }
 
 func parseOSRelease(s string) inventory.OSInfo {
