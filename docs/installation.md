@@ -54,7 +54,7 @@ Recent cosign versions print a deprecation warning for `--signature` and `--cert
 
 ## Build from source
 
-Go 1.25 or later:
+Go 1.26 or later:
 
 ```bash
 # Linux
