@@ -42,6 +42,7 @@ var (
 	collectOnly       []string
 	collectVerbose    bool
 	collectImage      string
+	collectPlatform   string
 	collectDockerfile string
 	collectFormat     string
 	collectName       string
@@ -58,6 +59,7 @@ func init() {
 	collectCmd.MarkFlagsMutuallyExclusive("only", "skip")
 	collectCmd.Flags().BoolVar(&collectVerbose, "verbose", false, "Enable verbose logging")
 	collectCmd.Flags().StringVar(&collectImage, "image", "", "Docker image to scan (e.g. nginx:latest, registry.example.com/app:v1)")
+	collectCmd.Flags().StringVar(&collectPlatform, "platform", "", "Platform of the image to scan, e.g. linux/amd64 or linux/arm64 (default: the Docker daemon's image as it is, linux/amd64 from a registry)")
 	collectCmd.Flags().StringVar(&collectDockerfile, "dockerfile", "", "Dockerfile path: also scan the base image from its FROM instruction")
 	collectCmd.Flags().StringVar(&collectFormat, "format", "cyclonedx", "Output format: cyclonedx, the only one (the heretix inventory JSON, --format json, has been removed)")
 	collectCmd.Flags().StringVar(&collectName, "name", "", "Override hostname in output (useful to distinguish multiple projects on the same host)")
@@ -136,15 +138,18 @@ func runCollectWithImage(skip []string) error {
 	var allPkgs []inventory.Package
 	var combinedInv *inventory.Inventory
 
-	var primaryDigest string
+	var primaryDigest, primaryPlatform string
 	for _, imageRef := range images {
 		fmt.Fprintf(os.Stderr, "Loading image %s...\n", imageRef)
-		rootfs, digest, cleanup, err := container.ExtractImage(ctx, imageRef, collectVerbose)
+		rootfs, info, cleanup, err := container.ExtractImageWith(ctx, imageRef, container.Options{Platform: collectPlatform, Verbose: collectVerbose})
 		if err != nil {
 			return fmt.Errorf("extract image %s: %w", imageRef, err)
 		}
+		if info.Notice != "" {
+			fmt.Fprintf(os.Stderr, "Note: %s\n", info.Notice)
+		}
 
-		fmt.Fprintf(os.Stderr, "Scanning image %s...\n", imageRef)
+		fmt.Fprintf(os.Stderr, "Scanning image %s%s...\n", imageRef, platformSuffix(info.Platform))
 		inv, err := collector.CollectAll(rootfs, skip, collectVerbose, true)
 		cleanup()
 		if err != nil {
@@ -153,7 +158,8 @@ func runCollectWithImage(skip []string) error {
 
 		if combinedInv == nil {
 			combinedInv = inv
-			primaryDigest = digest
+			primaryDigest = info.Digest
+			primaryPlatform = info.Platform
 		}
 		allPkgs = append(allPkgs, inv.Packages...)
 	}
@@ -161,6 +167,7 @@ func runCollectWithImage(skip []string) error {
 	combinedInv.Packages = inventory.Deduplicate(allPkgs)
 	combinedInv.Type = "docker_image"
 	combinedInv.ImageDigest = primaryDigest
+	combinedInv.ImagePlatform = primaryPlatform
 	if collectName != "" {
 		combinedInv.Hostname = collectName
 	} else {
@@ -254,4 +261,13 @@ func writeSBOM(inv *inventory.Inventory, path string) error {
 		return fmt.Errorf("write cyclonedx output: %w", err)
 	}
 	return nil
+}
+
+// platformSuffix is " (linux/arm64)" for the line that says which image is being scanned,
+// and nothing when the image does not say.
+func platformSuffix(platform string) string {
+	if platform == "" {
+		return ""
+	}
+	return " (" + platform + ")"
 }

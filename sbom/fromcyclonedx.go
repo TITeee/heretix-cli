@@ -26,6 +26,7 @@ func FromCycloneDX(bom *cdx.BOM) *inventory.Inventory {
 			if c.Type == cdx.ComponentTypeContainer {
 				inv.Type = "docker_image"
 				inv.ImageDigest = imageDigestFromPURL(c.PackageURL)
+				inv.ImagePlatform = componentProperty(c, "heretix:image-platform")
 			}
 		}
 	}

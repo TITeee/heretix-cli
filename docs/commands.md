@@ -47,6 +47,7 @@ heretix-cli collect --image myapp:latest --dockerfile ./Dockerfile --output full
 | `--runtime` | `on` | Read `/proc` for what the running processes do with the OS packages: which are loaded (`heretix:in-use`), by which services (`heretix:used-by`), and which run a file that has since been replaced (`heretix:needs-restart`) in which services (`heretix:restart-needed-by`). A host scan needs root for this and stops with an error without it; `off` leaves the facts out. An image or a directory has no processes and is never read. See [Runtime facts](sbom.md#runtime-facts) |
 | `--verbose` | `false` | Enable verbose logging |
 | `--image` | (none) | Docker image reference to scan (e.g. `nginx:latest`) |
+| `--platform` | (none) | Platform of the image to scan, `os/arch` or `os/arch/variant` (e.g. `linux/arm64`). See [which image is read](#which-image-is-read) |
 | `--dockerfile` | (none) | Dockerfile path: also chain-scans the FROM base image |
 
 The sources are `rpm`, `dpkg`, `apk`, `windows`, `pypi`, `npm`, `go`, `gobinary`, `composer`, `maven`, `gradle` and `jar`.
@@ -100,7 +101,15 @@ heretix-cli scan --image myapp:latest --dockerfile ./Dockerfile --api-url http:/
 HERETIX_API_KEY=your-secret-key heretix-cli scan --api-url http://heretix-api:5000
 ```
 
+### Which image is read
+
 When `--image` is specified, the Docker daemon is checked first; if the image is not found locally it is pulled directly from the registry. Registry credentials are read from `~/.docker/config.json`, including its `credHelpers`/`credsStore` entries — so ECR or GCR work once their Docker credential helper (`docker-credential-ecr-login`, `docker-credential-gcr`) is installed and configured there, the same as for `docker pull`.
+
+- **The daemon is found the way `docker` finds it:** `DOCKER_HOST` if set, else the host of the active Docker context (`DOCKER_CONTEXT`, or `currentContext` of `~/.docker/config.json`), else `/var/run/docker.sock`. Docker Desktop on a Mac can listen on a socket of its own (`~/.docker/run/docker.sock`) and not on `/var/run/docker.sock`, and only the context names it.
+- **An image from the daemon is read as it is**, whatever platform it is for.
+- **An image from a registry is the `linux/amd64` one**, not the machine's own platform, unless `--platform` says another. Packages differ between platforms (library versions, binary rebuild suffixes such as Debian's `+b1`, and the names of architecture-specific packages).
+- **When the image is pulled, the run says so**, with the reason and the platform: `Note: debian:13: the Docker daemon is not reachable or does not have the image (…), so it was pulled from the registry for linux/amd64.` The platform that was read is also on the line `Scanning image debian:13 (linux/arm64)...`, and in the SBOM as the property `heretix:image-platform` of the scanned component.
+- **`--platform` is a match, not a conversion.** An image in the daemon for another platform is not taken: the image is pulled from the registry for the platform asked for.
 
 When `--image` is specified, the host reported (and, with `collect`, the `hostname` field in the SBOM) is the **image reference** (e.g. `nginx:latest`) instead of the machine hostname. This allows each image to be managed as an independent asset when imported into heretix-management.
 
@@ -109,6 +118,7 @@ This command takes `collect`'s `--scan-path`, `--skip`, `--only` and `--verbose`
 | Flag | Default | Description |
 |---|---|---|
 | `--image` | (none) | Docker image reference to scan |
+| `--platform` | (none) | Platform of the image to scan, `os/arch` or `os/arch/variant` (e.g. `linux/arm64`). See [which image is read](#which-image-is-read) |
 | `--dockerfile` | (none) | Dockerfile path: also chain-scans the FROM base image |
 | `--skip-local` | `false` | Skip local security checks (GlassWorm, Dependency Confusion, Malicious Install, CI/CD Poisoning, Lock File Integrity) |
 | `--check-registry` | `false` | Query npmjs.org to classify unknown npm scopes (requires network) |
@@ -196,6 +206,7 @@ heretix-cli detect --image myapp:latest --dockerfile ./Dockerfile
 |---|---|---|
 | `--scan-path` | `/` (Linux) / `%SystemDrive%\` (Windows) | Root path for filesystem traversal |
 | `--image` | (none) | Docker image reference to scan |
+| `--platform` | (none) | Platform of the image to scan, `os/arch` or `os/arch/variant` (e.g. `linux/arm64`). See [which image is read](#which-image-is-read) |
 | `--dockerfile` | (none) | Dockerfile path: also chain-scans the FROM base image |
 | `--format` | `table` | Output format: `table` / `json` |
 | `--verbose` | `false` | Enable verbose logging |

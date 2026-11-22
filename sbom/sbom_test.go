@@ -841,3 +841,29 @@ func TestRuntimeFactsRoundTrip(t *testing.T) {
 		t.Errorf("tzdata gained runtime facts it never had: %+v", tz)
 	}
 }
+
+// TestRoundTripKeepsTheImagePlatform: the platform an image was read for is in the SBOM,
+// so that two SBOMs of one tag (packages differ between linux/amd64 and linux/arm64) can be
+// told apart, and is read back from it.
+func TestRoundTripKeepsTheImagePlatform(t *testing.T) {
+	inv := &inventory.Inventory{
+		Type:          "docker_image",
+		Hostname:      "php:8.4-cli",
+		ScannedAt:     "2026-01-01T00:00:00Z",
+		ImageDigest:   "sha256:" + strings.Repeat("a", 64),
+		ImagePlatform: "linux/arm64",
+		OS:            inventory.OSInfo{ID: "debian", VersionID: "13", Name: "Debian GNU/Linux 13 (trixie)"},
+	}
+	back := FromCycloneDX(GenerateCycloneDX(inv, Generator{Name: "heretix-cli", Version: "test"}))
+	if back.ImagePlatform != "linux/arm64" {
+		t.Errorf("ImagePlatform = %q, want linux/arm64", back.ImagePlatform)
+	}
+
+	inv.ImagePlatform = ""
+	bom := GenerateCycloneDX(inv, Generator{Name: "heretix-cli", Version: "test"})
+	for _, p := range *bom.Metadata.Component.Properties {
+		if p.Name == "heretix:image-platform" {
+			t.Errorf("an image that does not say its platform got %s = %q", p.Name, p.Value)
+		}
+	}
+}

@@ -37,6 +37,7 @@ var (
 	scanTimeout       string
 	scanVerbose       bool
 	scanImage         string
+	scanPlatform      string
 	scanDockerfile    string
 	scanCheckRegistry bool
 	scanRuntimeOnly   bool
@@ -59,6 +60,7 @@ func init() {
 	scanCmd.Flags().StringVar(&scanTimeout, "timeout", "30s", "Per-request timeout")
 	scanCmd.Flags().BoolVar(&scanVerbose, "verbose", false, "Enable verbose logging")
 	scanCmd.Flags().StringVar(&scanImage, "image", "", "Docker image to scan (e.g. nginx:latest, registry.example.com/app:v1)")
+	scanCmd.Flags().StringVar(&scanPlatform, "platform", "", "Platform of the image to scan, e.g. linux/amd64 or linux/arm64 (default: the Docker daemon's image as it is, linux/amd64 from a registry)")
 	scanCmd.Flags().StringVar(&scanDockerfile, "dockerfile", "", "Dockerfile path: also scan the base image from its FROM instruction")
 	scanCmd.Flags().BoolVar(&scanCheckRegistry, "check-registry", false, "Query npmjs.org to classify unknown scopes (requires network)")
 	scanCmd.Flags().BoolVar(&scanRuntimeOnly, "runtime-only", false, "Report only runtime packages (hide kernel headers and build toolchain findings)")
@@ -199,12 +201,15 @@ func collectFromImages(ctx context.Context, skip []string) (*inventory.Inventory
 
 	for _, imageRef := range images {
 		fmt.Fprintf(os.Stderr, "Loading image %s...\n", imageRef)
-		rootfs, _, cleanup, err := container.ExtractImage(ctx, imageRef, scanVerbose)
+		rootfs, info, cleanup, err := container.ExtractImageWith(ctx, imageRef, container.Options{Platform: scanPlatform, Verbose: scanVerbose})
 		if err != nil {
 			return nil, nil, fmt.Errorf("extract image %s: %w", imageRef, err)
 		}
+		if info.Notice != "" {
+			fmt.Fprintf(os.Stderr, "Note: %s\n", info.Notice)
+		}
 
-		fmt.Fprintf(os.Stderr, "Scanning image %s...\n", imageRef)
+		fmt.Fprintf(os.Stderr, "Scanning image %s%s...\n", imageRef, platformSuffix(info.Platform))
 		inv, err := collector.CollectAll(rootfs, skip, scanVerbose, true)
 		if err == nil && !scanSkipLocal {
 			if findings, detErr := detector.RunAll(rootfs, scanVerbose, true, scanCheckRegistry); detErr == nil {
