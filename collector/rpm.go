@@ -23,9 +23,11 @@ type RPMCollector struct{}
 func (c *RPMCollector) Name() string { return "rpm" }
 
 // rpmDBDirs lists the directories, relative to a root, that hold the RPM
-// database — checked in this order since a distro uses exactly one. Most use
-// "var/lib/rpm"; some newer ones (e.g. openSUSE/SLE) moved it under
-// "usr/lib/sysimage/rpm" to make /var read-only-friendly.
+// database, in the order they are tried. Most distros use "var/lib/rpm"; some
+// newer ones (e.g. openSUSE/SLE) moved it under "usr/lib/sysimage/rpm" to make
+// /var read-only-friendly. A distro is not always known to use just one: an
+// Oracle Linux 9 image keeps an empty database under "usr/lib/sysimage/rpm" and
+// the real one, the one rpm itself reads, under "var/lib/rpm".
 var rpmDBDirs = []string{
 	filepath.Join("usr", "lib", "sysimage", "rpm"),
 	filepath.Join("var", "lib", "rpm"),
@@ -39,21 +41,20 @@ var rpmDBDirs = []string{
 var rpmDBFileNames = []string{"rpmdb.sqlite", "Packages.db", "Packages"}
 
 func (c *RPMCollector) Collect(scanPath string, verbose bool, isContainer bool) ([]inventory.Package, error) {
-	dbPath := findRPMDatabase(scanPath)
-	if dbPath == "" {
+	opened, candidates, err := openRPMDatabase(scanPath, verbose)
+	if err != nil {
+		return nil, err
+	}
+	if opened == nil {
+		if len(candidates) > 0 {
+			// An installed OS always has packages. An RPM database with none is a stub
+			// or an unreadable one, and saying nothing would read as "no vulnerabilities".
+			log.Printf("Warning: the RPM database (%s) lists no packages, so no OS packages were collected", strings.Join(candidates, ", "))
+		}
 		return nil, nil
 	}
-
-	db, err := rpmdb.Open(dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("open rpm database %s: %w", dbPath, err)
-	}
-	defer db.Close()
-
-	entries, err := db.ListPackages()
-	if err != nil {
-		return nil, fmt.Errorf("list packages from %s: %w", dbPath, err)
-	}
+	defer opened.db.Close()
+	dbPath, entries := opened.path, opened.entries
 
 	ecosystem := detectRPMEcosystem(scanPath)
 
@@ -125,20 +126,67 @@ func rpmDepRecord(requires, provides, files []string, requiredPaths map[string]b
 	return rec
 }
 
-// findRPMDatabase locates the RPM database under root, trying each
-// (directory, filename) combination in priority order, and returns the first
-// path that exists as a regular file. Returns "" when none exist — the normal
-// outcome for a non-RPM-based image or host.
-func findRPMDatabase(root string) string {
+// openedRPMDB is the RPM database in use, with the packages it lists.
+type openedRPMDB struct {
+	db      *rpmdb.RpmDB
+	path    string
+	entries []*rpmdb.PackageInfo
+}
+
+// openRPMDatabase opens the RPM database in use under root: the first location
+// whose database lists a package, since one that opens but is empty is a stub
+// or a leftover, not the installed set (an Oracle Linux 9 image has one under
+// usr/lib/sysimage/rpm, next to the real one under var/lib/rpm). The caller
+// closes the returned database. It returns nil, with the locations found, when
+// none lists a package, and nil with no locations when there is no database.
+// An error is returned only when no location could be used and one failed to
+// open or list.
+func openRPMDatabase(root string, verbose bool) (*openedRPMDB, []string, error) {
+	candidates := findRPMDatabases(root)
+	var firstErr error
+	for _, path := range candidates {
+		db, err := rpmdb.Open(path)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("open rpm database %s: %w", path, err)
+			}
+			continue
+		}
+		entries, err := db.ListPackages()
+		if err != nil {
+			db.Close()
+			if firstErr == nil {
+				firstErr = fmt.Errorf("list packages from %s: %w", path, err)
+			}
+			continue
+		}
+		if len(entries) == 0 {
+			db.Close()
+			if verbose {
+				log.Printf("[rpm] %s lists no packages, trying the next location", path)
+			}
+			continue
+		}
+		return &openedRPMDB{db: db, path: path, entries: entries}, candidates, nil
+	}
+	return nil, candidates, firstErr
+}
+
+// findRPMDatabases lists the RPM databases under root, trying each (directory,
+// filename) combination in priority order, as the paths that exist as regular
+// files. Empty when none exist, the normal outcome for a non-RPM-based image or
+// host. The first one that lists a package is the one in use (see Collect).
+func findRPMDatabases(root string) []string {
+	var found []string
 	for _, dir := range rpmDBDirs {
 		for _, name := range rpmDBFileNames {
 			path := filepath.Join(root, dir, name)
 			if info, err := os.Stat(path); err == nil && !info.IsDir() {
-				return path
+				found = append(found, path)
 			}
 		}
 	}
-	return ""
+	return found
 }
 
 // rpmEvr formats a package's epoch/version/release the way rpm itself

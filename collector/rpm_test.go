@@ -1,8 +1,13 @@
 package collector
 
 import (
+	"bytes"
+	"database/sql"
+	"log"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/TITeee/heretix-cli/inventory"
@@ -74,16 +79,16 @@ func TestRpmEvr(t *testing.T) {
 
 func intPtr(i int) *int { return &i }
 
-// TestFindRPMDatabase checks the (directory, filename) probing order: the
-// newer "usr/lib/sysimage/rpm" location wins over the traditional
+// TestFindRPMDatabases checks the (directory, filename) probing order: the
+// newer "usr/lib/sysimage/rpm" location comes before the traditional
 // "var/lib/rpm" one, and within a directory, sqlite/ndb/bdb filenames are
 // tried in that order. None of these files need to be valid databases here —
-// findRPMDatabase only decides which path to hand to rpmdb.Open.
-func TestFindRPMDatabase(t *testing.T) {
+// findRPMDatabases only lists the paths for rpmdb.Open to try.
+func TestFindRPMDatabases(t *testing.T) {
 	t.Run("no database present", func(t *testing.T) {
 		root := t.TempDir()
-		if got := findRPMDatabase(root); got != "" {
-			t.Errorf("findRPMDatabase = %q, want \"\"", got)
+		if got := findRPMDatabases(root); len(got) != 0 {
+			t.Errorf("findRPMDatabases = %q, want none", got)
 		}
 	})
 
@@ -93,26 +98,26 @@ func TestFindRPMDatabase(t *testing.T) {
 		mustMkdirAll(t, dir)
 		mustWriteFile(t, filepath.Join(dir, "Packages"), "bdb")
 
-		want := filepath.Join(dir, "Packages")
-		if got := findRPMDatabase(root); got != want {
-			t.Errorf("findRPMDatabase = %q, want %q", got, want)
+		want := []string{filepath.Join(dir, "Packages")}
+		if got := findRPMDatabases(root); !reflect.DeepEqual(got, want) {
+			t.Errorf("findRPMDatabases = %q, want %q", got, want)
 		}
 	})
 
-	t.Run("sqlite preferred over legacy Packages in the same directory", func(t *testing.T) {
+	t.Run("sqlite before legacy Packages in the same directory", func(t *testing.T) {
 		root := t.TempDir()
 		dir := filepath.Join(root, "var", "lib", "rpm")
 		mustMkdirAll(t, dir)
 		mustWriteFile(t, filepath.Join(dir, "Packages"), "bdb")
 		mustWriteFile(t, filepath.Join(dir, "rpmdb.sqlite"), "sqlite")
 
-		want := filepath.Join(dir, "rpmdb.sqlite")
-		if got := findRPMDatabase(root); got != want {
-			t.Errorf("findRPMDatabase = %q, want %q", got, want)
+		want := []string{filepath.Join(dir, "rpmdb.sqlite"), filepath.Join(dir, "Packages")}
+		if got := findRPMDatabases(root); !reflect.DeepEqual(got, want) {
+			t.Errorf("findRPMDatabases = %q, want %q", got, want)
 		}
 	})
 
-	t.Run("usr/lib/sysimage/rpm preferred over var/lib/rpm", func(t *testing.T) {
+	t.Run("usr/lib/sysimage/rpm before var/lib/rpm", func(t *testing.T) {
 		root := t.TempDir()
 		oldDir := filepath.Join(root, "var", "lib", "rpm")
 		newDir := filepath.Join(root, "usr", "lib", "sysimage", "rpm")
@@ -121,9 +126,99 @@ func TestFindRPMDatabase(t *testing.T) {
 		mustWriteFile(t, filepath.Join(oldDir, "Packages"), "bdb")
 		mustWriteFile(t, filepath.Join(newDir, "Packages"), "bdb")
 
-		want := filepath.Join(newDir, "Packages")
-		if got := findRPMDatabase(root); got != want {
-			t.Errorf("findRPMDatabase = %q, want %q", got, want)
+		want := []string{filepath.Join(newDir, "Packages"), filepath.Join(oldDir, "Packages")}
+		if got := findRPMDatabases(root); !reflect.DeepEqual(got, want) {
+			t.Errorf("findRPMDatabases = %q, want %q", got, want)
+		}
+	})
+}
+
+// writeEmptyRPMDatabase writes an RPM database in SQLite format that lists no
+// packages, as the stub an Oracle Linux 9 image keeps under usr/lib/sysimage/rpm.
+func writeEmptyRPMDatabase(t *testing.T, path string) {
+	t.Helper()
+	mustMkdirAll(t, filepath.Dir(path))
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("CREATE TABLE Packages (hnum INTEGER PRIMARY KEY AUTOINCREMENT, blob BLOB NOT NULL)"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestRPMCollect_SkipsAnEmptyDatabase guards the Oracle Linux 9 layout: an empty
+// database under usr/lib/sysimage/rpm, which is tried first, and the real one under
+// var/lib/rpm, which rpm itself reads. Taking the first one found gave no OS packages
+// and no word about it.
+func TestRPMCollect_SkipsAnEmptyDatabase(t *testing.T) {
+	fixture, err := os.ReadFile(filepath.Join("testdata", "rpmdb-sample.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	newRoot := func(t *testing.T) string {
+		root := t.TempDir()
+		mustMkdirAll(t, filepath.Join(root, "etc"))
+		mustWriteFile(t, filepath.Join(root, "etc", "os-release"), "ID=\"ol\"\nVERSION_ID=\"9.8\"\n")
+		return root
+	}
+
+	t.Run("the real database after an empty one is used", func(t *testing.T) {
+		root := newRoot(t)
+		writeEmptyRPMDatabase(t, filepath.Join(root, "usr", "lib", "sysimage", "rpm", "rpmdb.sqlite"))
+		mustMkdirAll(t, filepath.Join(root, "var", "lib", "rpm"))
+		if err := os.WriteFile(filepath.Join(root, "var", "lib", "rpm", "rpmdb.sqlite"), fixture, 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		pkgs, err := (&RPMCollector{}).Collect(root, false, true)
+		if err != nil {
+			t.Fatalf("Collect: %v", err)
+		}
+		names := map[string]bool{}
+		for _, p := range pkgs {
+			names[p.Name] = true
+		}
+		if !names["basesystem"] || !names["dbus"] {
+			t.Errorf("collected %v, want the packages of var/lib/rpm (basesystem, dbus)", names)
+		}
+	})
+
+	t.Run("the first database is kept when it lists packages", func(t *testing.T) {
+		root := newRoot(t)
+		mustMkdirAll(t, filepath.Join(root, "usr", "lib", "sysimage", "rpm"))
+		if err := os.WriteFile(filepath.Join(root, "usr", "lib", "sysimage", "rpm", "rpmdb.sqlite"), fixture, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		writeEmptyRPMDatabase(t, filepath.Join(root, "var", "lib", "rpm", "rpmdb.sqlite"))
+
+		pkgs, err := (&RPMCollector{}).Collect(root, false, true)
+		if err != nil {
+			t.Fatalf("Collect: %v", err)
+		}
+		if len(pkgs) == 0 {
+			t.Error("collected no packages, want those of usr/lib/sysimage/rpm")
+		}
+	})
+
+	t.Run("no database lists a package", func(t *testing.T) {
+		root := newRoot(t)
+		writeEmptyRPMDatabase(t, filepath.Join(root, "usr", "lib", "sysimage", "rpm", "rpmdb.sqlite"))
+
+		var out bytes.Buffer
+		log.SetOutput(&out)
+		defer log.SetOutput(os.Stderr)
+
+		pkgs, err := (&RPMCollector{}).Collect(root, false, true)
+		if err != nil {
+			t.Fatalf("Collect: %v", err)
+		}
+		if len(pkgs) != 0 {
+			t.Errorf("collected %d packages, want none", len(pkgs))
+		}
+		if !strings.Contains(out.String(), "lists no packages") {
+			t.Errorf("no warning that the database is empty; log: %q", out.String())
 		}
 	})
 }
