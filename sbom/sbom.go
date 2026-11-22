@@ -435,6 +435,9 @@ func metadataComponent(inv *inventory.Inventory) *cdx.Component {
 			comp.BOMRef = purl
 			comp.PackageURL = purl
 		}
+		if inv.ImagePlatform != "" {
+			*comp.Properties = append(*comp.Properties, cdx.Property{Name: "heretix:image-platform", Value: inv.ImagePlatform})
+		}
 	} else {
 		comp.Type = cdx.ComponentTypeOS
 	}

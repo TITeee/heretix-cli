@@ -23,6 +23,7 @@ var detectCmd = &cobra.Command{
 var (
 	detectScanPath      string
 	detectImage         string
+	detectPlatform      string
 	detectDockerfile    string
 	detectFormat        string
 	detectVerbose       bool
@@ -32,6 +33,7 @@ var (
 func init() {
 	detectCmd.Flags().StringVar(&detectScanPath, "scan-path", defaultScanPath(), "Filesystem root path to scan")
 	detectCmd.Flags().StringVar(&detectImage, "image", "", "Docker image to scan (e.g. nginx:latest)")
+	detectCmd.Flags().StringVar(&detectPlatform, "platform", "", "Platform of the image to scan, e.g. linux/amd64 or linux/arm64 (default: the Docker daemon's image as it is, linux/amd64 from a registry)")
 	detectCmd.Flags().StringVar(&detectDockerfile, "dockerfile", "", "Dockerfile path: also scan the base image from its FROM instruction")
 	detectCmd.Flags().StringVar(&detectFormat, "format", "table", "Output format: table / json")
 	detectCmd.Flags().BoolVar(&detectVerbose, "verbose", false, "Enable verbose logging")
@@ -63,11 +65,14 @@ func runDetect(cmd *cobra.Command, args []string) error {
 
 		for _, imageRef := range images {
 			fmt.Fprintf(os.Stderr, "Loading image %s...\n", imageRef)
-			rootfs, _, cleanup, err := container.ExtractImage(ctx, imageRef, detectVerbose)
+			rootfs, info, cleanup, err := container.ExtractImageWith(ctx, imageRef, container.Options{Platform: detectPlatform, Verbose: detectVerbose})
 			if err != nil {
 				return fmt.Errorf("extract image %s: %w", imageRef, err)
 			}
-			fmt.Fprintf(os.Stderr, "Scanning image %s...\n", imageRef)
+			if info.Notice != "" {
+				fmt.Fprintf(os.Stderr, "Note: %s\n", info.Notice)
+			}
+			fmt.Fprintf(os.Stderr, "Scanning image %s%s...\n", imageRef, platformSuffix(info.Platform))
 			f, _ := detector.RunAll(rootfs, detectVerbose, true, detectCheckRegistry)
 			cleanup()
 			findings = append(findings, f...)

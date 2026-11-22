@@ -3,9 +3,17 @@ package container
 import (
 	"archive/tar"
 	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/empty"
+	"github.com/google/go-containerregistry/pkg/v1/mutate"
 )
 
 // buildTar writes a tar archive from the given entries and returns its bytes.
@@ -172,5 +180,134 @@ func TestParseFromDirective_MissingFileReturnsError(t *testing.T) {
 	_, err := ParseFromDirective(filepath.Join(t.TempDir(), "missing"))
 	if err == nil {
 		t.Error("expected an error for a missing Dockerfile")
+	}
+}
+
+func writeDockerContext(t *testing.T, home, name, host string) {
+	t.Helper()
+	sum := sha256.Sum256([]byte(name))
+	dir := filepath.Join(home, ".docker", "contexts", "meta", hex.EncodeToString(sum[:]))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	meta := `{"Name":"` + name + `","Endpoints":{"docker":{"Host":"` + host + `"}}}`
+	if err := os.WriteFile(filepath.Join(dir, "meta.json"), []byte(meta), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeDockerConfig(t *testing.T, home, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(home, ".docker"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".docker", "config.json"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Docker Desktop on a Mac listens on ~/.docker/run/docker.sock, not /var/run/docker.sock, and
+// the docker command finds it through the active context. Without that, the daemon was never
+// reached and the image was pulled from a registry instead.
+func TestDockerContextHost(t *testing.T) {
+	const sock = "unix:///Users/me/.docker/run/docker.sock"
+
+	t.Run("the current context of config.json", func(t *testing.T) {
+		home := t.TempDir()
+		writeDockerConfig(t, home, `{"currentContext":"desktop-linux"}`)
+		writeDockerContext(t, home, "desktop-linux", sock)
+		if got := dockerContextHost(home, ""); got != sock {
+			t.Errorf("dockerContextHost = %q, want %q", got, sock)
+		}
+	})
+
+	t.Run("DOCKER_CONTEXT wins over config.json", func(t *testing.T) {
+		home := t.TempDir()
+		writeDockerConfig(t, home, `{"currentContext":"desktop-linux"}`)
+		writeDockerContext(t, home, "desktop-linux", sock)
+		writeDockerContext(t, home, "colima", "unix:///Users/me/.colima/default/docker.sock")
+		if got := dockerContextHost(home, "colima"); got != "unix:///Users/me/.colima/default/docker.sock" {
+			t.Errorf("dockerContextHost = %q, want the colima socket", got)
+		}
+	})
+
+	t.Run("the default context, no config, or an unknown context leave it to the default socket", func(t *testing.T) {
+		home := t.TempDir()
+		if got := dockerContextHost(home, ""); got != "" {
+			t.Errorf("no config: dockerContextHost = %q, want none", got)
+		}
+		writeDockerConfig(t, home, `{"currentContext":"default"}`)
+		if got := dockerContextHost(home, ""); got != "" {
+			t.Errorf("default context: dockerContextHost = %q, want none", got)
+		}
+		writeDockerConfig(t, home, `{"currentContext":"gone"}`)
+		if got := dockerContextHost(home, ""); got != "" {
+			t.Errorf("unknown context: dockerContextHost = %q, want none", got)
+		}
+		writeDockerConfig(t, home, `not json`)
+		if got := dockerContextHost(home, ""); got != "" {
+			t.Errorf("unreadable config: dockerContextHost = %q, want none", got)
+		}
+	})
+}
+
+func imageFor(t *testing.T, os, arch, variant string) v1.Image {
+	t.Helper()
+	img, err := mutate.ConfigFile(empty.Image, &v1.ConfigFile{OS: os, Architecture: arch, Variant: variant})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return img
+}
+
+func TestPlatformOfAndMatches(t *testing.T) {
+	arm := imageFor(t, "linux", "arm64", "v8")
+	amd := imageFor(t, "linux", "amd64", "")
+
+	if got := platformOf(arm); got != "linux/arm64/v8" {
+		t.Errorf("platformOf(arm) = %q", got)
+	}
+	if got := platformOf(amd); got != "linux/amd64" {
+		t.Errorf("platformOf(amd) = %q", got)
+	}
+	if got := platformOf(empty.Image); got != "" {
+		t.Errorf("platformOf(an image that does not say) = %q, want empty", got)
+	}
+
+	tests := []struct {
+		img  v1.Image
+		want string
+		ok   bool
+	}{
+		{arm, "linux/arm64", true}, // no variant asked for: any variant
+		{arm, "linux/arm64/v8", true},
+		{arm, "linux/arm64/v7", false},
+		{arm, "linux/amd64", false},
+		{amd, "linux/amd64", true},
+		{amd, "linux/arm64", false},
+	}
+	for _, tt := range tests {
+		want, err := v1.ParsePlatform(tt.want)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := platformMatches(tt.img, want); got != tt.ok {
+			t.Errorf("platformMatches(%s, %s) = %v, want %v", platformOf(tt.img), tt.want, got, tt.ok)
+		}
+	}
+}
+
+func TestExtractImageWithRejectsABadPlatform(t *testing.T) {
+	// Each is refused before any image is looked for.
+	for _, bad := range []string{"arm64", "linux/", "/arm64", "not a platform", "linux/arm64/v8/x"} {
+		_, _, _, err := ExtractImageWith(context.Background(), "nginx:latest", Options{Platform: bad})
+		if err == nil || !strings.Contains(err.Error(), "invalid platform") {
+			t.Errorf("Platform %q: err = %v, want an invalid platform error", bad, err)
+		}
+	}
+	for _, good := range []string{"linux/arm64", "linux/arm64/v8", "windows/amd64"} {
+		if _, err := parsePlatform(good); err != nil {
+			t.Errorf("parsePlatform(%q): %v", good, err)
+		}
 	}
 }

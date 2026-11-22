@@ -129,6 +129,9 @@ type Inventory struct {
 	OS          OSInfo    `json:"os"`
 	Packages    []Package `json:"packages"`
 	ImageDigest string    `json:"imageDigest,omitempty"` // set when Type == "docker_image"
+	// ImagePlatform is the platform of the image that was read ("linux/arm64"), set when
+	// Type == "docker_image" and the image says which it is for.
+	ImagePlatform string `json:"imagePlatform,omitempty"`
 }
 
 // New creates an Inventory with metadata populated.
