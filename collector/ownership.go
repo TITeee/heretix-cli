@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	rpmdb "github.com/knqyf263/go-rpmdb/pkg"
-
 	"github.com/TITeee/heretix-cli/inventory"
 )
 
@@ -124,25 +122,18 @@ func ownerKey(source, name, version string) string {
 }
 
 func addRPMFiles(scanPath string, add func(path, owner string), verbose bool) {
-	dbPath := findRPMDatabase(scanPath)
-	if dbPath == "" {
-		return
-	}
-	db, err := rpmdb.Open(dbPath)
+	opened, _, err := openRPMDatabase(scanPath, verbose)
 	if err != nil {
 		if verbose {
-			log.Printf("[ownership] open rpm database %s: %v", dbPath, err)
+			log.Printf("[ownership] rpm database: %v", err)
 		}
 		return
 	}
-	defer db.Close()
-	entries, err := db.ListPackages()
-	if err != nil {
-		if verbose {
-			log.Printf("[ownership] list rpm packages: %v", err)
-		}
+	if opened == nil {
 		return
 	}
+	defer opened.db.Close()
+	entries := opened.entries
 	for _, e := range entries {
 		files, err := e.InstalledFileNames()
 		if err != nil {
