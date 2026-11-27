@@ -97,7 +97,7 @@ func runCollect(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(os.Stderr, "Scanning packages (scan-path: %s)...\n", collectScanPath)
 	describeCollectors(collectOnly, collectSkip)
 
-	inv, err := collector.CollectAll(collectScanPath, skip, collectVerbose, false)
+	inv, err := collector.CollectAll(collectScanPath, skip, collectVerbose, false, nil)
 	if err != nil {
 		return fmt.Errorf("collection failed: %w", err)
 	}
@@ -150,7 +150,7 @@ func runCollectWithImage(skip []string) error {
 		}
 
 		fmt.Fprintf(os.Stderr, "Scanning image %s%s...\n", imageRef, platformSuffix(info.Platform))
-		inv, err := collector.CollectAll(rootfs, skip, collectVerbose, true)
+		inv, err := collector.CollectAll(rootfs, skip, collectVerbose, true, info.Env)
 		cleanup()
 		if err != nil {
 			return fmt.Errorf("collection failed for %s: %w", imageRef, err)

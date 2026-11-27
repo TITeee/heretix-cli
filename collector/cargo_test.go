@@ -268,10 +268,42 @@ license = "MIT OR Apache-2.0"
 	t.Setenv("CARGO_HOME", cargoHomeDir)
 
 	pkgs := []inventory.Package{{Name: "anyhow", Version: "1.0.86"}}
-	enrichCargoLicensesFromCache(pkgs, false)
+	enrichCargoLicensesFromCache(pkgs, false, "", false)
 
 	if pkgs[0].License != "MIT OR Apache-2.0" {
 		t.Errorf("License = %q, want %q", pkgs[0].License, "MIT OR Apache-2.0")
+	}
+}
+
+// TestEnrichCargoLicensesFromCache_Container covers an image scan: CARGO_HOME
+// names a path inside the scanned image (applyImageEnv sets it from the
+// image's own declared ENV), which exists on this host only under the
+// extracted rootfs. Also checks that an image which never declared
+// CARGO_HOME finds nothing rather than falling back to this host's own
+// ~/.cargo, which describes the scanning machine, not the image.
+func TestEnrichCargoLicensesFromCache_Container(t *testing.T) {
+	rootfs := t.TempDir()
+	crateDir := filepath.Join(rootfs, "usr", "local", "cargo", "registry", "src", "index.crates.io-abc123", "anyhow-1.0.86")
+	if err := os.MkdirAll(crateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manifest := "[package]\nname = \"anyhow\"\nversion = \"1.0.86\"\nlicense = \"MIT OR Apache-2.0\"\n"
+	if err := os.WriteFile(filepath.Join(crateDir, "Cargo.toml"), []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CARGO_HOME", "/usr/local/cargo")
+
+	pkgs := []inventory.Package{{Name: "anyhow", Version: "1.0.86"}}
+	enrichCargoLicensesFromCache(pkgs, false, rootfs, true)
+	if pkgs[0].License != "MIT OR Apache-2.0" {
+		t.Errorf("License = %q, want %q (read from <rootfs>/usr/local/cargo/...)", pkgs[0].License, "MIT OR Apache-2.0")
+	}
+
+	os.Unsetenv("CARGO_HOME")
+	pkgs2 := []inventory.Package{{Name: "anyhow", Version: "1.0.86"}}
+	enrichCargoLicensesFromCache(pkgs2, false, rootfs, true)
+	if pkgs2[0].License != "" {
+		t.Errorf("License = %q, want \"\" (image declared no CARGO_HOME, so the host's own default must not be used)", pkgs2[0].License)
 	}
 }
 

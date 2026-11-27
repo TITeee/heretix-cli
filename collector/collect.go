@@ -40,7 +40,7 @@ func isFilesystemRoot(scanPath string) bool {
 // CollectorNames are the names --skip and --only take, one per collector. A
 // collector some systems never register (windows on Linux, rpm on a Windows
 // host) is still named, so a script can use one list everywhere.
-var CollectorNames = []string{"rpm", "dpkg", "apk", "windows", "pypi", "npm", "go", "gobinary", "composer", "cargo", "maven", "gradle", "jar"}
+var CollectorNames = []string{"rpm", "dpkg", "apk", "windows", "pypi", "npm", "go", "gobinary", "composer", "cargo", "bundler", "maven", "gradle", "jar"}
 
 // SkipAllExcept turns an --only list into the skip list CollectAll takes: every
 // collector but the ones named. Names are case-insensitive. An unknown name is
@@ -77,10 +77,75 @@ func SkipAllExcept(only []string) ([]string, error) {
 	return skip, nil
 }
 
+// imageEnvKeys are the environment variables a collector reads to find a
+// toolchain's non-default location, applied from the scanned image's own
+// declared ENV during an image scan. A static rootfs extraction never runs
+// the image, so an image's own ENV is otherwise invisible even when its
+// Dockerfile sets one of these -- found scanning a real container built
+// from the official Ruby image, which sets BUNDLE_APP_CONFIG=/usr/local/bundle
+// so bundle's own config and cache stay out of the app directory; the same
+// reasoning applies to CARGO_HOME.
+var imageEnvKeys = map[string]bool{
+	"BUNDLE_APP_CONFIG": true,
+	"BUNDLE_WITHOUT":    true,
+	"CARGO_HOME":        true,
+}
+
+// applyImageEnv temporarily sets this process's environment to the scanned
+// image's own declared values for imageEnvKeys, for the extent of one
+// CollectAll run, and returns a function that restores whatever was there
+// before (including "was unset"). A live scan (isContainer false) or an
+// image with no declared ENV is a no-op with a no-op restore, since the
+// real process environment is already the correct one for collectors to
+// read directly.
+func applyImageEnv(isContainer bool, imageEnv []string) func() {
+	if !isContainer || len(imageEnv) == 0 {
+		return func() {}
+	}
+
+	declared := make(map[string]string, len(imageEnv))
+	for _, kv := range imageEnv {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			declared[k] = v
+		}
+	}
+
+	type saved struct {
+		value string
+		had   bool
+	}
+	previous := make(map[string]saved, len(imageEnvKeys))
+	for k := range imageEnvKeys {
+		v, had := os.LookupEnv(k)
+		previous[k] = saved{value: v, had: had}
+		if dv, ok := declared[k]; ok {
+			os.Setenv(k, dv)
+		} else if had {
+			os.Unsetenv(k)
+		}
+	}
+
+	return func() {
+		for k, s := range previous {
+			if s.had {
+				os.Setenv(k, s.value)
+			} else {
+				os.Unsetenv(k)
+			}
+		}
+	}
+}
+
 // CollectAll runs all collectors (except those in skip) and returns a deduplicated inventory.
 // isContainer should be true when scanning an extracted container rootfs — on Windows this
 // re-enables the Linux OS package collectors (RPM, DPKG, APK) which are otherwise skipped.
-func CollectAll(scanPath string, skip []string, verbose bool, isContainer bool) (*inventory.Inventory, error) {
+// imageEnv is the scanned image's own declared environment (container.Info.Env), used only
+// when isContainer; pass nil for a live host scan, where the real process environment is
+// already the one to read.
+func CollectAll(scanPath string, skip []string, verbose bool, isContainer bool, imageEnv []string) (*inventory.Inventory, error) {
+	restoreEnv := applyImageEnv(isContainer, imageEnv)
+	defer restoreEnv()
+
 	skipSet := make(map[string]bool)
 	for _, s := range skip {
 		skipSet[strings.ToLower(s)] = true
@@ -93,7 +158,7 @@ func CollectAll(scanPath string, skip []string, verbose bool, isContainer bool) 
 	if runtime.GOOS == "windows" && !isContainer {
 		collectors = append(collectors, &WindowsCollector{})
 	}
-	collectors = append(collectors, &PyPICollector{}, &NPMCollector{}, &GoCollector{}, &GoBinaryCollector{}, &ComposerCollector{}, &CargoCollector{}, &MavenCollector{}, &GradleCollector{}, &JARCollector{})
+	collectors = append(collectors, &PyPICollector{}, &NPMCollector{}, &GoCollector{}, &GoBinaryCollector{}, &ComposerCollector{}, &CargoCollector{}, &BundlerCollector{}, &MavenCollector{}, &GradleCollector{}, &JARCollector{})
 
 	hostname, _ := os.Hostname()
 	osInfo := detectOSInfo(scanPath)

@@ -1,10 +1,60 @@
 package collector
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 )
+
+// TestApplyImageEnv_LiveScanIsNoop guards against a live host scan ever
+// having its real environment overwritten by this mechanism, which exists
+// only to make an image's own declared ENV visible during an image scan.
+func TestApplyImageEnv_LiveScanIsNoop(t *testing.T) {
+	t.Setenv("BUNDLE_APP_CONFIG", "/host/real/value")
+
+	restore := applyImageEnv(false, []string{"BUNDLE_APP_CONFIG=/from/image"})
+	defer restore()
+
+	if got := os.Getenv("BUNDLE_APP_CONFIG"); got != "/host/real/value" {
+		t.Errorf("isContainer=false: BUNDLE_APP_CONFIG = %q, want the host's own value untouched", got)
+	}
+}
+
+// TestApplyImageEnv_SetsAndRestores covers the three cases an image scan's
+// declared ENV can leave a tracked key in: overridden from unset, overridden
+// from a previous value, and untouched because the image never declared it
+// at all (which must not leak the image's other, untracked ENV entries, nor
+// carry over whatever the host process happened to have set).
+func TestApplyImageEnv_SetsAndRestores(t *testing.T) {
+	os.Unsetenv("BUNDLE_APP_CONFIG")
+	t.Setenv("BUNDLE_WITHOUT", "host-value")
+	os.Unsetenv("CARGO_HOME")
+
+	restore := applyImageEnv(true, []string{
+		"BUNDLE_APP_CONFIG=/usr/local/bundle",
+		"PATH=/usr/local/bin:/usr/bin", // not a tracked key: must be ignored
+	})
+
+	if got := os.Getenv("BUNDLE_APP_CONFIG"); got != "/usr/local/bundle" {
+		t.Errorf("BUNDLE_APP_CONFIG = %q, want /usr/local/bundle (from the image's declared ENV)", got)
+	}
+	if _, had := os.LookupEnv("BUNDLE_WITHOUT"); had {
+		t.Error("BUNDLE_WITHOUT: got set, want unset (the image never declared it, so the host's own value must not leak in)")
+	}
+	if _, had := os.LookupEnv("CARGO_HOME"); had {
+		t.Error("CARGO_HOME: got set, want unset (neither the image nor the host declared it)")
+	}
+
+	restore()
+
+	if _, had := os.LookupEnv("BUNDLE_APP_CONFIG"); had {
+		t.Error("after restore: BUNDLE_APP_CONFIG should be unset again")
+	}
+	if got := os.Getenv("BUNDLE_WITHOUT"); got != "host-value" {
+		t.Errorf("after restore: BUNDLE_WITHOUT = %q, want host-value", got)
+	}
+}
 
 // TestIsFilesystemRoot guards the root-detection used to gate the npm/pip
 // global-package-manager fallbacks. "." must NOT count as a root — it looks
@@ -94,7 +144,7 @@ func TestCollectorNamesCoverEveryCollector(t *testing.T) {
 	all := []Collector{
 		&RPMCollector{}, &DPKGCollector{}, &APKCollector{}, &WindowsCollector{},
 		&PyPICollector{}, &NPMCollector{}, &GoCollector{}, &GoBinaryCollector{},
-		&ComposerCollector{}, &CargoCollector{}, &MavenCollector{}, &GradleCollector{}, &JARCollector{},
+		&ComposerCollector{}, &CargoCollector{}, &BundlerCollector{}, &MavenCollector{}, &GradleCollector{}, &JARCollector{},
 	}
 	if len(all) != len(CollectorNames) {
 		t.Fatalf("%d collectors, %d names in CollectorNames", len(all), len(CollectorNames))
@@ -120,7 +170,7 @@ func TestCollectAllWithNothingLeft(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inv, err := CollectAll(t.TempDir(), skip, false, false)
+	inv, err := CollectAll(t.TempDir(), skip, false, false, nil)
 	if err != nil {
 		t.Fatalf("CollectAll: %v", err)
 	}

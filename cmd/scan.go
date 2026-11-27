@@ -171,7 +171,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 func collectFromFilesystem(skip []string) (*inventory.Inventory, error) {
 	fmt.Fprintf(os.Stderr, "Scanning packages (scan-path: %s)...\n", scanScanPath)
 	describeCollectors(scanOnly, scanSkip)
-	inv, err := collector.CollectAll(scanScanPath, skip, scanVerbose, false)
+	inv, err := collector.CollectAll(scanScanPath, skip, scanVerbose, false, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -210,7 +210,7 @@ func collectFromImages(ctx context.Context, skip []string) (*inventory.Inventory
 		}
 
 		fmt.Fprintf(os.Stderr, "Scanning image %s%s...\n", imageRef, platformSuffix(info.Platform))
-		inv, err := collector.CollectAll(rootfs, skip, scanVerbose, true)
+		inv, err := collector.CollectAll(rootfs, skip, scanVerbose, true, info.Env)
 		if err == nil && !scanSkipLocal {
 			if findings, detErr := detector.RunAll(rootfs, scanVerbose, true, scanCheckRegistry); detErr == nil {
 				allFindings = append(allFindings, findings...)

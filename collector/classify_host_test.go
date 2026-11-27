@@ -94,7 +94,7 @@ func TestCollectAll_HostAndImageClassifyDifferently(t *testing.T) {
 	}
 
 	categories := func(isContainer bool) map[string]string {
-		inv, err := CollectAll(root, []string{"rpm", "apk", "pypi", "npm", "go", "gobinary", "composer", "maven", "gradle", "jar"}, false, isContainer)
+		inv, err := CollectAll(root, []string{"rpm", "apk", "pypi", "npm", "go", "gobinary", "composer", "maven", "gradle", "jar"}, false, isContainer, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

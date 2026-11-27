@@ -48,7 +48,7 @@ func (c *CargoCollector) Collect(scanPath string, verbose bool, isContainer bool
 		return nil, fmt.Errorf("walk %s: %w", scanPath, err)
 	}
 
-	enrichCargoLicensesFromCache(pkgs, verbose)
+	enrichCargoLicensesFromCache(pkgs, verbose, scanPath, isContainer)
 
 	if verbose {
 		log.Printf("[cargo] collected %d packages", len(pkgs))
@@ -407,10 +407,25 @@ func markCargoDevOnlyScope(pkgs []inventory.Package, entries []cargoLockEntry, m
 }
 
 // cargoHome returns Cargo's own data directory: $CARGO_HOME, or ~/.cargo
-// when unset (Cargo's documented default).
-func cargoHome() string {
+// when unset (Cargo's documented default) -- on a live scan, where that
+// env var (if any) is this real process's own, naming a real path on this
+// filesystem. For an image scan, CARGO_HOME instead comes from the scanned
+// image's own declared ENV (collector.applyImageEnv, since no container
+// ever ran to apply it any other way) if it set one at all; such a path
+// names a location inside the image, not this host, so scanPath (the
+// extracted rootfs) is prefixed onto it. An image that never declared
+// CARGO_HOME has no cache this function could identify -- the live host's
+// own default (~/.cargo) describes the scanning machine, not the image --
+// so this returns "" rather than a path that merely looks plausible.
+func cargoHome(scanPath string, isContainer bool) string {
 	if v := os.Getenv("CARGO_HOME"); v != "" {
+		if isContainer {
+			return filepath.Join(scanPath, v)
+		}
 		return v
+	}
+	if isContainer {
+		return ""
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -425,8 +440,7 @@ func cargoHome() string {
 // (crates.io's git index and its newer sparse index hash to different
 // values, and a project could use another registry entirely), so it is
 // globbed rather than computed. Returns "" if the crate was never
-// downloaded, or when run against a container rootfs rather than the
-// scanning host's own cache.
+// downloaded, or when cargoHome itself returned "".
 func findCargoCrateManifest(home, name, version string) string {
 	matches, err := filepath.Glob(filepath.Join(home, "registry", "src", "*", name+"-"+version, "Cargo.toml"))
 	if err != nil || len(matches) == 0 {
@@ -459,15 +473,18 @@ func cargoPackageField(data []byte, key string) string {
 }
 
 // enrichCargoLicensesFromCache fills in License for packages found in
-// Cargo's local registry source cache (see cargoHome) -- a live-host-only
-// best effort, since the cache lives outside any container image, mirroring
-// enrichGoLicensesFromCache for Go. crates.io requires every published crate
-// to declare "license" (an SPDX expression, used as-is) or "license-file" in
-// its own Cargo.toml, so this is more often able to find an answer than Go's
-// equivalent, which falls back to guessing from a LICENSE file's text because
-// Go modules carry no required license metadata at all.
-func enrichCargoLicensesFromCache(pkgs []inventory.Package, verbose bool) {
-	home := cargoHome()
+// Cargo's local registry source cache (see cargoHome) -- on a live scan,
+// this host's own cache; for an image scan, the image's own cache, read
+// only when the image declared its own CARGO_HOME (there being no other
+// way to know where it put one). crates.io requires every published crate
+// to declare "license" (an SPDX expression, used as-is) or "license-file"
+// in its own Cargo.toml, so this is more often able to find an answer than
+// Go's equivalent (enrichGoLicensesFromCache, live-host-only since Go sets
+// no such ENV convention to extend the same way), which falls back to
+// guessing from a LICENSE file's text because Go modules carry no required
+// license metadata at all.
+func enrichCargoLicensesFromCache(pkgs []inventory.Package, verbose bool, scanPath string, isContainer bool) {
+	home := cargoHome(scanPath, isContainer)
 	if home == "" {
 		return
 	}

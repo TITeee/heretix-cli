@@ -100,6 +100,7 @@ var scopeDecidingSources = map[string]bool{
 	"Pipfile.lock":      true,
 	"composer.lock":     true,
 	"Cargo.lock":        true,
+	"Gemfile.lock":      true,
 	"gradle.lockfile":   true,
 	"pom.xml":           true, // test scope is dropped at collection, so what remains is required
 	"build.gradle":      true, // likewise for test-only configurations

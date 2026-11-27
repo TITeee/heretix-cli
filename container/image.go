@@ -45,6 +45,11 @@ type Info struct {
 	// Notice is what to tell the user when the image did not come from the daemon, with
 	// the reason and the platform pulled; empty when it did.
 	Notice string
+	// Env is the image's own declared environment ("KEY=VALUE" strings from its config,
+	// e.g. "BUNDLE_APP_CONFIG=/usr/local/bundle"). A static rootfs extraction never runs
+	// the image, so this ENV is never otherwise applied; collectors that need a toolchain
+	// location override baked in this way are given it explicitly instead.
+	Env []string
 }
 
 // ExtractImage loads a container image and extracts its merged filesystem to a temp directory.
@@ -83,6 +88,7 @@ func ExtractImageWith(ctx context.Context, imageRef string, opts Options) (strin
 	if info.Platform == "" {
 		info.Platform = platformOf(img)
 	}
+	info.Env = envOf(img)
 
 	dir, err := os.MkdirTemp("", "heretix-rootfs-")
 	if err != nil {
@@ -229,6 +235,16 @@ func platformOf(img v1.Image) string {
 		return ""
 	}
 	return platformString(&v1.Platform{OS: cf.OS, Architecture: cf.Architecture, Variant: cf.Variant})
+}
+
+// envOf is the image's own declared environment, "KEY=VALUE" per entry, in
+// the order its config lists them; nil when the config can't be read.
+func envOf(img v1.Image) []string {
+	cf, err := img.ConfigFile()
+	if err != nil || cf == nil {
+		return nil
+	}
+	return cf.Config.Env
 }
 
 func platformString(p *v1.Platform) string {

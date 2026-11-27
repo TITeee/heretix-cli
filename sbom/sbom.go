@@ -36,6 +36,7 @@ var ecosystemToPURLType = map[string]string{
 	"gobinary":           "golang",
 	"composer.lock":      "composer",
 	"Cargo.lock":         "cargo",
+	"Gemfile.lock":       "gem",
 	"pom.xml":            "maven",
 	"build.gradle":       "maven",
 	"build.gradle.kts":   "maven",
@@ -304,6 +305,7 @@ var dependencyGraphSources = map[string]bool{
 	"dist-info":         true,
 	"composer.lock":     true,
 	"Cargo.lock":        true,
+	"Gemfile.lock":      true,
 }
 
 // uniqueByPURL collapses packages that resolve to the same PURL into a single
