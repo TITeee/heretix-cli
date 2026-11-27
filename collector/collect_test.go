@@ -94,7 +94,7 @@ func TestCollectorNamesCoverEveryCollector(t *testing.T) {
 	all := []Collector{
 		&RPMCollector{}, &DPKGCollector{}, &APKCollector{}, &WindowsCollector{},
 		&PyPICollector{}, &NPMCollector{}, &GoCollector{}, &GoBinaryCollector{},
-		&ComposerCollector{}, &MavenCollector{}, &GradleCollector{}, &JARCollector{},
+		&ComposerCollector{}, &CargoCollector{}, &MavenCollector{}, &GradleCollector{}, &JARCollector{},
 	}
 	if len(all) != len(CollectorNames) {
 		t.Fatalf("%d collectors, %d names in CollectorNames", len(all), len(CollectorNames))

@@ -40,7 +40,7 @@ func isFilesystemRoot(scanPath string) bool {
 // CollectorNames are the names --skip and --only take, one per collector. A
 // collector some systems never register (windows on Linux, rpm on a Windows
 // host) is still named, so a script can use one list everywhere.
-var CollectorNames = []string{"rpm", "dpkg", "apk", "windows", "pypi", "npm", "go", "gobinary", "composer", "maven", "gradle", "jar"}
+var CollectorNames = []string{"rpm", "dpkg", "apk", "windows", "pypi", "npm", "go", "gobinary", "composer", "cargo", "maven", "gradle", "jar"}
 
 // SkipAllExcept turns an --only list into the skip list CollectAll takes: every
 // collector but the ones named. Names are case-insensitive. An unknown name is
@@ -93,7 +93,7 @@ func CollectAll(scanPath string, skip []string, verbose bool, isContainer bool) 
 	if runtime.GOOS == "windows" && !isContainer {
 		collectors = append(collectors, &WindowsCollector{})
 	}
-	collectors = append(collectors, &PyPICollector{}, &NPMCollector{}, &GoCollector{}, &GoBinaryCollector{}, &ComposerCollector{}, &MavenCollector{}, &GradleCollector{}, &JARCollector{})
+	collectors = append(collectors, &PyPICollector{}, &NPMCollector{}, &GoCollector{}, &GoBinaryCollector{}, &ComposerCollector{}, &CargoCollector{}, &MavenCollector{}, &GradleCollector{}, &JARCollector{})
 
 	hostname, _ := os.Hostname()
 	osInfo := detectOSInfo(scanPath)

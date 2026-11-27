@@ -28,7 +28,7 @@ Summary: 14 packages with 21 findings (1 malware, 1 KEV)
 
 ## Features
 
-- **Hosts, images and directories**, OS packages (RPM, DPKG, APK), language packages (PyPI, npm, Go, Composer, Maven, Gradle, Java archives) and Windows Server (beta); no Docker needed for an image
+- **Hosts, images and directories**, OS packages (RPM, DPKG, APK), language packages (PyPI, npm, Go, Composer, Cargo, Maven, Gradle, Java archives) and Windows Server (beta); no Docker needed for an image
 - **CycloneDX 1.6 SBOM** with PURLs, licenses, hashes and the dependency graph, for OS packages too
 - **What the host runs**: which packages running processes have loaded, by which services, and which services need a restart after an upgrade
 - **Less noise**: a vulnerability in one source package is reported once, and kernel headers and build tools are tagged as non-runtime

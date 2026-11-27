@@ -39,6 +39,7 @@ var sourceEcosystem = map[string]string{
 	"go.mod":             "Go",
 	"gobinary":           "Go",
 	"composer.lock":      "composer",
+	"Cargo.lock":         "crates.io",
 	"pom.xml":            "Maven",
 	"build.gradle":       "Maven",
 	"build.gradle.kts":   "Maven",

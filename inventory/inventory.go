@@ -99,6 +99,7 @@ var scopeDecidingSources = map[string]bool{
 	"pnpm-lock.yaml":    true,
 	"Pipfile.lock":      true,
 	"composer.lock":     true,
+	"Cargo.lock":        true,
 	"gradle.lockfile":   true,
 	"pom.xml":           true, // test scope is dropped at collection, so what remains is required
 	"build.gradle":      true, // likewise for test-only configurations
